@@ -26,7 +26,10 @@ app.post("/generate", async (req, res) => {
       tone,
       constraints
     } = req.body;
-
+});
+app.get("/_admin/logs", (_req, res) => {
+  res.json(executionLogs);
+});
     // Basic validation (v1, minimal)
     if (!user_id || !platform || !content_type || !topic) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -72,10 +75,7 @@ executionLogs.push({
         platform,
         content_type
       }
-    });
-app.get("/_admin/logs", (_req, res) => {
-  res.json(executionLogs);
-});
+    
 
   } catch (err) {
     console.error(err);
