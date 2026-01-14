@@ -12,6 +12,16 @@ const model = vertexAI.getGenerativeModel({
 
 const app = express();
 app.use(express.json());
+// ---- ADMIN GUARD ----
+const ADMIN_KEY = process.env.ADMIN_KEY;
+
+function requireAdmin(req, res, next) {
+  const key = req.header("x-admin-key");
+  if (!ADMIN_KEY || key !== ADMIN_KEY) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  next();
+}
 
 const executionLogs = [];
 
@@ -65,6 +75,10 @@ No emojis. No hashtags.
     console.error(err);
     res.status(500).json({ error: "Internal error" });
   }
+});
+// ---- ADMIN ROUTES ----
+app.get("/_admin/ping", requireAdmin, (_req, res) => {
+  res.json({ status: "ok", service: "bizgenie-api" });
 });
 
 /* ---------- ADMIN ---------- */
