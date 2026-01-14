@@ -15,10 +15,12 @@ const executionLogs = [];
 const app = express();
 app.use(express.json());
 
+/* ---------- PUBLIC ---------- */
 app.get("/", (_req, res) => {
   res.send("BizGenie Cloud Run is up");
 });
 
+/* ---------- CORE EXECUTION ---------- */
 app.post("/generate", async (req, res) => {
   try {
     const {
@@ -26,8 +28,7 @@ app.post("/generate", async (req, res) => {
       platform,
       content_type,
       topic,
-      tone,
-      constraints
+      tone
     } = req.body;
 
     if (!user_id || !platform || !content_type || !topic) {
@@ -40,11 +41,9 @@ Content type: ${content_type}
 Topic: ${topic}
 Tone: ${tone || "neutral"}
 
-Write a natural, human-sounding spoken script.
-Open with a strong hook.
-Short sentences.
-No emojis.
-No hashtags.
+Write a natural, human-sounding script.
+Avoid sounding like AI.
+No emojis. No hashtags.
 `;
 
     const result = await model.generateContent(prompt);
@@ -59,17 +58,13 @@ No hashtags.
       content_type,
       topic,
       tone,
-      status: "success",
       created_at: new Date().toISOString()
     });
 
     return res.json({
       execution_id,
       output: { script },
-      meta: {
-        platform,
-        content_type
-      }
+      meta: { platform, content_type }
     });
 
   } catch (err) {
@@ -78,10 +73,12 @@ No hashtags.
   }
 });
 
+/* ---------- ADMIN ---------- */
 app.get("/_admin/logs", (_req, res) => {
   res.json(executionLogs);
 });
 
+/* ---------- SERVER ---------- */
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log("Listening on", port);
