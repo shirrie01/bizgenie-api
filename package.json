@@ -5,6 +5,9 @@
   "scripts": {
     "start": "node index.js"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "express": "^4.19.2",
     "@google-cloud/vertexai": "^1.50.0"
