@@ -8,6 +8,7 @@ const vertexAI = new VertexAI({
 const model = vertexAI.getGenerativeModel({
   model: "gemini-1.5-flash"
 });
+const executionLogs = [];
 
 const app = express();
 app.use(express.json());
@@ -53,6 +54,16 @@ const script = result.response.text();
 
     // TEMP: execution ID
     const execution_id = `exec_${Date.now()}`;
+executionLogs.push({
+  execution_id,
+  user_id,
+  platform,
+  content_type,
+  topic,
+  tone,
+  status: "success",
+  created_at: new Date().toISOString()
+});
 
     return res.json({
       execution_id,
@@ -62,6 +73,9 @@ const script = result.response.text();
         content_type
       }
     });
+app.get("/_admin/logs", (_req, res) => {
+  res.json(executionLogs);
+});
 
   } catch (err) {
     console.error(err);
