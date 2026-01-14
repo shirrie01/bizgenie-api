@@ -1,6 +1,10 @@
 const express = require("express");
 const { VertexAI } = require("@google-cloud/vertexai");
 
+const app = express();
+app.use(express.json());
+
+// ===== Vertex AI =====
 const vertexAI = new VertexAI({
   project: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT,
   location: "europe-west1"
@@ -10,17 +14,20 @@ const model = vertexAI.getGenerativeModel({
   model: "gemini-1.5-flash"
 });
 
+// ===== In-memory logs (v1 only) =====
 const executionLogs = [];
 
-const app = express();
-app.use(express.json());
-
-/* ---------- PUBLIC ---------- */
+// ===== Health check =====
 app.get("/", (_req, res) => {
   res.send("BizGenie Cloud Run is up");
 });
 
-/* ---------- CORE EXECUTION ---------- */
+// ===== Admin logs =====
+app.get("/_admin/logs", (_req, res) => {
+  res.json(executionLogs);
+});
+
+// ===== Generate endpoint =====
 app.post("/generate", async (req, res) => {
   try {
     const {
@@ -58,6 +65,7 @@ No emojis. No hashtags.
       content_type,
       topic,
       tone,
+      status: "success",
       created_at: new Date().toISOString()
     });
 
@@ -73,12 +81,7 @@ No emojis. No hashtags.
   }
 });
 
-/* ---------- ADMIN ---------- */
-app.get("/_admin/logs", (_req, res) => {
-  res.json(executionLogs);
-});
-
-/* ---------- SERVER ---------- */
+// ===== Start server =====
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log("Listening on", port);
