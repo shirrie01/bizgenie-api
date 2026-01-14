@@ -1,4 +1,13 @@
 const express = require("express");
+const { VertexAI } = require("@google-cloud/vertexai");
+const vertexAI = new VertexAI({
+  project: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT,
+  location: "europe-west1"
+});
+
+const model = vertexAI.getGenerativeModel({
+  model: "gemini-1.5-flash"
+});
 
 const app = express();
 app.use(express.json());
@@ -28,8 +37,19 @@ app.post("/generate", async (req, res) => {
       return res.status(403).json({ error: "Action not permitted" });
     }
 
-    // TEMP: fake AI output (we replace this next)
-    const script = `Here is a ${platform} script about ${topic}, written in a ${tone || "neutral"} tone.`;
+    const prompt = `
+Platform: ${platform}
+Content type: ${content_type}
+Topic: ${topic}
+Tone: ${tone || "neutral"}
+
+Write a natural, human-sounding script.
+Avoid sounding like AI.
+No emojis. No hashtags.
+`;
+
+const result = await model.generateContent(prompt);
+const script = result.response.text();
 
     // TEMP: execution ID
     const execution_id = `exec_${Date.now()}`;
