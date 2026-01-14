@@ -13,15 +13,17 @@ const model = vertexAI.getGenerativeModel({
 const app = express();
 app.use(express.json());
 // ---- ADMIN GUARD ----
-const ADMIN_KEY = process.env.ADMIN_KEY;
-
 function requireAdmin(req, res, next) {
+  const adminKey = process.env.ADMIN_KEY;
   const key = req.header("x-admin-key");
-  if (!ADMIN_KEY || key !== ADMIN_KEY) {
+
+  if (!adminKey || key !== adminKey) {
     return res.status(403).json({ error: "Forbidden" });
   }
+
   next();
 }
+
 
 const executionLogs = [];
 
