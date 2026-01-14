@@ -23,6 +23,10 @@ app.get("/", (_req, res) => {
 });
 
 // ===== Admin logs =====
+app.get("/_admin/ping", (_req, res) => {
+  res.send("ADMIN OK");
+});
+
 app.get("/_admin/logs", (_req, res) => {
   res.json(executionLogs);
 });
