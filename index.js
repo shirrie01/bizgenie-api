@@ -1,10 +1,6 @@
 const express = require("express");
 const { VertexAI } = require("@google-cloud/vertexai");
 
-const app = express();
-app.use(express.json());
-
-// ===== Vertex AI =====
 const vertexAI = new VertexAI({
   project: process.env.GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT,
   location: "europe-west1"
@@ -14,33 +10,20 @@ const model = vertexAI.getGenerativeModel({
   model: "gemini-1.5-flash"
 });
 
-// ===== In-memory logs (v1 only) =====
 const executionLogs = [];
 
-// ===== Health check =====
+const app = express();
+app.use(express.json());
+
+/* ------------------ PUBLIC ------------------ */
+
 app.get("/", (_req, res) => {
   res.send("BizGenie Cloud Run is up");
 });
 
-// ===== Admin logs =====
-app.get("/_admin/ping", (_req, res) => {
-  res.send("ADMIN OK");
-});
-
-app.get("/_admin/logs", (_req, res) => {
-  res.json(executionLogs);
-});
-
-// ===== Generate endpoint =====
 app.post("/generate", async (req, res) => {
   try {
-    const {
-      user_id,
-      platform,
-      content_type,
-      topic,
-      tone
-    } = req.body;
+    const { user_id, platform, content_type, topic, tone } = req.body;
 
     if (!user_id || !platform || !content_type || !topic) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -69,7 +52,6 @@ No emojis. No hashtags.
       content_type,
       topic,
       tone,
-      status: "success",
       created_at: new Date().toISOString()
     });
 
@@ -85,7 +67,18 @@ No emojis. No hashtags.
   }
 });
 
-// ===== Start server =====
+/* ------------------ ADMIN ------------------ */
+
+app.get("/_admin/ping", (_req, res) => {
+  res.json({ status: "ok", service: "bizgenie-api" });
+});
+
+app.get("/_admin/logs", (_req, res) => {
+  res.json(executionLogs);
+});
+
+/* ------------------ SERVER ------------------ */
+
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
   console.log("Listening on", port);
