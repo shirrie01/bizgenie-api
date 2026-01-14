@@ -10,12 +10,12 @@ const model = vertexAI.getGenerativeModel({
   model: "gemini-1.5-flash"
 });
 
-const executionLogs = [];
-
 const app = express();
 app.use(express.json());
 
-/* ------------------ PUBLIC ------------------ */
+const executionLogs = [];
+
+/* ---------- PUBLIC ---------- */
 
 app.get("/", (_req, res) => {
   res.send("BizGenie Cloud Run is up");
@@ -55,7 +55,7 @@ No emojis. No hashtags.
       created_at: new Date().toISOString()
     });
 
-    return res.json({
+    res.json({
       execution_id,
       output: { script },
       meta: { platform, content_type }
@@ -63,11 +63,11 @@ No emojis. No hashtags.
 
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: "Internal error" });
+    res.status(500).json({ error: "Internal error" });
   }
 });
 
-/* ------------------ ADMIN ------------------ */
+/* ---------- ADMIN ---------- */
 
 app.get("/_admin/ping", (_req, res) => {
   res.json({ status: "ok", service: "bizgenie-api" });
@@ -77,10 +77,9 @@ app.get("/_admin/logs", (_req, res) => {
   res.json(executionLogs);
 });
 
-/* ------------------ SERVER ------------------ */
+/* ---------- START ---------- */
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log("Listening on", port);
+  console.log(`Listening on ${port}`);
 });
-
