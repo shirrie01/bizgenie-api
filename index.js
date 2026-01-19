@@ -1,7 +1,6 @@
 console.log("🚀 BizGenie API booting");
 
 const express = require("express");
-const { VertexAI } = require("@google-cloud/vertexai");
 
 const app = express();
 app.use(express.json());
