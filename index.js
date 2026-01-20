@@ -19,6 +19,8 @@ Execution ID: ${execution_id}
 User: ${user_id}
 Project: ${project_id}
 
+// FORCE CLEAN CLOUD BUILD – 2026-01-20
+
 // staging redeploy – clean image
 
 Prompt:
