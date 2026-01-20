@@ -1,33 +1,38 @@
-console.log("🚀 BizGenie API booting");
+app.post("/generate-script", requireAdmin, async (req, res) => {
+  try {
+    const {
+      execution_id,
+      user_id,
+      project_id,
+      compiled_prompt
+    } = req.body;
 
-const express = require("express");
+    if (!execution_id || !user_id || !project_id || !compiled_prompt) {
+      return res.status(400).json({
+        status: "failed",
+        error: "Missing required fields"
+      });
+    }
 
-const app = express();
-app.use(express.json());
+    const script_body = `EXECUTION OK
+Execution ID: ${execution_id}
+User: ${user_id}
+Project: ${project_id}
 
-function requireAdmin(req, res, next) {
-  const adminKey = process.env.ADMIN_KEY;
-  const providedKey = req.header("x-admin-key");
+Prompt:
+${compiled_prompt}`;
 
-  if (!adminKey || providedKey !== adminKey) {
-    return res.status(403).json({ error: "Forbidden" });
+    return res.json({
+      status: "completed",
+      execution_id,
+      script_body
+    });
+
+  } catch (err) {
+    console.error("generate-script error:", err);
+    return res.status(500).json({
+      status: "failed",
+      error: "Internal execution error"
+    });
   }
-  next();
-}
-
-app.get("/", (_req, res) => {
-  res.send("BizGenie Cloud Run is up");
-});
-
-app.get("/_admin/ping", requireAdmin, (_req, res) => {
-  res.json({ status: "ok" });
-});
-
-app.post("/generate", async (req, res) => {
-  res.json({ ok: true });
-});
-
-const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log("Listening on", port);
 });
