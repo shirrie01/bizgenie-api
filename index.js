@@ -19,6 +19,8 @@ Execution ID: ${execution_id}
 User: ${user_id}
 Project: ${project_id}
 
+// staging redeploy – clean image
+
 Prompt:
 ${compiled_prompt}`;
 
