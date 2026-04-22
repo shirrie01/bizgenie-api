@@ -45,37 +45,28 @@ You MUST return a COMPLETE structured output.
 
 STRICT RULES:
 - Do NOT stop early
-- Do NOT return partial sections
-- ALL sections must be present
-- If one section is missing, the response is invalid
+- ALL sections must be included
+- If any section is missing, the response is invalid
 
 Return ONLY plain text. No JSON. No markdown.
 
 FOR SHORT-FORM VIDEO OUTPUT:
-You MUST include ALL of the following sections:
+You MUST include ALL sections below:
 
-Hook
-Concept
-Script
-CTA
-Caption
-Hashtags
-Filming instructions
+Hook (1 sentence)
+Concept (1-2 sentences)
+Script (MAX 120 words)
+CTA (1 line)
+Caption (MAX 2 lines)
+Hashtags (MAX 8 hashtags)
+Filming instructions (bullet points, MAX 6 bullets)
 
 Each section must be clearly labeled.
 
-The Script section must be detailed and usable for recording.
+Keep everything concise and complete.
 
-The Filming instructions must include:
-- visuals
-- audio
-- actor
-- location
-- editing
-
-Keep output commercially useful, clear, and engaging.
-
-Do not mention internal systems or model names.
+Do not exceed limits.
+Do not truncate sections.
 `.trim();
 }
 
