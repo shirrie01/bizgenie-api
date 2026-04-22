@@ -117,33 +117,32 @@ app.post("/generate-script", requireAdmin, async (req, res) => {
       execution_id,
       user_id,
       project_id,
-      compiled_prompt,
+      compiled_prompt
     } = req.body;
 
     if (!execution_id || !user_id || !project_id || !compiled_prompt) {
       return res.status(400).json({
         status: "failed",
         error: "Missing required fields",
+        script_body: ""
       });
     }
 
-    const script_body = await generateScriptWithVertex(compiled_prompt);
+    const text = await generateScriptWithVertex(compiled_prompt);
 
-    return res.status(200).json({
+    return res.json({
       status: "completed",
       execution_id,
-      script_body,
+      script_body: text
     });
+
   } catch (err) {
-    console.error("generate-script error:", {
-      message: err.message,
-      stack: err.stack,
-      execution_id: req.body?.execution_id || null,
-    });
+    console.error("generate-script error:", err);
 
     return res.status(500).json({
       status: "failed",
       error: "Internal execution error",
+      script_body: ""
     });
   }
 });
