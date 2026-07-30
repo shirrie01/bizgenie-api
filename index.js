@@ -2,9 +2,10 @@ console.log("🚀 BizGenie API booting");
 
 const express = require("express");
 const { VertexAI } = require("@google-cloud/vertexai");
-
-const app = express();
-app.use(express.json());
+const {
+  InMemoryMissionControlRepository,
+  createMissionControlRouter,
+} = require("./src/mission-control");
 
 const PROJECT_ID =
   process.env.GOOGLE_CLOUD_PROJECT ||
@@ -28,14 +29,6 @@ function requireAdmin(req, res, next) {
 
   next();
 }
-
-app.get("/", (_req, res) => {
-  res.send("BizGenie Cloud Run is up");
-});
-
-app.get("/_admin/ping", requireAdmin, (_req, res) => {
-  res.json({ status: "ok" });
-});
 
 function buildSystemInstruction() {
   return `
@@ -115,43 +108,101 @@ async function generateScriptWithVertex(compiledPrompt) {
   return text;
 }
 
-app.post("/generate-script", requireAdmin, async (req, res) => {
-  try {
-    const {
-      execution_id,
-      user_id,
-      project_id,
-      compiled_prompt
-    } = req.body;
+function createApp({
+  missionControlRepository = new InMemoryMissionControlRepository(),
+} = {}) {
+  const app = express();
+  app.use(express.json());
 
-    if (!execution_id || !user_id || !project_id || !compiled_prompt) {
-      return res.status(400).json({
+  app.get("/", (_req, res) => {
+    res.send("BizGenie Cloud Run is up");
+  });
+
+  app.get("/_admin/ping", requireAdmin, (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  app.use(
+    "/_admin/mission-control",
+    requireAdmin,
+    createMissionControlRouter({ repository: missionControlRepository })
+  );
+
+  app.post("/generate-script", requireAdmin, async (req, res) => {
+    try {
+      const {
+        execution_id,
+        user_id,
+        project_id,
+        compiled_prompt
+      } = req.body;
+
+      if (!execution_id || !user_id || !project_id || !compiled_prompt) {
+        return res.status(400).json({
+          status: "failed",
+          error: "Missing required fields",
+          script_body: ""
+        });
+      }
+
+      const text = await generateScriptWithVertex(compiled_prompt);
+
+      return res.json({
+        status: "completed",
+        execution_id,
+        script_body: text
+      });
+
+    } catch (err) {
+      console.error("generate-script error:", err);
+
+      return res.status(500).json({
         status: "failed",
-        error: "Missing required fields",
+        error: "Internal execution error",
         script_body: ""
       });
     }
+  });
 
-    const text = await generateScriptWithVertex(compiled_prompt);
+  app.use((error, req, res, next) => {
+    if (
+      req.path.startsWith("/_admin/mission-control") &&
+      error instanceof SyntaxError &&
+      error.status === 400 &&
+      Object.hasOwn(error, "body")
+    ) {
+      return res.status(400).json({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Request validation failed",
+          details: [
+            {
+              path: "",
+              code: "invalid_json",
+              message: "Malformed JSON request body",
+            },
+          ],
+        },
+      });
+    }
 
-    return res.json({
-      status: "completed",
-      execution_id,
-      script_body: text
-    });
+    return next(error);
+  });
 
-  } catch (err) {
-    console.error("generate-script error:", err);
+  return app;
+}
 
-    return res.status(500).json({
-      status: "failed",
-      error: "Internal execution error",
-      script_body: ""
-    });
-  }
-});
+const app = createApp();
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log("Listening on", port);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log("Listening on", port);
+  });
+}
+
+module.exports = {
+  app,
+  createApp,
+  requireAdmin,
+};
