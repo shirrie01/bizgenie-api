@@ -1,14 +1,14 @@
 # BizGenie Canon v2.0
 
 **Document ID:** BG-DOC-001  
-**Status:** Canonical  
+**Status:** Proposed — pending approval and merge  
 **Scope:** Product philosophy and launch principles  
 **Audience:** Product, engineering, design, operations and commercial teams  
 **Change class:** Controlled product-governance document
 
 ## Authority and purpose
 
-This document is the single source of truth for BizGenie's product identity, product philosophy and launch principles. It exists to keep product, design and engineering decisions aligned as the system grows.
+This proposed document is intended to become the single source of truth for BizGenie's product identity, product philosophy and launch principles after human approval and merge. It exists to keep product, design and engineering decisions aligned as the system grows.
 
 Where an older product-positioning document conflicts with this canon, this document governs once approved and merged. Technical implementation details remain governed by approved architecture documents and Architecture Decision Records. Changes to this canon require an explicit documentation task, review through Mission Control and human approval.
 
@@ -103,7 +103,9 @@ Before building a capability that could be integrated, record:
 4. The full cost of building, operating and replacing it.
 5. The interface that prevents lock-in and duplicate systems.
 
-Integration does not mean a fragmented user journey. Providers operate behind BizGenie; the customer experiences one product.
+Integration does not mean a fragmented user journey. BizGenie may use specialist third-party providers behind replaceable integration boundaries, but the normal customer workflow, results, state and controls remain inside BizGenie. The customer should not be sent away to learn or manually operate third-party editing or generation tools as the normal workflow. External authentication, consent or unavoidable platform-controlled actions may briefly leave BizGenie, but the user must return to a coherent BizGenie state.
+
+BizGenie owns the orchestration, Brand Brain context, campaign logic, instructions, approvals, asset lineage and outcome learning. Provider substitution should not materially alter the customer experience.
 
 ## 5. Brand Brain
 
@@ -311,6 +313,24 @@ A launch item must:
 
 Launch rejects optional breadth, duplicate systems and speculative platform work.
 
+### Locked Launch Capability Boundary
+
+Ring 1 is complete only when a paying customer can move through one coherent BizGenie journey that supports:
+
+- sign-up, authentication and subscription management;
+- creation and progressive enrichment of a Brand Brain;
+- campaign creation around a business objective;
+- generation of scripts, written content, AI images and AI video;
+- upload of human-created UGC and existing media;
+- selection of AI, Human or Hybrid creation modes, including combining human footage with AI-generated assets;
+- essential editing and enhancement: platform-specific aspect ratios and format changes, captions and subtitles, music, voice-over, trimming, sequencing, repurposing, and AI regeneration or replacement of selected elements;
+- content review and approval;
+- scheduling and publishing to supported social platforms;
+- lightweight but commercially useful campaign, content, publishing, engagement, credit and subscription analytics;
+- completion of the primary workflow within the BizGenie experience, with contextual guidance from the floating Genie.
+
+This boundary defines customer capabilities, not providers, APIs, schemas, screen layouts or technical implementation.
+
 ### Ring 2: 90 Days
 
 The 90-day ring improves the launch product using evidence from real customer behaviour and operating performance.
@@ -332,6 +352,10 @@ The future-vision ring contains strategic possibilities that may extend BizGenie
 It may explore richer orchestration, deeper Brand Brain intelligence, broader creative direction, new channels, specialist human collaboration and more advanced outcome measurement. These are hypotheses until validated.
 
 Future vision must not silently determine launch architecture. Architecture may preserve reasonable extension points, but present scope should not pay the full cost of unvalidated future capability.
+
+### Post-launch scope protection
+
+Unless a direct dependency on the locked launch journey is proven, the unified inbox, advanced cross-platform social engagement management, deep sales attribution, influencer marketplace, agency and white-label features, broad CRM integrations, enterprise reporting, and a marketplace or plugin ecosystem sit outside the mandatory launch boundary. They remain valid candidates for the 90-day or future-vision rings and must not become launch blockers without evidence and Mission Control approval.
 
 ## 11. No-Drift Rules
 
