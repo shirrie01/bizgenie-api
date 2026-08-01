@@ -1,16 +1,16 @@
 # BizGenie Canon v2.0
 
 **Document ID:** BG-DOC-001  
-**Status:** Proposed — pending approval and merge  
+**Status:** Canonical  
 **Scope:** Product philosophy and launch principles  
 **Audience:** Product, engineering, design, operations and commercial teams  
 **Change class:** Controlled product-governance document
 
 ## Authority and purpose
 
-This proposed document is intended to become the single source of truth for BizGenie's product identity, product philosophy and launch principles after human approval and merge. It exists to keep product, design and engineering decisions aligned as the system grows.
+This document is the single source of truth for BizGenie's product identity, product philosophy and launch principles. It exists to keep product, design and engineering decisions aligned as the system grows.
 
-Where an older product-positioning document conflicts with this canon, this document governs once approved and merged. Technical implementation details remain governed by approved architecture documents and Architecture Decision Records. Changes to this canon require an explicit documentation task, review through Mission Control and human approval.
+Where an older product-positioning document conflicts with this canon, this document governs. Technical implementation details remain governed by approved architecture documents and Architecture Decision Records. Changes to this canon require an explicit documentation task, review through Mission Control and human approval.
 
 This document defines direction and decision principles. It does not itself approve production code, APIs, providers, pricing, legal terms, data-governance changes or roadmap implementation.
 
