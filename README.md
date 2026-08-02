@@ -128,9 +128,37 @@ Mission Control validation failures return HTTP `400` with a stable shape:
 
 An unknown review returns `404` with error code `REVIEW_NOT_FOUND`.
 
+## Branding configuration
+
+All product-facing branding values are centralised in
+`config/branding.json` and validated by `src/config/branding.js`. The
+contract covers the app name, logo, colours, favicon, legal name, copyright,
+support email, named URLs and named marketing strings.
+
+Values that have not been approved are deliberately `null` or empty maps.
+The checked-in defaults preserve the existing API output.
+
+Deployments may apply partial overrides with `BRANDING_CONFIG_JSON`. Nested
+colour, URL and marketing-string maps are merged with the checked-in defaults:
+
+```bash
+BRANDING_CONFIG_JSON='{
+  "appName": "Configured Brand",
+  "logo": "/assets/logo.svg",
+  "colors": { "primary": "#112233" },
+  "supportEmail": "support@example.com",
+  "urls": { "marketing": "https://example.com" },
+  "marketingStrings": { "serviceStatus": "Configured service is up" }
+}'
+```
+
+Configuration is validated at startup. Invalid JSON, email addresses, URLs or
+field types fail fast rather than silently applying partial branding.
+
 ## Environment variables
 
 - `ADMIN_KEY` — required for all administration and script-generation routes.
+- `BRANDING_CONFIG_JSON` — optional validated partial override for the central branding configuration.
 - `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, or `GCP_PROJECT` — Google Cloud
   project used by the existing script generator.
 - `VERTEX_LOCATION` — optional; defaults to `europe-west1`.
