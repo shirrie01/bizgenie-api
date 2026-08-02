@@ -1,0 +1,14 @@
+{
+  "appName": "BizGenie",
+  "logo": null,
+  "colors": {},
+  "favicon": null,
+  "legalName": null,
+  "copyright": null,
+  "supportEmail": null,
+  "urls": {},
+  "marketingStrings": {
+    "apiBooting": "BizGenie API booting",
+    "serviceStatus": "BizGenie Cloud Run is up"
+  }
+}
