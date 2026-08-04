@@ -257,4 +257,3 @@ describe("Mission Control intelligence schemas", () => {
     );
   });
 });
-

@@ -126,7 +126,7 @@ action contains `action_id`, `title`, `owner_ref`, `success_measure`, optional
 
 ## Product Intelligence
 
-Stores a traceable synthesis that can informâ€”but cannot automatically changeâ€”a
+Stores a traceable synthesis that can inform - but cannot automatically change - a
 product decision.
 
 Required fields:
@@ -151,4 +151,3 @@ These schemas do not:
 - collect analytics;
 - approve launches or change the roadmap;
 - define any UI.
-

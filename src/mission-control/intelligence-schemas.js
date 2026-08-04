@@ -330,4 +330,3 @@ module.exports = {
   productIntelligenceTypes,
   retrospectiveActionStatuses,
 };
-
