@@ -1,9 +1,9 @@
 # BizGenie Canon v2.0
 
-**Document ID:** BG-DOC-001  
-**Status:** Canonical  
-**Scope:** Product philosophy and launch principles  
-**Audience:** Product, engineering, design, operations and commercial teams  
+**Document ID:** BG-DOC-001
+**Status:** Canonical
+**Scope:** Product philosophy and launch principles
+**Audience:** Product, engineering, design, operations and commercial teams
 **Change class:** Controlled product-governance document
 
 ## Authority and purpose
