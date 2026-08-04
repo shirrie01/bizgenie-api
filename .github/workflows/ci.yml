@@ -134,4 +134,3 @@ jobs:
       - name: Remove local images
         if: always()
         run: docker image rm --force "$DOCKER_IMAGE" "$BUILDPACK_IMAGE" || true
-
