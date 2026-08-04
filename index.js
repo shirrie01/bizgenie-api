@@ -1,4 +1,9 @@
-console.log("🚀 BizGenie API booting");
+const {
+  BrandingConfigSchema,
+  brandingConfig,
+} = require("./src/config/branding");
+
+console.log(`🚀 ${brandingConfig.marketingStrings.apiBooting}`);
 
 const express = require("express");
 const { VertexAI } = require("@google-cloud/vertexai");
@@ -30,9 +35,9 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function buildSystemInstruction() {
+function buildSystemInstruction(branding = brandingConfig) {
   return `
-You are BizGenie Phase 1 script generation engine.
+You are ${branding.appName} Phase 1 script generation engine.
 
 You MUST return a COMPLETE structured output.
 
@@ -63,7 +68,10 @@ Do not truncate sections.
 `.trim();
 }
 
-async function generateScriptWithVertex(compiledPrompt) {
+async function generateScriptWithVertex(
+  compiledPrompt,
+  { branding = brandingConfig } = {}
+) {
   if (!PROJECT_ID) {
     throw new Error("Missing GOOGLE_CLOUD_PROJECT environment variable");
   }
@@ -77,7 +85,7 @@ async function generateScriptWithVertex(compiledPrompt) {
     model: MODEL_NAME,
     systemInstruction: {
       role: "system",
-      parts: [{ text: buildSystemInstruction() }],
+      parts: [{ text: buildSystemInstruction(branding) }],
     },
     generationConfig: {
       maxOutputTokens: 2048,
@@ -110,12 +118,14 @@ async function generateScriptWithVertex(compiledPrompt) {
 
 function createApp({
   missionControlRepository = new InMemoryMissionControlRepository(),
+  branding = brandingConfig,
 } = {}) {
+  const resolvedBranding = BrandingConfigSchema.parse(branding);
   const app = express();
   app.use(express.json());
 
   app.get("/", (_req, res) => {
-    res.send("BizGenie Cloud Run is up");
+    res.send(resolvedBranding.marketingStrings.serviceStatus);
   });
 
   app.get("/_admin/ping", requireAdmin, (_req, res) => {
@@ -145,7 +155,9 @@ function createApp({
         });
       }
 
-      const text = await generateScriptWithVertex(compiled_prompt);
+      const text = await generateScriptWithVertex(compiled_prompt, {
+        branding: resolvedBranding,
+      });
 
       return res.json({
         status: "completed",
