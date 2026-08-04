@@ -89,4 +89,3 @@ assert_response generate-empty 400 \
   --header "x-admin-key: $ADMIN_KEY" \
   --data '{}' \
   "$base_url/generate-script"
-
