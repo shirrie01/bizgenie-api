@@ -24,6 +24,19 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check diff whitespace
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [[ -n "$BASE_SHA" ]]; then
+            git diff --check "$BASE_SHA...HEAD"
+          else
+            git diff --check HEAD^ HEAD
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -42,3 +55,83 @@ jobs:
         run: |
           node --check index.js
           find src test -type f -name '*.js' -print0 | xargs -0 -n1 node --check
+
+  container-artifacts:
+    name: Docker and Buildpack artifact checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      DOCKER_IMAGE: bizgenie-api:ci-docker
+      BUILDPACK_IMAGE: bizgenie-api:ci-buildpack
+      BUILDPACK_BUILDER: gcr.io/buildpacks/builder:google-22
+      PACK_VERSION: 0.40.8
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Create disposable local admin key
+        shell: bash
+        run: |
+          admin_key="bg-ci-002-$(openssl rand -hex 16)"
+          echo "::add-mask::$admin_key"
+          echo "ADMIN_KEY=$admin_key" >> "$GITHUB_ENV"
+
+      - name: Build Dockerfile image locally
+        shell: bash
+        run: |
+          docker version
+          docker build --tag "$DOCKER_IMAGE" .
+          docker image inspect --format 'Docker image ID: {{.Id}}' \
+            "$DOCKER_IMAGE"
+
+      - name: Verify Docker image Node 20 runtime
+        shell: bash
+        run: |
+          node_version="$(docker run --rm "$DOCKER_IMAGE" node --version)"
+          echo "Docker image Node version: $node_version"
+          [[ "$node_version" == v20.* ]]
+
+      - name: Smoke test Dockerfile image
+        run: bash scripts/smoke-container.sh "$DOCKER_IMAGE" bizgenie-ci-docker
+
+      - name: Install pinned pack CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location \
+            "https://github.com/buildpacks/pack/releases/download/v${PACK_VERSION}/pack-v${PACK_VERSION}-linux.tgz" \
+            --output /tmp/pack.tgz
+          sudo tar --extract --gzip --file /tmp/pack.tgz \
+            --directory /usr/local/bin --no-same-owner pack
+          rm /tmp/pack.tgz
+          pack version
+
+      - name: Build Google Buildpack image locally
+        shell: bash
+        run: |
+          echo "Google Buildpack builder: $BUILDPACK_BUILDER"
+          pack build "$BUILDPACK_IMAGE" \
+            --builder "$BUILDPACK_BUILDER" \
+            --path . \
+            --pull-policy if-not-present
+          docker image inspect --format 'Buildpack image ID: {{.Id}}' \
+            "$BUILDPACK_IMAGE"
+
+      - name: Verify Buildpack image Node 20 runtime
+        shell: bash
+        run: |
+          node_version="$(
+            docker run --rm --entrypoint launcher \
+              "$BUILDPACK_IMAGE" -- node --version
+          )"
+          echo "Buildpack image Node version: $node_version"
+          [[ "$node_version" == v20.* ]]
+
+      - name: Smoke test Buildpack image
+        run: bash scripts/smoke-container.sh "$BUILDPACK_IMAGE" bizgenie-ci-buildpack
+
+      - name: Remove local images
+        if: always()
+        run: docker image rm --force "$DOCKER_IMAGE" "$BUILDPACK_IMAGE" || true
+
