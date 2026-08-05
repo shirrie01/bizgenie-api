@@ -1,5 +1,5 @@
-# Use official Node 20 LTS image
-FROM node:20-slim
+# Use official Node 22 LTS image
+FROM node:22-slim
 
 # Create app directory
 WORKDIR /app

@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   test:
-    name: Node 20 tests and syntax
+    name: Node 22 tests and syntax
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -41,7 +41,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -57,7 +57,7 @@ jobs:
           find src test -type f -name '*.js' -print0 | xargs -0 -n1 node --check
 
   container-artifacts:
-    name: Docker and Buildpack artifact checks
+    name: Node 22 Docker and Buildpack artifact checks
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -85,12 +85,12 @@ jobs:
           docker image inspect --format 'Docker image ID: {{.Id}}' \
             "$DOCKER_IMAGE"
 
-      - name: Verify Docker image Node 20 runtime
+      - name: Verify Docker image Node 22 runtime
         shell: bash
         run: |
           node_version="$(docker run --rm "$DOCKER_IMAGE" node --version)"
           echo "Docker image Node version: $node_version"
-          [[ "$node_version" == v20.* ]]
+          [[ "$node_version" == v22.* ]]
 
       - name: Smoke test Dockerfile image
         run: bash scripts/smoke-container.sh "$DOCKER_IMAGE" bizgenie-ci-docker
@@ -118,7 +118,7 @@ jobs:
           docker image inspect --format 'Buildpack image ID: {{.Id}}' \
             "$BUILDPACK_IMAGE"
 
-      - name: Verify Buildpack image Node 20 runtime
+      - name: Verify Buildpack image Node 22 runtime
         shell: bash
         run: |
           node_version="$(
@@ -126,7 +126,7 @@ jobs:
               "$BUILDPACK_IMAGE" -- node --version
           )"
           echo "Buildpack image Node version: $node_version"
-          [[ "$node_version" == v20.* ]]
+          [[ "$node_version" == v22.* ]]
 
       - name: Smoke test Buildpack image
         run: bash scripts/smoke-container.sh "$BUILDPACK_IMAGE" bizgenie-ci-buildpack

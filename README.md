@@ -4,7 +4,7 @@ BizGenie Cloud Run API
 
 ## Local setup
 
-Requires Node.js 20 LTS and npm.
+Requires Node.js 22 LTS and npm.
 
 ```bash
 npm ci
