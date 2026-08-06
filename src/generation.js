@@ -1,4 +1,5 @@
 const { VertexAI } = require("@google-cloud/vertexai");
+const { buildSystemRole, compilePrompt } = require("./prompts/compiler");
 
 const PROVIDER = "vertex-ai";
 const DEFAULT_LOCATION = "europe-west1";
@@ -58,36 +59,7 @@ class GenerationIncompleteError extends Error {
 }
 
 function buildSystemInstruction(branding) {
-  return [
-    "You are " + branding.appName + " Phase 1 script generation engine.",
-    "",
-    "You MUST return a COMPLETE structured output.",
-    "",
-    "STRICT RULES:",
-    "- Do NOT stop early",
-    "- ALL sections must be included",
-    "- If any section is missing, the response is invalid",
-    "",
-    "Return ONLY plain text. No JSON. No markdown.",
-    "",
-    "FOR SHORT-FORM VIDEO OUTPUT:",
-    "You MUST include ALL sections below:",
-    "",
-    "Hook (1 sentence)",
-    "Concept (1-2 sentences)",
-    "Script (MAX 120 words)",
-    "CTA (1 line)",
-    "Caption (MAX 2 lines)",
-    "Hashtags (MAX 8 hashtags)",
-    "Filming instructions (bullet points, MAX 6 bullets)",
-    "",
-    "Each section must be clearly labeled.",
-    "",
-    "Keep everything concise and complete.",
-    "",
-    "Do not exceed limits.",
-    "Do not truncate sections.",
-  ].join("\n");
+  return buildSystemRole(branding.appName);
 }
 
 function assembleCandidateText(candidate) {
@@ -218,9 +190,10 @@ function validateGenerationResponse(response, { model = DEFAULT_MODEL_NAME } = {
 }
 
 async function generateScriptWithVertex(
-  compiledPrompt,
+  userContext,
   {
     branding,
+    promptOptions = {},
     projectId =
       process.env.GOOGLE_CLOUD_PROJECT ||
       process.env.GCLOUD_PROJECT ||
@@ -235,6 +208,11 @@ async function generateScriptWithVertex(
   }
 
   const vertexAI = new VertexAIClient({ project: projectId, location });
+  const compiledPrompt = compilePrompt({
+    ...promptOptions,
+    appName: branding.appName,
+    userContext,
+  });
   const model = vertexAI.getGenerativeModel({
     model: modelName,
     systemInstruction: {

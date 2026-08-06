@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { beforeEach, describe, it } = require("node:test");
 const request = require("supertest");
 const { brandingConfig } = require("../src/config/branding");
+const { compilePrompt } = require("../src/prompts/compiler");
 const {
   GENERATION_CONFIG,
   GENERATION_INCOMPLETE_MESSAGE,
@@ -210,15 +211,19 @@ describe("Vertex generation configuration", () => {
     });
     assert.deepEqual(modelOptions.generationConfig, GENERATION_CONFIG);
     assert.equal(modelOptions.model, "gemini-test");
-    assert.match(
+    assert.equal(
       modelOptions.systemInstruction.parts[0].text,
-      /You MUST return a COMPLETE structured output/
+      "You are BizGenie Phase 1 script generation engine."
     );
+    const expectedPrompt = compilePrompt({
+      appName: brandingConfig.appName,
+      userContext: "enriched prompt",
+    });
     assert.deepEqual(requestBody, {
       contents: [
         {
           role: "user",
-          parts: [{ text: "enriched prompt" }],
+          parts: [{ text: expectedPrompt }],
         },
       ],
     });
