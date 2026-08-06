@@ -167,3 +167,33 @@ field types fail fast rather than silently applying partial branding.
 
 Mission Control introduces no new environment variables. Its repository is
 process-local and is reset whenever the process restarts.
+
+## Generation completion protection
+
+`POST /generate-script` requests one candidate with a bounded 4,096-token
+output budget. The service assembles every text part in that candidate, records
+safe provider completion and token-count metadata, and requires non-empty
+content for Hook, Concept, Script, CTA, Caption, Hashtags, and Filming
+instructions before returning `status: "completed"`.
+
+Token exhaustion, empty output, a non-success provider stop reason, or a
+missing required section returns HTTP `502` without returning the partial text:
+
+```json
+{
+  "status": "failed",
+  "error": {
+    "code": "GENERATION_INCOMPLETE",
+    "message": "The model response ended before all required sections were completed",
+    "details": {
+      "finish_reason": "MAX_TOKENS",
+      "missing_sections": ["CTA", "Caption", "Hashtags", "Filming instructions"],
+      "retryable": true
+    }
+  },
+  "script_body": ""
+}
+```
+
+The endpoint does not retry provider requests automatically. This avoids
+duplicate persistence or charge risks in upstream orchestration.
