@@ -56,7 +56,12 @@ function createApp({
       execution_id,
       user_id,
       project_id,
-      compiled_prompt
+      compiled_prompt,
+      platform,
+      script_type,
+      audience,
+      intent_stage,
+      voice_style
     } = req.body;
 
     try {
@@ -70,6 +75,13 @@ function createApp({
 
       const generation = await scriptGenerator(compiled_prompt, {
         branding: resolvedBranding,
+        promptOptions: {
+          platform,
+          scriptType: script_type,
+          audience,
+          intent: intent_stage,
+          voice: voice_style,
+        },
       });
 
       logger.info?.("generation completed", {

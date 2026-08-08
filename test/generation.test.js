@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { beforeEach, describe, it } = require("node:test");
 const request = require("supertest");
 const { brandingConfig } = require("../src/config/branding");
+const { compilePrompt } = require("../src/prompts/compiler");
 const {
   GENERATION_CONFIG,
   GENERATION_INCOMPLETE_MESSAGE,
@@ -210,15 +211,19 @@ describe("Vertex generation configuration", () => {
     });
     assert.deepEqual(modelOptions.generationConfig, GENERATION_CONFIG);
     assert.equal(modelOptions.model, "gemini-test");
-    assert.match(
+    assert.equal(
       modelOptions.systemInstruction.parts[0].text,
-      /You MUST return a COMPLETE structured output/
+      "You are BizGenie Phase 1 script generation engine."
     );
+    const expectedPrompt = compilePrompt({
+      appName: brandingConfig.appName,
+      userContext: "enriched prompt",
+    });
     assert.deepEqual(requestBody, {
       contents: [
         {
           role: "user",
-          parts: [{ text: "enriched prompt" }],
+          parts: [{ text: expectedPrompt }],
         },
       ],
     });
@@ -277,6 +282,71 @@ describe("generate-script completion contract", () => {
       execution_id: "execution_001",
       script_body: COMPLETE_OUTPUT,
     });
+  });
+
+  it("wires structured request selections through the real prompt compiler", async () => {
+    let requestBody;
+
+    class FakeVertexAI {
+      getGenerativeModel() {
+        return {
+          async generateContent(body) {
+            requestBody = body;
+            return { response: providerResponse() };
+          },
+        };
+      }
+    }
+
+    const app = createApp({
+      scriptGenerator: (userContext, options) =>
+        generateScriptWithVertex(userContext, {
+          ...options,
+          projectId: "test-project",
+          modelName: "gemini-test",
+          VertexAIClient: FakeVertexAI,
+        }),
+      logger: silentLogger,
+    });
+    const userContext = "Explain how a planning workflow saves time.";
+
+    const response = await admin(
+      request(app)
+        .post("/generate-script")
+        .send({
+          ...validRequest(userContext),
+          platform: "LinkedIn",
+          script_type: "Problem Solution",
+          audience: "B2B",
+          intent_stage: "Cold",
+          voice_style: "Professional",
+        })
+    );
+
+    assert.equal(response.status, 200);
+    const finalPrompt = requestBody.contents[0].parts[0].text;
+    assert.match(
+      finalPrompt,
+      /\[PLATFORM RULES\]\nOptimise for a LinkedIn feed viewing experience\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[SCRIPT TYPE RULES\]\nEstablish one recognisable problem before introducing the solution\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[AUDIENCE RULES\]\nAddress a professional audience in terms of its work, constraints, and desired business outcome\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[INTENT RULES\]\nAssume the viewer has no prior relationship with the brand\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[VOICE RULES\]\nUse a polished, confident, and precise voice\./
+    );
+    assert.match(finalPrompt, /\[USER CONTEXT\]/);
+    assert.match(finalPrompt, new RegExp(userContext.replaceAll(".", "\\.")));
   });
 
   it("returns the stable incomplete error and never returns partial text as success", async () => {
