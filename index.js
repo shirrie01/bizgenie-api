@@ -7,6 +7,11 @@ console.log(`🚀 ${brandingConfig.marketingStrings.apiBooting}`);
 
 const express = require("express");
 const {
+  InMemoryBrandBrainRepository,
+  createBrandBrainRouter,
+  resolveBrandBrainContext,
+} = require("./src/brand-brain");
+const {
   InMemoryMissionControlRepository,
   createMissionControlRouter,
 } = require("./src/mission-control");
@@ -29,6 +34,7 @@ function requireAdmin(req, res, next) {
 
 function createApp({
   missionControlRepository = new InMemoryMissionControlRepository(),
+  brandBrainRepository = new InMemoryBrandBrainRepository(),
   branding = brandingConfig,
   scriptGenerator = generateScriptWithVertex,
   logger = console,
@@ -51,6 +57,12 @@ function createApp({
     createMissionControlRouter({ repository: missionControlRepository })
   );
 
+  app.use(
+    "/_admin/brand-brains",
+    requireAdmin,
+    createBrandBrainRouter({ repository: brandBrainRepository })
+  );
+
   app.post("/generate-script", requireAdmin, async (req, res) => {
     const {
       execution_id,
@@ -61,7 +73,8 @@ function createApp({
       script_type,
       audience,
       intent_stage,
-      voice_style
+      voice_style,
+      brand_id,
     } = req.body;
 
     try {
@@ -73,6 +86,19 @@ function createApp({
         });
       }
 
+      const brandContext = resolveBrandBrainContext({
+        repository: brandBrainRepository,
+        projectId: project_id,
+        brandId: brand_id,
+        generationContext: {
+          platform,
+          scriptType: script_type,
+          audience,
+          intent: intent_stage,
+          voice: voice_style,
+        },
+      });
+
       const generation = await scriptGenerator(compiled_prompt, {
         branding: resolvedBranding,
         promptOptions: {
@@ -81,6 +107,7 @@ function createApp({
           audience,
           intent: intent_stage,
           voice: voice_style,
+          brandContext,
         },
       });
 
@@ -130,7 +157,8 @@ function createApp({
 
   app.use((error, req, res, next) => {
     if (
-      req.path.startsWith("/_admin/mission-control") &&
+      (req.path.startsWith("/_admin/mission-control") ||
+        req.path.startsWith("/_admin/brand-brains")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
       Object.hasOwn(error, "body")

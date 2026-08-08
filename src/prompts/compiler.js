@@ -64,6 +64,7 @@ function compilePrompt({
   audience,
   intent,
   voice,
+  brandContext = "",
   userContext = "",
 } = {}) {
   const sections = [
@@ -75,8 +76,9 @@ function compilePrompt({
     selectedSection("AUDIENCE RULES", AUDIENCE_RULES, audience),
     selectedSection("INTENT RULES", INTENT_RULES, intent),
     selectedSection("VOICE RULES", VOICE_RULES, voice),
-    // Placeholder only: Brand Brain lookup and injection are intentionally out of scope.
-    section("BRAND CONTEXT", BRAND_CONTEXT_PLACEHOLDER),
+    typeof brandContext === "string" && brandContext
+      ? brandContext
+      : section("BRAND CONTEXT", BRAND_CONTEXT_PLACEHOLDER),
     section("USER CONTEXT", [
       typeof userContext === "string" ? userContext : "",
     ]),
