@@ -284,6 +284,71 @@ describe("generate-script completion contract", () => {
     });
   });
 
+  it("wires structured request selections through the real prompt compiler", async () => {
+    let requestBody;
+
+    class FakeVertexAI {
+      getGenerativeModel() {
+        return {
+          async generateContent(body) {
+            requestBody = body;
+            return { response: providerResponse() };
+          },
+        };
+      }
+    }
+
+    const app = createApp({
+      scriptGenerator: (userContext, options) =>
+        generateScriptWithVertex(userContext, {
+          ...options,
+          projectId: "test-project",
+          modelName: "gemini-test",
+          VertexAIClient: FakeVertexAI,
+        }),
+      logger: silentLogger,
+    });
+    const userContext = "Explain how a planning workflow saves time.";
+
+    const response = await admin(
+      request(app)
+        .post("/generate-script")
+        .send({
+          ...validRequest(userContext),
+          platform: "LinkedIn",
+          script_type: "Problem Solution",
+          audience: "B2B",
+          intent_stage: "Cold",
+          voice_style: "Professional",
+        })
+    );
+
+    assert.equal(response.status, 200);
+    const finalPrompt = requestBody.contents[0].parts[0].text;
+    assert.match(
+      finalPrompt,
+      /\[PLATFORM RULES\]\nOptimise for a LinkedIn feed viewing experience\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[SCRIPT TYPE RULES\]\nEstablish one recognisable problem before introducing the solution\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[AUDIENCE RULES\]\nAddress a professional audience in terms of its work, constraints, and desired business outcome\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[INTENT RULES\]\nAssume the viewer has no prior relationship with the brand\./
+    );
+    assert.match(
+      finalPrompt,
+      /\[VOICE RULES\]\nUse a polished, confident, and precise voice\./
+    );
+    assert.match(finalPrompt, /\[USER CONTEXT\]/);
+    assert.match(finalPrompt, new RegExp(userContext.replaceAll(".", "\\.")));
+  });
+
   it("returns the stable incomplete error and never returns partial text as success", async () => {
     const partial = [
       "Hook: Make planning simpler.",
