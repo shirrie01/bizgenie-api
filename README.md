@@ -35,6 +35,154 @@ The tests do not call Vertex AI and do not require Google Cloud credentials.
 The authenticated routes require the `x-admin-key` header to exactly match the
 `ADMIN_KEY` environment variable.
 
+## Brand Brain context foundation
+
+Brand Brain is the persistent brand-intelligence layer of the future Company
+Brain. It acts as a digital employee handbook for approved identity, voice,
+audience, commercial, competitor, and selectively relevant visual context. The
+V1 foundation is deliberately small: it provides strict records, a replaceable
+repository contract, deterministic tenancy-aware resolution, bounded prompt
+compilation, and protected administration endpoints.
+
+The implementation is isolated under `src/brand-brain/`:
+
+- `schema.js` defines the strict, bounded V1 record and administration input.
+- `repository.js` defines `getByBrandId`, `getByProjectAndBrand`, and `upsert`.
+- `contextResolver.js` enforces project ownership and approved status.
+- `contextCompiler.js` produces deterministic prompt-ready context.
+- `router.js` exposes the smallest protected testability surface.
+- `index.js` is the domain's public module boundary.
+
+The default repository is process-local and in-memory. It stores defensive
+copies and can be replaced by a permanent repository later without changing the
+prompt compiler. No database or persistence-provider dependency is introduced.
+
+### V1 record
+
+Stored Brand Brains have this shape. `brand_id`, `project_id`, `name`, and all
+four metadata fields are required in the stored record; every domain section
+and each field within it is optional, so partial Brand Brains are valid.
+
+```yaml
+brand_id: string
+project_id: string
+name: string
+identity:
+  description: string
+  mission: string
+  vision: string
+  values: string[]
+  positioning: string
+voice:
+  tone: string
+  writing_style: string
+  personality: string
+  preferred_terms: string[]
+  prohibited_terms: string[]
+audience:
+  summary: string
+  pain_points: string[]
+  goals: string[]
+  objections: string[]
+  buying_triggers: string[]
+commercial:
+  differentiators: string[]
+  primary_cta: string
+  approved_claims: string[]
+  prohibited_claims: string[]
+competitors:
+  names: string[]
+  notes: string
+visual:
+  colours: string[]
+  fonts: string[]
+  photography_style: string
+metadata:
+  version: positive integer
+  status: draft | approved | archived
+  created_at: ISO 8601 timestamp
+  updated_at: ISO 8601 timestamp
+```
+
+Identifiers are limited to 128 characters and a safe identifier character set;
+names to 200 characters; prose fields to 2,000 characters; general lists to 20
+items of 300 characters; and approved/prohibited claim and prohibited-term
+lists to 12 items of 200 characters. Objects are strict and unknown fields,
+wrong structures, invalid timestamps, unsupported statuses, and oversized
+values are rejected rather than coerced into another shape.
+
+### Administration
+
+Both administration endpoints reuse the existing `x-admin-key` middleware:
+
+- `PUT /_admin/brand-brains/:brand_id` creates or replaces a Brand Brain.
+- `GET /_admin/brand-brains/:brand_id` retrieves a Brand Brain.
+
+Mutation is not publicly exposed. The route identifier is authoritative and
+any supplied body `brand_id` must match it. On first upsert, metadata defaults
+to version `1`, status `approved`, and server timestamps; supplied valid
+metadata may override those defaults. Upserting an existing `brand_id` for
+another `project_id` returns `BRAND_PROJECT_CONFLICT` and cannot transfer
+ownership implicitly. Missing records return `BRAND_BRAIN_NOT_FOUND`.
+Validation failures use the existing stable `VALIDATION_ERROR` response shape.
+
+### Generation and resolution
+
+`POST /generate-script` now accepts optional `brand_id`. No existing caller has
+to provide it.
+
+- With no `brand_id`, the existing prompt and generation behaviour are
+  preserved, including the documented Brand Context placeholder.
+- With an unknown `brand_id`, generation continues with that same fallback.
+- With an approved record belonging to the request's `project_id`, compiled
+  Brand Brain context replaces the placeholder.
+- With a project mismatch, draft record, or archived record, no Brand Brain
+  content is injected and generation continues with the fallback.
+
+The assembly order remains System role, Platform, Script type, Audience,
+Intent, Voice, Brand Brain, User context, Quality rules, and Output contract.
+Brand Brain supplements rather than replaces the existing structured modules
+or the caller's `compiled_prompt`.
+
+### Context budget and relevance
+
+Compiled Brand Brain context has an 8,000-character maximum. Empty sections and
+metadata are omitted. Sections are selected deterministically in this priority
+order: identity/positioning, voice, audience, differentiators, claims,
+preferred CTA, competitors, then visual context. Visual context is considered
+only for Instagram, TikTok, or UGC generation.
+
+When the complete context would exceed the budget, lower-priority sections are
+dropped whole; content is never cut mid-value. Brand name, prohibited terms,
+and prohibited claims are reserved before optional content, so governance
+language is never shortened in a way that changes its meaning. Schema bounds
+ensure that reserved governance content fits the configured default budget.
+This is deterministic section selection, not semantic or vector retrieval.
+
+### Security and tenancy
+
+Generation lookup always uses the `(project_id, brand_id)` pair. A `brand_id`
+match alone is insufficient, so one project's context cannot enter another
+project's prompt. Unknown identifiers return no data. Repository values are
+defensively copied, project ownership cannot be reassigned through upsert, and
+only `approved` records resolve. Generation success/error logs contain safe
+execution and provider metadata only; prompts and Brand Brain content are not
+written to generic logs.
+
+### Explicit future extension points
+
+The repository interface is the persistence seam. The resolver/compiler can
+later accept richer relevance signals or retrieval results without changing
+the Prompt Compiler contract. New Company Brain domains can remain separate
+context providers and be composed at the same controlled injection boundary.
+
+This foundation does **not** implement permanent production persistence, Brand
+Brain onboarding UI, the Genie interview, voice onboarding, automatic website
+ingestion, social ingestion, document ingestion, vector/semantic retrieval,
+Product Brain, Customer Brain, Campaign Brain, Learning Brain, Trend
+Intelligence, Opportunity Engine, or automated performance learning. Those
+remain separately reviewed roadmap components.
+
 ## Mission Control foundation
 
 Mission Control is an internal, in-memory foundation for reviews and Red Team

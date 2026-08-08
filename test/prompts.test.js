@@ -109,6 +109,24 @@ describe("prompt compiler", () => {
     }
   });
 
+  it("replaces the placeholder with resolved Brand Brain context", () => {
+    const brandContext = [
+      "[BRAND BRAIN]",
+      "",
+      "Brand:\nBizGenie",
+    ].join("\n");
+    const prompt = compilePrompt({ ...ALL_OPTIONS, brandContext });
+
+    assert.match(prompt, /\[BRAND BRAIN\]\n\nBrand:\nBizGenie/);
+    assert.doesNotMatch(prompt, /Brand context is not available/);
+    assert.ok(
+      position(prompt, "VOICE RULES") < position(prompt, "BRAND BRAIN")
+    );
+    assert.ok(
+      position(prompt, "BRAND BRAIN") < position(prompt, "USER CONTEXT")
+    );
+  });
+
   it("returns byte-for-byte deterministic output", () => {
     assert.equal(compilePrompt(ALL_OPTIONS), compilePrompt({ ...ALL_OPTIONS }));
   });
