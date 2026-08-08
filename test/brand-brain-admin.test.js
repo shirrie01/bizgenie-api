@@ -1,7 +1,9 @@
 const assert = require("node:assert/strict");
 const { beforeEach, describe, it } = require("node:test");
 const request = require("supertest");
+const { PostgresBrandBrainRepository } = require("../src/brand-brain");
 const { createApp } = require("../index");
+const { FakeBrandBrainPool } = require("./helpers/fake-brand-brain-pool");
 
 const ADMIN_KEY = "brand-brain-admin-test-key";
 
@@ -60,6 +62,48 @@ describe("Brand Brain administration", () => {
     );
     assert.equal(fetched.status, 200);
     assert.deepEqual(fetched.body, created.body);
+  });
+
+  it("authorises persistent upsert and retrieval through the Postgres repository", async () => {
+    const repository = new PostgresBrandBrainRepository({
+      pool: new FakeBrandBrainPool(),
+    });
+    const app = createApp({ brandBrainRepository: repository });
+
+    const created = await admin(
+      request(app)
+        .put("/_admin/brand-brains/brand_persistent")
+        .send(validInput())
+    );
+    const fetched = await admin(
+      request(app).get("/_admin/brand-brains/brand_persistent")
+    );
+
+    assert.equal(created.status, 200);
+    assert.equal(fetched.status, 200);
+    assert.deepEqual(fetched.body, created.body);
+  });
+
+  it("returns a safe structured error when persistent retrieval fails", async () => {
+    const repository = new PostgresBrandBrainRepository({
+      pool: new FakeBrandBrainPool({
+        failure: new Error("private provider diagnostic details"),
+      }),
+    });
+    const response = await admin(
+      request(createApp({ brandBrainRepository: repository })).get(
+        "/_admin/brand-brains/brand_001"
+      )
+    );
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(response.body, {
+      error: {
+        code: "BRAND_BRAIN_PERSISTENCE_UNAVAILABLE",
+        message: "Brand Brain persistence is temporarily unavailable",
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(response.body), /private|provider|diagnostic/);
   });
 
   it("rejects malformed records with structured validation details", async () => {

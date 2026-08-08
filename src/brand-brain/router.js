@@ -22,7 +22,7 @@ function createBrandBrainRouter({ repository, now = () => new Date() }) {
 
   const router = express.Router();
 
-  router.put("/:brandId", (req, res, next) => {
+  router.put("/:brandId", async (req, res, next) => {
     try {
       const input = parse(UpsertBrandBrainSchema, req.body);
       if (input.brand_id && input.brand_id !== req.params.brandId) {
@@ -35,7 +35,7 @@ function createBrandBrainRouter({ repository, now = () => new Date() }) {
         ]);
       }
 
-      const existing = repository.getByBrandId(req.params.brandId);
+      const existing = await repository.getByBrandId(req.params.brandId);
       const timestamp = now().toISOString();
       const record = parse(BrandBrainSchema, {
         ...input,
@@ -52,15 +52,15 @@ function createBrandBrainRouter({ repository, now = () => new Date() }) {
         },
       });
 
-      return res.json({ brand_brain: repository.upsert(record) });
+      return res.json({ brand_brain: await repository.upsert(record) });
     } catch (error) {
       return next(error);
     }
   });
 
-  router.get("/:brandId", (req, res, next) => {
+  router.get("/:brandId", async (req, res, next) => {
     try {
-      const record = repository.getByBrandId(req.params.brandId);
+      const record = await repository.getByBrandId(req.params.brandId);
       if (!record) {
         throw new BrandBrainNotFoundError(req.params.brandId);
       }

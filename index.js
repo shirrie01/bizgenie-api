@@ -8,9 +8,13 @@ console.log(`🚀 ${brandingConfig.marketingStrings.apiBooting}`);
 const express = require("express");
 const {
   InMemoryBrandBrainRepository,
+  createPostgresBrandBrainRepositoryFromEnv,
   createBrandBrainRouter,
   resolveBrandBrainContext,
 } = require("./src/brand-brain");
+const {
+  BrandBrainPersistenceError,
+} = require("./src/brand-brain/errors");
 const {
   InMemoryMissionControlRepository,
   createMissionControlRouter,
@@ -86,7 +90,7 @@ function createApp({
         });
       }
 
-      const brandContext = resolveBrandBrainContext({
+      const brandContext = await resolveBrandBrainContext({
         repository: brandBrainRepository,
         projectId: project_id,
         brandId: brand_id,
@@ -123,6 +127,23 @@ function createApp({
       });
 
     } catch (err) {
+      if (err instanceof BrandBrainPersistenceError) {
+        logger.error?.("brand brain persistence unavailable", {
+          execution_id,
+          name: err.name,
+          code: err.code,
+        });
+
+        return res.status(err.status).json({
+          status: "failed",
+          error: {
+            code: err.code,
+            message: err.message,
+          },
+          script_body: ""
+        });
+      }
+
       if (err instanceof GenerationIncompleteError) {
         logger.warn?.("generation incomplete", {
           execution_id,
@@ -184,18 +205,44 @@ function createApp({
   return app;
 }
 
-const app = createApp();
-
 const port = process.env.PORT || 8080;
+
+async function createProductionApp({ env = process.env, logger = console } = {}) {
+  const brandBrainRepository = createPostgresBrandBrainRepositoryFromEnv({
+    env,
+  });
+  await brandBrainRepository.initialize();
+  return {
+    app: createApp({ brandBrainRepository, logger }),
+    brandBrainRepository,
+  };
+}
+
+async function startServer({ env = process.env, logger = console } = {}) {
+  const production = await createProductionApp({ env, logger });
+  const server = production.app.listen(env.PORT || port, () => {
+    logger.log?.("Listening on", env.PORT || port);
+  });
+  return { ...production, server };
+}
+
+const app = require.main === module ? null : createApp();
+
 if (require.main === module) {
-  app.listen(port, () => {
-    console.log("Listening on", port);
+  startServer().catch((error) => {
+    console.error("Startup failed", {
+      name: error?.name || "Error",
+      code: error?.code || "STARTUP_ERROR",
+    });
+    process.exitCode = 1;
   });
 }
 
 module.exports = {
   app,
   createApp,
+  createProductionApp,
   generateScriptWithVertex,
   requireAdmin,
+  startServer,
 };
