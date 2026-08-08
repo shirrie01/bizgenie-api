@@ -1,6 +1,6 @@
 const { compileBrandContext } = require("./contextCompiler");
 
-function resolveBrandBrainContext({
+async function resolveBrandBrainContext({
   repository,
   projectId,
   brandId,
@@ -16,7 +16,7 @@ function resolveBrandBrainContext({
     return "";
   }
 
-  const record = repository.getByProjectAndBrand(projectId, brandId);
+  const record = await repository.getByProjectAndBrand(projectId, brandId);
   if (!record || record.metadata.status !== "approved") {
     return "";
   }

@@ -5,6 +5,9 @@ image="${1:?image name is required}"
 container_name="${2:?container name is required}"
 : "${ADMIN_KEY:?ADMIN_KEY must be set to a disposable local value}"
 response_dir="$(mktemp -d)"
+database_container="${container_name}-postgres"
+network_name="${container_name}-network"
+database_password="$(openssl rand -hex 24)"
 
 cleanup() {
   exit_code=$?
@@ -12,17 +15,60 @@ cleanup() {
     docker logs "$container_name" 2>&1 || true
   fi
   docker rm --force "$container_name" >/dev/null 2>&1 || true
+  docker rm --force "$database_container" >/dev/null 2>&1 || true
+  docker network rm "$network_name" >/dev/null 2>&1 || true
   rm -rf "$response_dir"
   trap - EXIT
   exit "$exit_code"
 }
 trap cleanup EXIT
 
+docker network create "$network_name" >/dev/null
+docker run --detach \
+  --name "$database_container" \
+  --network "$network_name" \
+  --env POSTGRES_PASSWORD="$database_password" \
+  postgres:16-alpine >/dev/null
+
+database_ready=false
+for _ in {1..30}; do
+  if docker exec "$database_container" pg_isready --username postgres \
+    >/dev/null 2>&1; then
+    database_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$database_ready" != "true" ]]; then
+  echo "Disposable PostgreSQL did not become ready" >&2
+  exit 1
+fi
+
+migration_applied=false
+for _ in {1..30}; do
+  if docker exec --interactive "$database_container" \
+    psql --username postgres --dbname postgres \
+    < supabase/migrations/20260808170000_create_brand_brains.sql \
+    >/dev/null 2>&1; then
+    migration_applied=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$migration_applied" != "true" ]]; then
+  echo "Brand Brain migration could not be applied to disposable PostgreSQL" >&2
+  exit 1
+fi
+
+database_url="postgresql://postgres:${database_password}@${database_container}:5432/postgres"
+
 docker run --detach \
   --name "$container_name" \
+  --network "$network_name" \
   -p 127.0.0.1::8080 \
   --env PORT=8080 \
   --env ADMIN_KEY \
+  --env BRAND_BRAIN_DATABASE_URL="$database_url" \
   "$image" >/dev/null
 
 host_binding="$(docker port "$container_name" 8080/tcp)"

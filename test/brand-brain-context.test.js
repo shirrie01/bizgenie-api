@@ -110,15 +110,15 @@ describe("Brand Brain context compiler", () => {
 });
 
 describe("Brand Brain context resolver", () => {
-  it("returns no context for absent or unknown brand IDs", () => {
+  it("returns no context for absent or unknown brand IDs", async () => {
     const repository = new InMemoryBrandBrainRepository();
     repository.upsert(record());
     assert.equal(
-      resolveBrandBrainContext({ repository, projectId: "project_001" }),
+      await resolveBrandBrainContext({ repository, projectId: "project_001" }),
       ""
     );
     assert.equal(
-      resolveBrandBrainContext({
+      await resolveBrandBrainContext({
         repository,
         projectId: "project_001",
         brandId: "brand_missing",
@@ -127,11 +127,11 @@ describe("Brand Brain context resolver", () => {
     );
   });
 
-  it("resolves approved context only for the owning project", () => {
+  it("resolves approved context only for the owning project", async () => {
     const repository = new InMemoryBrandBrainRepository();
     repository.upsert(record());
     assert.match(
-      resolveBrandBrainContext({
+      await resolveBrandBrainContext({
         repository,
         projectId: "project_001",
         brandId: "brand_001",
@@ -139,7 +139,7 @@ describe("Brand Brain context resolver", () => {
       /\[BRAND BRAIN\]/
     );
     assert.equal(
-      resolveBrandBrainContext({
+      await resolveBrandBrainContext({
         repository,
         projectId: "project_002",
         brandId: "brand_001",
@@ -148,14 +148,14 @@ describe("Brand Brain context resolver", () => {
     );
   });
 
-  it("does not resolve draft or archived records", () => {
+  it("does not resolve draft or archived records", async () => {
     for (const status of ["draft", "archived"]) {
       const repository = new InMemoryBrandBrainRepository();
       repository.upsert(
         record({ metadata: { ...record().metadata, status } })
       );
       assert.equal(
-        resolveBrandBrainContext({
+        await resolveBrandBrainContext({
           repository,
           projectId: "project_001",
           brandId: "brand_001",

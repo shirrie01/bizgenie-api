@@ -13,8 +13,7 @@ npm ci
 Start the API:
 
 ```bash
-ADMIN_KEY=replace-with-a-local-secret \
-GOOGLE_CLOUD_PROJECT=your-project-id \
+# After setting ADMIN_KEY, BRAND_BRAIN_DATABASE_URL, and GOOGLE_CLOUD_PROJECT:
 npm start
 ```
 
@@ -47,15 +46,22 @@ compilation, and protected administration endpoints.
 The implementation is isolated under `src/brand-brain/`:
 
 - `schema.js` defines the strict, bounded V1 record and administration input.
-- `repository.js` defines `getByBrandId`, `getByProjectAndBrand`, and `upsert`.
+- `repository.js` defines `getByBrandId`, `getByProjectAndBrand`, and `upsert`,
+  plus the isolated in-memory implementation used by unit tests.
+- `postgresRepository.js` implements the production contract with a bounded
+  PostgreSQL pool and validates stored rows against the locked V1 schema.
 - `contextResolver.js` enforces project ownership and approved status.
 - `contextCompiler.js` produces deterministic prompt-ready context.
 - `router.js` exposes the smallest protected testability surface.
 - `index.js` is the domain's public module boundary.
 
-The default repository is process-local and in-memory. It stores defensive
-copies and can be replaced by a permanent repository later without changing the
-prompt compiler. No database or persistence-provider dependency is introduced.
+The `node index.js` production entry point always builds the PostgreSQL
+repository from environment configuration and verifies connectivity before it
+starts listening. Missing, malformed, or unreachable database configuration
+fails startup; production never silently falls back to process memory. Tests
+and embedded callers may explicitly inject `InMemoryBrandBrainRepository` into
+`createApp`. The resolver and Prompt Compiler only use the repository contract
+and contain no PostgreSQL-specific logic.
 
 ### V1 record
 
@@ -169,6 +175,105 @@ only `approved` records resolve. Generation success/error logs contain safe
 execution and provider metadata only; prompts and Brand Brain content are not
 written to generic logs.
 
+The security boundary has three deliberate layers:
+
+1. PostgreSQL stores `project_id`, makes `brand_id` globally unique, prevents
+   updates to project ownership and creation time with a trigger, enables RLS,
+   and revokes table access from Supabase `anon` and `authenticated` roles. No
+   client RLS policy is created because this service does not use Supabase Auth
+   and the table is not exposed to clients. The server-only database role owns
+   or bypasses RLS as expected for a direct backend connection.
+2. Repository generation reads use `WHERE project_id = $1 AND brand_id = $2`.
+   The atomic upsert only updates a conflict when the existing `project_id`
+   matches; otherwise it returns `BRAND_PROJECT_CONFLICT`.
+3. The context resolver repeats the ownership boundary through that scoped
+   method and only compiles records whose status is `approved`. Draft and
+   archived records never enter generation context.
+
+### Durable PostgreSQL persistence
+
+The canonical schema is created by
+`supabase/migrations/20260808170000_create_brand_brains.sql`. It creates one
+`public.brand_brains` row per globally stable `brand_id` with `project_id`,
+`name`, JSONB columns for the six bounded V1 sections, and typed `version`,
+`status`, `created_at`, and `updated_at` metadata. Database checks cover
+identifier formats, core bounds, status, version, and JSON object shape; the
+application performs the complete locked Zod validation on write and read. The
+composite `(project_id, brand_id)` index supports tenant-scoped lookup.
+
+Apply the migration through the version-controlled Supabase workflow, never as
+a dashboard-only change:
+
+```bash
+supabase link --project-ref your-project-reference
+supabase db push --linked
+```
+
+Run the optional real-database persistence test only against a disposable,
+migrated database. The default CI suite does not require a database secret:
+
+After setting `BRAND_BRAIN_TEST_DATABASE_URL`, run:
+
+```bash
+npm run test:brand-brain:integration
+```
+
+For Cloud Run, `BRAND_BRAIN_DATABASE_URL` should be the server-side Supabase
+Supavisor **session-mode** PostgreSQL connection string with TLS enabled. Cloud
+Run instances are long-lived application servers rather than per-query edge
+functions, so session mode plus one process-wide `pg.Pool` is appropriate. The
+pool defaults to five connections per instance, a five-second connection
+timeout, and a 30-second idle timeout. This bounds per-instance connections
+while allowing reuse across requests and avoids ORM or PostgREST complexity.
+Account for `Cloud Run maximum instances × pool maximum` when sizing the
+Supabase database and pooler.
+
+### Persistence failure behaviour
+
+Startup validates both configuration and connectivity before opening the HTTP
+listener. Database errors are converted to
+`BRAND_BRAIN_PERSISTENCE_UNAVAILABLE` without returning raw provider messages,
+connection details, credentials, or stored Brand Brain content. Administration
+requests return the structured error with HTTP 503.
+
+Generation deliberately fails closed with the same safe 503 when a caller
+explicitly supplies `brand_id` and its lookup fails. It does not call Vertex AI
+or pretend Brand Brain was applied. This favours correct, governed output over
+availability. An absent `brand_id` performs no lookup and retains the previous
+generation behaviour; a successful lookup for an unknown ID still retains the
+existing no-context behaviour.
+
+### Operations, backup, and production verification
+
+Supabase/PostgreSQL operators remain responsible for backups, point-in-time
+recovery configuration, retention, restore testing, database capacity, and
+credential rotation. This repository does not create an application-level
+backup channel.
+
+After merge, use this production verification procedure (it is a runbook, not
+an instruction to deploy from this change):
+
+1. Apply `supabase/migrations/20260808170000_create_brand_brains.sql` with
+   `supabase db push --linked` and record the migration result.
+2. Configure the required server-side environment/secret names listed below;
+   do not expose the database value to a client.
+3. Deploy the normal Cloud Run release.
+4. Send an authenticated `PUT /_admin/brand-brains/:brand_id` for an approved,
+   non-production test brand owned by test Project A.
+5. Send authenticated `GET /_admin/brand-brains/:brand_id` and compare the
+   returned identity, status, version, and project to the PUT response.
+6. Call `POST /generate-script` with the matching `project_id` and `brand_id`.
+7. Confirm the generated result reflects a distinctive approved test-brand
+   instruction without exposing the full prompt in logs.
+8. Deploy a no-code Cloud Run revision, or otherwise direct traffic to a newly
+   started instance after the original instance is stopped.
+9. Repeat the authenticated GET for the same `brand_id`.
+10. Confirm the same record is returned, proving survival across process
+    replacement.
+11. Attempt to PUT the same `brand_id` with test Project B and confirm
+    `BRAND_PROJECT_CONFLICT`; then generate as Project B and confirm no Project
+    A Brand Brain content is injected.
+
 ### Explicit future extension points
 
 The repository interface is the persistence seam. The resolver/compiler can
@@ -176,12 +281,13 @@ later accept richer relevance signals or retrieval results without changing
 the Prompt Compiler contract. New Company Brain domains can remain separate
 context providers and be composed at the same controlled injection boundary.
 
-This foundation does **not** implement permanent production persistence, Brand
-Brain onboarding UI, the Genie interview, voice onboarding, automatic website
-ingestion, social ingestion, document ingestion, vector/semantic retrieval,
-Product Brain, Customer Brain, Campaign Brain, Learning Brain, Trend
-Intelligence, Opportunity Engine, or automated performance learning. Those
-remain separately reviewed roadmap components.
+This persistence layer does **not** implement vector retrieval, pgvector
+indexes, embeddings, document ingestion, website ingestion, Brand Brain
+onboarding UI, the Genie interview, Product Brain, Customer Brain, Campaign
+Brain, Competitor Brain, Learning Brain, Trend Intelligence, social ingestion,
+Opportunity Engine, or automated performance learning. A future pgvector or
+semantic retrieval repository can be composed behind the existing repository
+and resolver boundary without changing the Prompt Compiler contract.
 
 ## Mission Control foundation
 
@@ -306,6 +412,16 @@ field types fail fast rather than silently applying partial branding.
 ## Environment variables
 
 - `ADMIN_KEY` — required for all administration and script-generation routes.
+- `BRAND_BRAIN_DATABASE_URL` — required server-only Supabase/PostgreSQL
+  session-pooler connection string used by production startup.
+- `BRAND_BRAIN_DB_POOL_MAX` — optional bounded connections per Cloud Run
+  instance; defaults to `5`.
+- `BRAND_BRAIN_DB_CONNECTION_TIMEOUT_MS` — optional connection acquisition
+  timeout; defaults to `5000`.
+- `BRAND_BRAIN_DB_IDLE_TIMEOUT_MS` — optional idle connection timeout;
+  defaults to `30000`.
+- `BRAND_BRAIN_TEST_DATABASE_URL` — optional and only used by the manually
+  invoked disposable-database integration test.
 - `BRANDING_CONFIG_JSON` — optional validated partial override for the central branding configuration.
 - `GOOGLE_CLOUD_PROJECT`, `GCLOUD_PROJECT`, or `GCP_PROJECT` — Google Cloud
   project used by the existing script generator.
@@ -313,8 +429,8 @@ field types fail fast rather than silently applying partial branding.
 - `VERTEX_MODEL` — optional; defaults to `gemini-2.5-flash`.
 - `PORT` — optional; defaults to `8080`.
 
-Mission Control introduces no new environment variables. Its repository is
-process-local and is reset whenever the process restarts.
+Mission Control introduces no new environment variables. Its repository
+remains process-local and is reset whenever the process restarts.
 
 ## Generation completion protection
 

@@ -3,9 +3,11 @@ const { beforeEach, describe, it } = require("node:test");
 const request = require("supertest");
 const {
   InMemoryBrandBrainRepository,
+  PostgresBrandBrainRepository,
 } = require("../src/brand-brain");
 const { generateScriptWithVertex } = require("../src/generation");
 const { createApp } = require("../index");
+const { FakeBrandBrainPool } = require("./helpers/fake-brand-brain-pool");
 
 const ADMIN_KEY = "brand-brain-generation-test-key";
 const COMPLETE_OUTPUT = [
@@ -178,6 +180,52 @@ describe("Brand Brain generation integration", () => {
     assert.match(capture.value, /Explain how a planning workflow saves time\./);
   });
 
+  it("does not query unavailable persistence when brand_id is absent", async () => {
+    const repository = new PostgresBrandBrainRepository({
+      pool: new FakeBrandBrainPool({
+        failure: new Error("database should not be queried"),
+      }),
+    });
+    const capture = {};
+    const response = await admin(
+      request(
+        appWithCapturedPrompt(repository, capture, {
+          info() {},
+          warn() {},
+          error() {},
+        })
+      )
+        .post("/generate-script")
+        .send(validRequest())
+    );
+
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(capture.value, /\[BRAND BRAIN\]/);
+  });
+
+  it("injects approved context through the production repository path", async () => {
+    const repository = new PostgresBrandBrainRepository({
+      pool: new FakeBrandBrainPool(),
+    });
+    await repository.upsert(record());
+    const capture = {};
+    const response = await admin(
+      request(
+        appWithCapturedPrompt(repository, capture, {
+          info() {},
+          warn() {},
+          error() {},
+        })
+      )
+        .post("/generate-script")
+        .send(validRequest({ brand_id: "brand_001" }))
+    );
+
+    assert.equal(response.status, 200);
+    assert.match(capture.value, /\[BRAND BRAIN\]/);
+    assert.match(capture.value, /Sensitive Brand Name/);
+  });
+
   it("does not inject a Brand Brain across project boundaries", async () => {
     const repository = new InMemoryBrandBrainRepository();
     repository.upsert(record());
@@ -245,5 +293,38 @@ describe("Brand Brain generation integration", () => {
     assert.doesNotMatch(logs, /confidential market position/);
     assert.doesNotMatch(logs, /magic button|Guaranteed revenue/);
     assert.doesNotMatch(logs, /Explain how a planning workflow saves time/);
+  });
+
+  it("fails closed with a safe response when an explicit lookup fails", async () => {
+    const repository = new PostgresBrandBrainRepository({
+      pool: new FakeBrandBrainPool({
+        failure: new Error("private provider diagnostic details"),
+      }),
+    });
+    let generated = false;
+    const response = await admin(
+      request(
+        createApp({
+          brandBrainRepository: repository,
+          scriptGenerator: async () => {
+            generated = true;
+            throw new Error("should not run");
+          },
+          logger: { info() {}, warn() {}, error() {} },
+        })
+      )
+        .post("/generate-script")
+        .send(validRequest({ brand_id: "brand_001" }))
+    );
+
+    assert.equal(response.status, 503);
+    assert.equal(response.body.status, "failed");
+    assert.equal(
+      response.body.error.code,
+      "BRAND_BRAIN_PERSISTENCE_UNAVAILABLE"
+    );
+    assert.equal(response.body.script_body, "");
+    assert.equal(generated, false);
+    assert.doesNotMatch(JSON.stringify(response.body), /private|provider|diagnostic/);
   });
 });

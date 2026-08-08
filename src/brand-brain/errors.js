@@ -30,6 +30,24 @@ class BrandBrainOwnershipError extends BrandBrainError {
   }
 }
 
+class BrandBrainPersistenceError extends BrandBrainError {
+  constructor() {
+    super(
+      503,
+      "BRAND_BRAIN_PERSISTENCE_UNAVAILABLE",
+      "Brand Brain persistence is temporarily unavailable"
+    );
+  }
+}
+
+class BrandBrainConfigurationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "BrandBrainConfigurationError";
+    this.code = "BRAND_BRAIN_CONFIGURATION_ERROR";
+  }
+}
+
 function formatZodIssues(issues) {
   return issues.map((issue) => ({
     path: issue.path.join("."),
@@ -62,6 +80,8 @@ module.exports = {
   BrandBrainError,
   BrandBrainNotFoundError,
   BrandBrainOwnershipError,
+  BrandBrainPersistenceError,
+  BrandBrainConfigurationError,
   BrandBrainValidationError,
   formatZodIssues,
   sendBrandBrainError,
