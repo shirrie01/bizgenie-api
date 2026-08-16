@@ -20,10 +20,17 @@ function listLine(label, values, options) {
 
 function visualContextIsUseful(generationContext = {}) {
   const platform = String(generationContext.platform || "").toLowerCase();
+  const mediaType = String(
+    generationContext.mediaType || generationContext.media_type || ""
+  ).toLowerCase();
   const scriptType = String(
     generationContext.scriptType || generationContext.script_type || ""
   ).toLowerCase();
-  return ["instagram", "tiktok"].includes(platform) || scriptType === "ugc";
+  return (
+    mediaType === "image" ||
+    ["instagram", "tiktok"].includes(platform) ||
+    scriptType === "ugc"
+  );
 }
 
 function candidateSections(record, generationContext) {

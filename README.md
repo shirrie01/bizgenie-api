@@ -30,6 +30,9 @@ The tests do not call Vertex AI and do not require Google Cloud credentials.
 - `GET /` — service status.
 - `GET /_admin/ping` — authenticated administration status.
 - `POST /generate-script` — existing authenticated script generation.
+- `POST /generate-image` — provider-neutral authenticated image generation;
+  production must inject the approved OpenAI adapter and durable media
+  dependencies.
 
 The authenticated routes require the `x-admin-key` header to exactly match the
 `ADMIN_KEY` environment variable.
@@ -461,3 +464,148 @@ missing required section returns HTTP `502` without returning the partial text:
 
 The endpoint does not retry provider requests automatically. This avoids
 duplicate persistence or charge risks in upstream orchestration.
+
+## AI image generation
+
+BG-MEDIA-001 adds a provider-neutral backend boundary. BG-MEDIA-001A approved
+the OpenAI API with the pinned `gpt-image-2-2026-04-21` snapshot as the primary
+renderer. `OpenAIImageProvider` implements that existing boundary without
+changing the public `/generate-image` request, response, state, approval, or
+error contracts.
+
+The default application dependency remains
+`UnconfiguredImageGenerationProvider`, which returns HTTP `503` with
+`IMAGE_PROVIDER_SELECTION_REQUIRED`. This prevents live or billable calls
+until production supplies the OpenAI credential, approved reference loader,
+and durable image asset store. Tests always inject a mocked transport and do
+not call OpenAI.
+
+The isolated implementation under `src/image-generation/` contains:
+
+- a strict request and media-record contract;
+- deterministic `queued`, `processing`, `completed`, and `failed` states;
+- separate `pending`, `approved`, and `rejected` approval states;
+- a BizGenie-owned provider interface and normalized result contract;
+- a deterministic image prompt compiler using approved Brand Brain context;
+- orchestration that records failures without creating a successful asset;
+- a replaceable repository interface with an in-memory test implementation;
+- structured, sanitized provider and validation errors; and
+- the authenticated `POST /generate-image` route;
+- a direct OpenAI generation/edit adapter with no provider SDK dependency; and
+- bounded retry for network failures, `429`, and `5xx` responses only.
+
+### Approved OpenAI adapter
+
+`OpenAIImageProvider` calls `/v1/images/generations` when no references are
+present and `/v1/images/edits` with multipart `image[]` inputs when approved
+references are present. GPT Image 2 processes references at fixed high
+fidelity, so the adapter deliberately never sends `input_fidelity`.
+
+The provider accepts only BizGenie-owned configuration. The model and
+moderation setting are pinned in code. The optional environment-backed factory
+accepts only:
+
+- `OPENAI_API_KEY`;
+- `OPENAI_IMAGE_QUALITY` (`low`, `medium`, or `high`);
+- `OPENAI_IMAGE_OUTPUT_FORMAT` (`jpeg`, `png`, or `webp`);
+- `OPENAI_IMAGE_OUTPUT_COMPRESSION` (`0` to `100`);
+- `OPENAI_IMAGE_TIMEOUT_MS` (`1` to `300000`);
+- `OPENAI_IMAGE_MAX_ATTEMPTS` (`1` to `3`); and
+- `OPENAI_IMAGE_RETRY_DELAY_MS` (`0` to `5000`).
+
+Client request metadata cannot select an OpenAI model, moderation level,
+quality, output format, compression, retry policy, endpoint, or arbitrary
+provider parameter.
+
+The adapter requires two injected, server-side dependencies:
+
+- `referenceAssetLoader.load(referenceAsset)` must perform tenant/rights-aware
+  retrieval and return approved JPEG, PNG, or WebP bytes; and
+- `assetStore.save(asset)` must persist decoded output bytes and return a
+  durable `http(s)`, `gs`, or `s3` location.
+
+Neither dependency may expose credentials or make unvalidated client URLs
+provider-accessible. The adapter sends no reference URLs to OpenAI. It stores
+only allowlisted generation lineage alongside the image and never logs API
+keys, compiled prompts, reference bytes, or raw provider responses.
+
+### Request contract
+
+Required fields are `execution_id`, `generation_id`, `user_id`, `project_id`,
+`topic`, `image_purpose`, and `aspect_ratio`. Supported aspect ratios are
+`1:1`, `4:5`, `9:16`, and `16:9`. Optional fields are `parent_generation_id`,
+`brand_id`, `campaign_id`, `content_item_id`, `platform`, `audience`, `goal`,
+`intent_stage`, `product_service_context`, `additional_context`, and up to five
+bounded `reference_assets`.
+
+An example provider-neutral request is:
+
+```json
+{
+  "execution_id": "execution_image_001",
+  "generation_id": "image_generation_001",
+  "user_id": "user_001",
+  "project_id": "project_001",
+  "brand_id": "brand_001",
+  "campaign_id": "campaign_001",
+  "topic": "Launch a planning workflow",
+  "platform": "LinkedIn",
+  "audience": "Founder-led small businesses",
+  "goal": "Build qualified awareness",
+  "image_purpose": "Campaign hero image",
+  "aspect_ratio": "16:9",
+  "additional_context": "Use a calm editorial composition."
+}
+```
+
+Successful injected providers return normalized media metadata only:
+
+```json
+{
+  "status": "completed",
+  "execution_id": "execution_image_001",
+  "generation_id": "image_generation_001",
+  "media": {
+    "provider": "provider-name",
+    "provider_job_id": "provider-job-reference",
+    "asset": {
+      "location": "https://asset-location.example/image.webp",
+      "mime_type": "image/webp",
+      "width": 1600,
+      "height": 900
+    },
+    "aspect_ratio": "16:9",
+    "approval_status": "pending",
+    "created_at": "2026-08-15T12:00:00.000Z",
+    "completed_at": "2026-08-15T12:00:03.000Z"
+  }
+}
+```
+
+Generation identifiers are create-only. A retry, regeneration, or variation
+must use a new `generation_id` and may set `parent_generation_id`; attempting
+to reuse an existing identity returns `IMAGE_GENERATION_EXISTS` and does not
+overwrite history.
+
+### Safe extension boundaries and remaining production dependencies
+
+The provider receives only a compiled prompt, aspect ratio, bounded reference
+asset metadata, and BizGenie identifiers. Provider payloads, model names,
+polling, and raw responses remain adapter concerns. Results must normalize to
+provider, provider job identifier, and an externally stored image asset. Large
+binary assets are never accepted in the request or media record.
+
+The approved provider adapter is complete, but production activation still
+requires:
+
+- an OpenAI project/API key with GPT Image 2 access and any required
+  organization verification;
+- a durable image-generation/media repository and asset-storage adapter;
+- a rights- and tenant-aware reference asset loader;
+- an approved credit price, entitlement check, reservation, debit, or refund
+  flow; or
+- approval, rejection, variation, or regeneration endpoints.
+
+Those dependencies require explicit storage, commercial, and production
+configuration tasks. The in-memory repository is for deterministic tests and
+dependency injection only; it must not become the production system of record.
