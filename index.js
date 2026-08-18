@@ -20,6 +20,12 @@ const {
   createMissionControlRouter,
 } = require("./src/mission-control");
 const {
+  ImageGenerationService,
+  InMemoryImageGenerationRepository,
+  UnconfiguredImageGenerationProvider,
+  createImageGenerationRouter,
+} = require("./src/image-generation");
+const {
   GENERATION_INCOMPLETE_CODE,
   GenerationIncompleteError,
   generateScriptWithVertex,
@@ -39,11 +45,18 @@ function requireAdmin(req, res, next) {
 function createApp({
   missionControlRepository = new InMemoryMissionControlRepository(),
   brandBrainRepository = new InMemoryBrandBrainRepository(),
+  imageGenerationRepository = new InMemoryImageGenerationRepository(),
+  imageProvider = new UnconfiguredImageGenerationProvider(),
   branding = brandingConfig,
   scriptGenerator = generateScriptWithVertex,
   logger = console,
 } = {}) {
   const resolvedBranding = BrandingConfigSchema.parse(branding);
+  const imageGenerationService = new ImageGenerationService({
+    repository: imageGenerationRepository,
+    provider: imageProvider,
+    brandBrainRepository,
+  });
   const app = express();
   app.use(express.json());
 
@@ -65,6 +78,12 @@ function createApp({
     "/_admin/brand-brains",
     requireAdmin,
     createBrandBrainRouter({ repository: brandBrainRepository })
+  );
+
+  app.use(
+    "/generate-image",
+    requireAdmin,
+    createImageGenerationRouter({ service: imageGenerationService, logger })
   );
 
   app.post("/generate-script", requireAdmin, async (req, res) => {
@@ -179,11 +198,30 @@ function createApp({
   app.use((error, req, res, next) => {
     if (
       (req.path.startsWith("/_admin/mission-control") ||
-        req.path.startsWith("/_admin/brand-brains")) &&
+        req.path.startsWith("/_admin/brand-brains") ||
+        req.path.startsWith("/generate-image")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
       Object.hasOwn(error, "body")
     ) {
+      if (req.path.startsWith("/generate-image")) {
+        return res.status(400).json({
+          status: "failed",
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Request validation failed",
+            details: [
+              {
+                path: "",
+                code: "invalid_json",
+                message: "Malformed JSON request body",
+              },
+            ],
+          },
+          media: null,
+        });
+      }
+
       return res.status(400).json({
         error: {
           code: "VALIDATION_ERROR",

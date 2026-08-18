@@ -106,6 +106,12 @@ describe("Brand Brain context compiler", () => {
       }),
       /Brand colours:\n- Midnight blue/
     );
+    assert.match(
+      compileBrandContext(record(), {
+        generationContext: { mediaType: "image" },
+      }),
+      /Brand colours:\n- Midnight blue/
+    );
   });
 });
 
