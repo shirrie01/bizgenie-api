@@ -37,6 +37,16 @@ The tests do not call Vertex AI and do not require Google Cloud credentials.
 The authenticated routes require the `x-admin-key` header to exactly match the
 `ADMIN_KEY` environment variable.
 
+## Commercial policy and credit-ledger foundation
+
+BG-BILL-002A adds the provider-neutral commercial policy, tenant entitlement,
+one-account-per-tenant, immutable credit-ledger, derived-balance, reservation,
+idempotency, and deterministic concurrency foundation under `src/billing/`.
+It does not add routes, Stripe, production generation charging, or a production
+PostgreSQL repository. The version-controlled schema and complete accounting,
+tenant-isolation, Sheets/Make projection, and follow-up contract are documented
+in `docs/billing/COMMERCIAL_CREDIT_LEDGER_FOUNDATION.md`.
+
 ## Customer identity and authorization foundation
 
 BG-AUTH-002A adds the provider-neutral customer actor, tenant membership,
