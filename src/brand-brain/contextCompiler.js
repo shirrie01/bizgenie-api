@@ -27,7 +27,7 @@ function visualContextIsUseful(generationContext = {}) {
     generationContext.scriptType || generationContext.script_type || ""
   ).toLowerCase();
   return (
-    mediaType === "image" ||
+    ["image", "video"].includes(mediaType) ||
     ["instagram", "tiktok"].includes(platform) ||
     scriptType === "ugc"
   );

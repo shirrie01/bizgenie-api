@@ -26,6 +26,14 @@ const {
   createImageGenerationRouter,
 } = require("./src/image-generation");
 const {
+  InMemoryVideoGenerationRepository,
+  UnconfiguredVideoAssetStore,
+  UnconfiguredVideoGenerationProvider,
+  UnconfiguredVideoReferenceAssetLoader,
+  VideoGenerationService,
+  createVideoGenerationRouter,
+} = require("./src/video-generation");
+const {
   GENERATION_INCOMPLETE_CODE,
   GenerationIncompleteError,
   generateScriptWithVertex,
@@ -47,6 +55,10 @@ function createApp({
   brandBrainRepository = new InMemoryBrandBrainRepository(),
   imageGenerationRepository = new InMemoryImageGenerationRepository(),
   imageProvider = new UnconfiguredImageGenerationProvider(),
+  videoGenerationRepository = new InMemoryVideoGenerationRepository(),
+  videoProvider = new UnconfiguredVideoGenerationProvider(),
+  videoAssetStore = new UnconfiguredVideoAssetStore(),
+  videoReferenceAssetLoader = new UnconfiguredVideoReferenceAssetLoader(),
   branding = brandingConfig,
   scriptGenerator = generateScriptWithVertex,
   logger = console,
@@ -55,6 +67,13 @@ function createApp({
   const imageGenerationService = new ImageGenerationService({
     repository: imageGenerationRepository,
     provider: imageProvider,
+    brandBrainRepository,
+  });
+  const videoGenerationService = new VideoGenerationService({
+    repository: videoGenerationRepository,
+    provider: videoProvider,
+    assetStore: videoAssetStore,
+    referenceAssetLoader: videoReferenceAssetLoader,
     brandBrainRepository,
   });
   const app = express();
@@ -84,6 +103,12 @@ function createApp({
     "/generate-image",
     requireAdmin,
     createImageGenerationRouter({ service: imageGenerationService, logger })
+  );
+
+  app.use(
+    "/generate-video",
+    requireAdmin,
+    createVideoGenerationRouter({ service: videoGenerationService, logger })
   );
 
   app.post("/generate-script", requireAdmin, async (req, res) => {
@@ -199,7 +224,8 @@ function createApp({
     if (
       (req.path.startsWith("/_admin/mission-control") ||
         req.path.startsWith("/_admin/brand-brains") ||
-        req.path.startsWith("/generate-image")) &&
+        req.path.startsWith("/generate-image") ||
+        req.path.startsWith("/generate-video")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
       Object.hasOwn(error, "body")
@@ -219,6 +245,18 @@ function createApp({
             ],
           },
           media: null,
+        });
+      }
+
+      if (req.path.startsWith("/generate-video")) {
+        return res.status(400).json({
+          status: "failed",
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Request validation failed",
+            details: [{ path: "", code: "invalid_json", message: "Malformed JSON request body" }],
+          },
+          video: null,
         });
       }
 
