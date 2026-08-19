@@ -37,6 +37,20 @@ The tests do not call Vertex AI and do not require Google Cloud credentials.
 The authenticated routes require the `x-admin-key` header to exactly match the
 `ADMIN_KEY` environment variable.
 
+## Customer identity and authorization foundation
+
+BG-AUTH-002A adds the provider-neutral customer actor, tenant membership,
+project ownership, and project-to-Brand-Brain authorization contract under
+`src/authorization/`. It does not verify customer tokens or change route
+authentication; existing routes continue to use `ADMIN_KEY` until the bounded
+BG-AUTH-002B enforcement task.
+
+The version-controlled migration creates `customer_profiles`, `tenants`,
+`tenant_memberships`, and `projects`, anchors profiles to `auth.users.id`, makes
+project tenant ownership immutable, and adds the relational Brand Brain project
+foreign key. The complete security, rollout, backfill, and rollback contract is
+documented in `docs/security/IDENTITY_AUTHORIZATION_FOUNDATION.md`.
+
 ## Brand Brain context foundation
 
 Brand Brain is the persistent brand-intelligence layer of the future Company
