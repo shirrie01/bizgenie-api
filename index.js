@@ -7,6 +7,16 @@ console.log(`🚀 ${brandingConfig.marketingStrings.apiBooting}`);
 
 const express = require("express");
 const {
+  AuthorizationService,
+  InMemoryAuthorizationRepository,
+  PostgresAuthorizationRepository,
+} = require("./src/authorization");
+const {
+  UnconfiguredCustomerTokenVerifier,
+  createCustomerGenerationBoundary,
+  createSupabaseCustomerTokenVerifierFromEnv,
+} = require("./src/authentication");
+const {
   InMemoryBrandBrainRepository,
   createPostgresBrandBrainRepositoryFromEnv,
   createBrandBrainRouter,
@@ -50,68 +60,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function createApp({
-  missionControlRepository = new InMemoryMissionControlRepository(),
-  brandBrainRepository = new InMemoryBrandBrainRepository(),
-  imageGenerationRepository = new InMemoryImageGenerationRepository(),
-  imageProvider = new UnconfiguredImageGenerationProvider(),
-  videoGenerationRepository = new InMemoryVideoGenerationRepository(),
-  videoProvider = new UnconfiguredVideoGenerationProvider(),
-  videoAssetStore = new UnconfiguredVideoAssetStore(),
-  videoReferenceAssetLoader = new UnconfiguredVideoReferenceAssetLoader(),
-  branding = brandingConfig,
-  scriptGenerator = generateScriptWithVertex,
-  logger = console,
-} = {}) {
-  const resolvedBranding = BrandingConfigSchema.parse(branding);
-  const imageGenerationService = new ImageGenerationService({
-    repository: imageGenerationRepository,
-    provider: imageProvider,
-    brandBrainRepository,
-  });
-  const videoGenerationService = new VideoGenerationService({
-    repository: videoGenerationRepository,
-    provider: videoProvider,
-    assetStore: videoAssetStore,
-    referenceAssetLoader: videoReferenceAssetLoader,
-    brandBrainRepository,
-  });
-  const app = express();
-  app.use(express.json());
-
-  app.get("/", (_req, res) => {
-    res.send(resolvedBranding.marketingStrings.serviceStatus);
-  });
-
-  app.get("/_admin/ping", requireAdmin, (_req, res) => {
-    res.json({ status: "ok" });
-  });
-
-  app.use(
-    "/_admin/mission-control",
-    requireAdmin,
-    createMissionControlRouter({ repository: missionControlRepository })
-  );
-
-  app.use(
-    "/_admin/brand-brains",
-    requireAdmin,
-    createBrandBrainRouter({ repository: brandBrainRepository })
-  );
-
-  app.use(
-    "/generate-image",
-    requireAdmin,
-    createImageGenerationRouter({ service: imageGenerationService, logger })
-  );
-
-  app.use(
-    "/generate-video",
-    requireAdmin,
-    createVideoGenerationRouter({ service: videoGenerationService, logger })
-  );
-
-  app.post("/generate-script", requireAdmin, async (req, res) => {
+function createGenerateScriptHandler({
+  brandBrainRepository,
+  branding,
+  scriptGenerator,
+  logger,
+}) {
+  return async function generateScript(req, res) {
     const {
       execution_id,
       user_id,
@@ -148,7 +103,7 @@ function createApp({
       });
 
       const generation = await scriptGenerator(compiled_prompt, {
-        branding: resolvedBranding,
+        branding,
         promptOptions: {
           platform,
           scriptType: script_type,
@@ -218,19 +173,125 @@ function createApp({
         script_body: ""
       });
     }
+  };
+}
+
+function createApp({
+  missionControlRepository = new InMemoryMissionControlRepository(),
+  brandBrainRepository = new InMemoryBrandBrainRepository(),
+  imageGenerationRepository = new InMemoryImageGenerationRepository(),
+  imageProvider = new UnconfiguredImageGenerationProvider(),
+  videoGenerationRepository = new InMemoryVideoGenerationRepository(),
+  videoProvider = new UnconfiguredVideoGenerationProvider(),
+  videoAssetStore = new UnconfiguredVideoAssetStore(),
+  videoReferenceAssetLoader = new UnconfiguredVideoReferenceAssetLoader(),
+  branding = brandingConfig,
+  scriptGenerator = generateScriptWithVertex,
+  authorizationRepository = new InMemoryAuthorizationRepository(),
+  authorizationService,
+  customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
+  logger = console,
+} = {}) {
+  const resolvedBranding = BrandingConfigSchema.parse(branding);
+  const resolvedAuthorizationService =
+    authorizationService || new AuthorizationService({
+      repository: authorizationRepository,
+    });
+  const imageGenerationService = new ImageGenerationService({
+    repository: imageGenerationRepository,
+    provider: imageProvider,
+    brandBrainRepository,
   });
+  const videoGenerationService = new VideoGenerationService({
+    repository: videoGenerationRepository,
+    provider: videoProvider,
+    assetStore: videoAssetStore,
+    referenceAssetLoader: videoReferenceAssetLoader,
+    brandBrainRepository,
+  });
+  const app = express();
+  app.use(express.json());
+  const scriptHandler = createGenerateScriptHandler({
+    brandBrainRepository,
+    branding: resolvedBranding,
+    scriptGenerator,
+    logger,
+  });
+  const customerScriptBoundary = createCustomerGenerationBoundary({
+    tokenVerifier: customerTokenVerifier,
+    authorizationService: resolvedAuthorizationService,
+    kind: "script",
+    logger,
+  });
+  const customerImageBoundary = createCustomerGenerationBoundary({
+    tokenVerifier: customerTokenVerifier,
+    authorizationService: resolvedAuthorizationService,
+    kind: "image",
+    logger,
+  });
+
+  app.get("/", (_req, res) => {
+    res.send(resolvedBranding.marketingStrings.serviceStatus);
+  });
+
+  app.get("/_admin/ping", requireAdmin, (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
+  app.use(
+    "/_admin/mission-control",
+    requireAdmin,
+    createMissionControlRouter({ repository: missionControlRepository })
+  );
+
+  app.use(
+    "/_admin/brand-brains",
+    requireAdmin,
+    createBrandBrainRouter({ repository: brandBrainRepository })
+  );
+
+  app.use(
+    "/generate-image",
+    requireAdmin,
+    createImageGenerationRouter({ service: imageGenerationService, logger })
+  );
+
+  app.use(
+    "/generate-video",
+    requireAdmin,
+    createVideoGenerationRouter({ service: videoGenerationService, logger })
+  );
+
+  app.post("/generate-script", requireAdmin, scriptHandler);
+
+  app.post(
+    "/customer/generate-script",
+    customerScriptBoundary,
+    scriptHandler
+  );
+
+  app.use(
+    "/customer/generate-image",
+    customerImageBoundary,
+    createImageGenerationRouter({ service: imageGenerationService, logger })
+  );
 
   app.use((error, req, res, next) => {
     if (
       (req.path.startsWith("/_admin/mission-control") ||
         req.path.startsWith("/_admin/brand-brains") ||
         req.path.startsWith("/generate-image") ||
-        req.path.startsWith("/generate-video")) &&
+        req.path.startsWith("/generate-video") ||
+        req.path.startsWith("/customer/generate-image") ||
+        req.path.startsWith("/customer/generate-script")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
       Object.hasOwn(error, "body")
     ) {
-      if (req.path.startsWith("/generate-image")) {
+      if (
+        req.path.startsWith("/generate-image") ||
+        req.path.startsWith("/customer/generate-image")
+      ) {
         return res.status(400).json({
           status: "failed",
           error: {
@@ -257,6 +318,17 @@ function createApp({
             details: [{ path: "", code: "invalid_json", message: "Malformed JSON request body" }],
           },
           video: null,
+        });
+      }
+
+      if (req.path.startsWith("/customer/generate-script")) {
+        return res.status(400).json({
+          status: "failed",
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Malformed JSON request body",
+          },
+          script_body: "",
         });
       }
 
@@ -288,9 +360,22 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     env,
   });
   await brandBrainRepository.initialize();
+  const authorizationRepository = new PostgresAuthorizationRepository({
+    pool: brandBrainRepository.pool,
+  });
+  const customerTokenVerifier = createSupabaseCustomerTokenVerifierFromEnv({
+    env,
+  });
   return {
-    app: createApp({ brandBrainRepository, logger }),
+    app: createApp({
+      authorizationRepository,
+      brandBrainRepository,
+      customerTokenVerifier,
+      logger,
+    }),
+    authorizationRepository,
     brandBrainRepository,
+    customerTokenVerifier,
   };
 }
 
@@ -317,6 +402,7 @@ if (require.main === module) {
 module.exports = {
   app,
   createApp,
+  createGenerateScriptHandler,
   createProductionApp,
   generateScriptWithVertex,
   requireAdmin,

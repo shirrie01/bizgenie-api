@@ -50,6 +50,25 @@ PostgreSQL repository. The version-controlled schema and complete accounting,
 tenant-isolation, Sheets/Make projection, and follow-up contract are documented
 in `docs/billing/COMMERCIAL_CREDIT_LEDGER_FOUNDATION.md`.
 
+## Customer-authenticated generation
+
+BG-AUTH-002B adds separate, fail-closed customer paths without changing the
+existing administrator paths:
+
+- `POST /customer/generate-script`
+- `POST /customer/generate-image`
+
+They require a verified Supabase Bearer token plus `tenant_id` and `project_id`.
+When `brand_id` is supplied it is authorized through the same tenant-owned
+project. Any body `user_id` is ignored and replaced with the verified Supabase
+Auth UUID before the existing generation contract runs.
+
+Runtime verification uses `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY`. Neither
+is present in source control. With both absent the customer paths remain
+fail-closed; partial configuration fails startup. See
+`docs/security/CUSTOMER_TOKEN_VERIFICATION.md` for the full verification,
+principal-separation, rollout, and dormant Image boundary.
+
 ## Customer identity and authorization foundation
 
 BG-AUTH-002A adds the provider-neutral customer actor, tenant membership,
