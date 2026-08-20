@@ -33,6 +33,9 @@ The tests do not call Vertex AI and do not require Google Cloud credentials.
 - `POST /generate-image` — provider-neutral authenticated image generation;
   production must inject the approved OpenAI adapter and durable media
   dependencies.
+- `POST /generate-video` — authenticated asynchronous video submission.
+- `GET /generate-video/:generationId` — reads current video generation state.
+- `POST /generate-video/:generationId/poll` — resumes an accepted operation.
 
 The authenticated routes require the `x-admin-key` header to exactly match the
 `ADMIN_KEY` environment variable.
@@ -460,6 +463,14 @@ Mission Control introduces no new environment variables. Its repository
 remains process-local and is reset whenever the process restarts.
 
 ## Generation completion protection
+
+The administration-only Video foundation and asynchronous contract are documented
+in [`docs/video-generation.md`](docs/video-generation.md). The production
+application factory does not configure or activate a video provider, durable asset
+store, or rights-aware reference loader. Video input/reference locations are
+resolved server-side from BizGenie asset identities; caller-supplied provider
+locations are never authoritative. Every Veo submission explicitly sends
+`generateAudio: false` and exposes no customer audio control.
 
 `POST /generate-script` requests one candidate with a bounded 4,096-token
 output budget. The service assembles every text part in that candidate, records
