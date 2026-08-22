@@ -44,11 +44,13 @@ class UnconfiguredServiceCredentialVerifier extends ServiceCredentialVerifier {
   }
 }
 
-// Verifies a single, narrowly scoped service principal read directly from
-// server configuration. This is intentionally independent of ADMIN_KEY and
-// of customer JWT verification: it has its own secret, its own identifier,
-// and its own bounded scope set, so neither of the other two credentials can
-// ever satisfy it and it can never satisfy either of them.
+// Verifies a single, narrowly scoped global BizGenie worker read directly
+// from server configuration. It is not a tenant principal: tenant/project/
+// brand authority belongs only to the immutable generation job selected at
+// the execution boundary. This is intentionally independent of ADMIN_KEY and
+// customer JWT verification: it has its own secret, identifier, and bounded
+// scope set, so neither of the other two credentials can ever satisfy it and
+// it can never satisfy either of them.
 class StaticServiceCredentialVerifier extends ServiceCredentialVerifier {
   constructor({ serviceId, credential, scopes }) {
     super();

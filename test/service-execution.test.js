@@ -15,6 +15,7 @@ const { createServiceExecutionRouter } = require("../src/service-execution");
 
 const CREDENTIAL = "make-service-principal-credential-001";
 const AUTH_USER = "11111111-1111-4111-8111-111111111111";
+const AUTH_USER_B = "22222222-2222-4222-8222-222222222222";
 
 function authorization(overrides = {}) {
   return {
@@ -192,6 +193,83 @@ describe("service execution boundary", () => {
     const serialized = JSON.stringify(response.body);
     for (const forbidden of ["tenant_a", "project_a", "brand_a", AUTH_USER]) {
       assert.equal(serialized.includes(forbidden), false);
+    }
+  });
+
+  it("cannot reinterpret a Tenant B job using Tenant A request authority", async () => {
+    const { app, jobRepository, jobService } = appFixture();
+    const job = await jobService.authorizeAndCreateJob({
+      authorization: authorization({
+        actor: { kind: "customer", auth_user_id: AUTH_USER_B },
+        tenant_id: "tenant_b",
+        project_id: "project_b",
+        brand_id: "brand_b",
+      }),
+      executionClass: "image.normal",
+      requestCorrelationId: "execution_tenant_b_001",
+      idempotencyKey: "execution_tenant_b_001",
+      allowedScopes: ["generation:execute"],
+      executionInput: {
+        compiled_prompt: "Generate Tenant B's authorized image",
+        platform: "instagram",
+      },
+    });
+
+    const response = await request(app)
+      .get(`/_service/generation-jobs/jobs/${job.job_id}/execution-payload`)
+      .set(SERVICE_CREDENTIAL_HEADER, CREDENTIAL)
+      .set("tenant_id", "tenant_a")
+      .set("project_id", "project_a")
+      .set("brand_id", "brand_a")
+      .set("actor", AUTH_USER)
+      .set("execution_class", "video.premium")
+      .query({
+        tenant_id: "tenant_a",
+        project_id: "project_a",
+        brand_id: "brand_a",
+        actor: AUTH_USER,
+        execution_class: "video.premium",
+      })
+      .send({
+        tenant_id: "tenant_a",
+        project_id: "project_a",
+        brand_id: "brand_a",
+        actor_correlation: { kind: "customer", auth_user_id: AUTH_USER },
+        user_id: AUTH_USER,
+        execution_class: "video.premium",
+      });
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      job_id: job.job_id,
+      execution_class: "image.normal",
+      execution_input: {
+        compiled_prompt: "Generate Tenant B's authorized image",
+        platform: "instagram",
+      },
+    });
+    assert.deepEqual(Object.keys(response.body).sort(), [
+      "execution_class",
+      "execution_input",
+      "job_id",
+    ]);
+
+    const unchanged = jobRepository.getById(job.job_id);
+    assert.equal(unchanged.tenant_id, "tenant_b");
+    assert.equal(unchanged.project_id, "project_b");
+    assert.equal(unchanged.brand_id, "brand_b");
+    assert.equal(unchanged.actor_correlation.auth_user_id, AUTH_USER_B);
+    assert.equal(unchanged.execution_class, "image.normal");
+
+    const serialized = JSON.stringify(response.body);
+    for (const injected of [
+      "tenant_a",
+      "project_a",
+      "brand_a",
+      AUTH_USER,
+      "video.premium",
+    ]) {
+      assert.equal(serialized.includes(injected), false);
     }
   });
 });

@@ -8,12 +8,14 @@ const { buildMakeExecutionPayload } = require("./makePayload");
 const DEFAULT_SCOPE = "generation:execute";
 
 // This is the bounded seam a future Make/worker adapter may call. It is not
-// an active dispatcher in BG-AUTH-002C. It accepts only a verified service
-// credential with the required scope and an existing, already-authorized
-// job id; it returns nothing but the opaque job identity and bounded
-// execution payload for that job. No customer JWT, no ADMIN_KEY, no
-// tenant/project/brand identity, and no billing authority is reachable
-// through this router.
+// an active dispatcher in BG-AUTH-002C. The verified service principal is a
+// global BizGenie worker, not a tenant actor. Tenant/project/brand/customer
+// authority is already fixed in the immutable job and cannot be supplied or
+// replaced by service request data. The route accepts only that worker, the
+// server-configured required scope, and an existing authorized job id; it
+// returns nothing but the opaque job identity and bounded execution payload.
+// No customer JWT, ADMIN_KEY, ownership identity, or billing authority is
+// reachable through this router.
 function createServiceExecutionRouter({
   jobRepository,
   servicePrincipalVerifier,

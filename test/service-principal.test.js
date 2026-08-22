@@ -8,6 +8,7 @@ const {
   UnconfiguredServiceCredentialVerifier,
   createServiceCredentialVerifierFromEnv,
 } = require("../src/service-principal");
+const { ServiceActorSchema } = require("../src/authorization");
 
 const CREDENTIAL = "service-principal-credential-value-001";
 const ADMIN_KEY = "admin-key-value-001";
@@ -34,6 +35,24 @@ describe("StaticServiceCredentialVerifier", () => {
     assert.throws(() => {
       actor.scopes.push("generation:admin");
     }, TypeError);
+  });
+
+  it("defines a global worker with no tenant, project, brand, or customer authority", () => {
+    const actor = verifier().verifyCredential(CREDENTIAL);
+    assert.deepEqual(Object.keys(actor).sort(), ["kind", "scopes", "service_id"]);
+
+    for (const injectedAuthority of [
+      { tenant_id: "tenant_a" },
+      { project_id: "project_a" },
+      { brand_id: "brand_a" },
+      { auth_user_id: "11111111-1111-4111-8111-111111111111" },
+      { execution_class: "text.standard" },
+    ]) {
+      assert.equal(
+        ServiceActorSchema.safeParse({ ...actor, ...injectedAuthority }).success,
+        false
+      );
+    }
   });
 
   it("rejects a wrong, empty, or non-string credential", () => {
