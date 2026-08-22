@@ -172,9 +172,10 @@ evidence, internal finance references, other tenants, or raw database errors.
 The backend ledger is the only production financial authority. Existing
 Google Sheets and Make behavior remains useful as integration semantics:
 
-- one event per logical debit or refund;
-- debit when the generation attempt starts;
-- refund a qualifying failed attempt;
+- one event per logical reservation, settlement, or refund;
+- reserve before a billable generation executes;
+- debit only after qualifying success and release on pre-debit failure;
+- refund only a separately proven qualifying post-debit failure;
 - display a derived customer balance.
 
 Sheets and Make may receive idempotent projections or events from the backend.
@@ -198,8 +199,9 @@ or generation service is wired in BG-BILL-002A.
   verification, product/price mapping, bolt-on payment evidence, cancellation,
   and grace transitions.
 - **BG-BILL-002C:** authenticated generation integration using reserve before
-  provider attempt, final debit on attempt, and one qualifying refund on
-  failure across Text, Image, and Video.
+  execution, debit on qualifying success, release on pre-debit failure, and a
+  deny-by-default post-debit refund seam across Text, Image, and Video. See
+  `GENERATION_CREDIT_ACCOUNTING.md`.
 - **BG-BILL-002D:** real PostgreSQL concurrency, RLS, idempotency, recovery,
   reconciliation, and adversarial financial acceptance.
 

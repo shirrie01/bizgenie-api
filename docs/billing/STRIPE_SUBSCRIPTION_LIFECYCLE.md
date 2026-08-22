@@ -196,10 +196,11 @@ used for local proof. Production activation requires the durable repository
 adapter and migration/recovery/concurrency acceptance covered by
 BG-BILL-002D; until then `createProductionApp` does not mount Stripe routes.
 
-## Remaining Billing programme
+## Billing programme state
 
-- **BG-BILL-002C:** integrate generation reservation, debit, release, and
-  qualifying refund across Text, Image, and Video.
+- **BG-BILL-002C:** generation reservation, debit, release, and the inactive
+  debit-bound refund seam are implemented independently of Stripe. See
+  `GENERATION_CREDIT_ACCOUNTING.md`.
 - **BG-BILL-002D:** implement and adversarially verify the real PostgreSQL
   transaction adapter, migration, RLS, recovery, reconciliation, concurrency,
   and production activation gates.

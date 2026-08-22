@@ -3,8 +3,10 @@
 ## Status
 
 This is a provider-neutral, administration-only foundation. Production activation,
-credentials, deployment, customer JWT authentication, billing, and provider calls
-are intentionally absent.
+credentials, deployment, a customer JWT-authenticated Video route, durable Billing
+activation, and provider calls are intentionally absent. BG-BILL-002C supplies the
+immutable-job-driven `video.normal` / `video.premium` accounting contract without
+activating this provider path.
 
 ## Verified Google contract
 
@@ -111,8 +113,8 @@ attempted.
 
 ## Economic readiness
 
-Credit values do not exist in the provider adapter. Internal records preserve a
-client-supplied transaction correlation ID and safe provider operation/model
-evidence so later reservation, provider-cost confirmation, delivery, debit, and
-margin events can be connected without changing the provider boundary. These
-fields are deliberately omitted from public responses.
+Credit values do not exist in the provider adapter. BG-BILL-002C resolves customer
+credit cost from the immutable generation job and commercial policy before this
+adapter can run. Existing internal records preserve safe provider operation/model
+evidence, but BG-BILL-002C does not consume it or implement provider-cost or margin
+accounting. These fields are deliberately omitted from public responses.

@@ -1,4 +1,5 @@
 const express = require("express");
+const { sendGenerationBillingError } = require("../generation-billing");
 const {
   VideoGenerationValidationError,
   formatZodIssues,
@@ -35,7 +36,11 @@ function responseStatus(record) {
   return ["submitted", "processing"].includes(record.status) ? 202 : 200;
 }
 
-function createVideoGenerationRouter({ service, logger = console }) {
+function createVideoGenerationRouter({
+  service,
+  generationBillingOrchestrator,
+  logger = console,
+}) {
   if (!service) throw new Error("A video generation service is required");
   const router = express.Router();
 
@@ -43,7 +48,14 @@ function createVideoGenerationRouter({ service, logger = console }) {
     let input;
     try {
       input = parse(VideoGenerationRequestSchema, req.body);
-      const record = await service.submit(input);
+      const operation = () => service.submit(input);
+      const record = res.locals.generationJob
+        ? await generationBillingOrchestrator.beginExecution({
+            job: res.locals.generationJob,
+            expectedExecutionClass: `video.${input.quality}`,
+            operation,
+          })
+        : await operation();
       logger.info?.("video generation submitted", {
         execution_id: record.execution_id,
         generation_id: record.generation_id,
@@ -90,6 +102,7 @@ function createVideoGenerationRouter({ service, logger = console }) {
   });
 
   router.use((error, _req, res, next) => {
+    if (sendGenerationBillingError(error, res, { kind: "video" })) return;
     if (sendVideoGenerationError(error, res)) return;
     next(error);
   });
