@@ -48,6 +48,24 @@ const {
   GenerationIncompleteError,
   generateScriptWithVertex,
 } = require("./src/generation");
+const {
+  GenerationJobService,
+  InMemoryGenerationJobRepository,
+  PostgresGenerationJobRepository,
+  createGenerationJobRecorder,
+} = require("./src/generation-jobs");
+const {
+  UnconfiguredServiceCredentialVerifier,
+  createServiceCredentialVerifierFromEnv,
+} = require("./src/service-principal");
+const {
+  createServiceExecutionRouter,
+} = require("./src/service-execution");
+
+// The single scope this task defines. A future task may add narrower,
+// per-execution-class scopes; for now every generation job authorizes
+// exactly this one bounded downstream capability.
+const GENERATION_EXECUTE_SCOPE = "generation:execute";
 
 function requireAdmin(req, res, next) {
   const adminKey = process.env.ADMIN_KEY;
@@ -190,6 +208,9 @@ function createApp({
   authorizationRepository = new InMemoryAuthorizationRepository(),
   authorizationService,
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
+  generationJobRepository = new InMemoryGenerationJobRepository(),
+  generationJobService,
+  servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
   logger = console,
 } = {}) {
   const resolvedBranding = BrandingConfigSchema.parse(branding);
@@ -197,6 +218,9 @@ function createApp({
     authorizationService || new AuthorizationService({
       repository: authorizationRepository,
     });
+  const resolvedGenerationJobService =
+    generationJobService ||
+    new GenerationJobService({ repository: generationJobRepository });
   const imageGenerationService = new ImageGenerationService({
     repository: imageGenerationRepository,
     provider: imageProvider,
@@ -226,6 +250,20 @@ function createApp({
   const customerImageBoundary = createCustomerGenerationBoundary({
     tokenVerifier: customerTokenVerifier,
     authorizationService: resolvedAuthorizationService,
+    kind: "image",
+    logger,
+  });
+  const recordScriptGenerationJob = createGenerationJobRecorder({
+    generationJobService: resolvedGenerationJobService,
+    executionClass: "text.standard",
+    allowedScopes: [GENERATION_EXECUTE_SCOPE],
+    kind: "script",
+    logger,
+  });
+  const recordImageGenerationJob = createGenerationJobRecorder({
+    generationJobService: resolvedGenerationJobService,
+    executionClass: "image.normal",
+    allowedScopes: [GENERATION_EXECUTE_SCOPE],
     kind: "image",
     logger,
   });
@@ -267,13 +305,28 @@ function createApp({
   app.post(
     "/customer/generate-script",
     customerScriptBoundary,
+    recordScriptGenerationJob,
     scriptHandler
   );
 
   app.use(
     "/customer/generate-image",
     customerImageBoundary,
+    recordImageGenerationJob,
     createImageGenerationRouter({ service: imageGenerationService, logger })
+  );
+
+  // Future bounded server-to-server execution seam. Customer generation is
+  // currently executed in-process only after the mandatory job recorder
+  // above succeeds; this route does not dispatch to Make or a provider.
+  app.use(
+    "/_service/generation-jobs",
+    createServiceExecutionRouter({
+      jobRepository: generationJobRepository,
+      servicePrincipalVerifier,
+      requiredScope: GENERATION_EXECUTE_SCOPE,
+      logger,
+    })
   );
 
   app.use((error, req, res, next) => {
@@ -366,16 +419,26 @@ async function createProductionApp({ env = process.env, logger = console } = {})
   const customerTokenVerifier = createSupabaseCustomerTokenVerifierFromEnv({
     env,
   });
+  const generationJobRepository = new PostgresGenerationJobRepository({
+    pool: brandBrainRepository.pool,
+  });
+  const servicePrincipalVerifier = createServiceCredentialVerifierFromEnv({
+    env,
+  });
   return {
     app: createApp({
       authorizationRepository,
       brandBrainRepository,
       customerTokenVerifier,
+      generationJobRepository,
+      servicePrincipalVerifier,
       logger,
     }),
     authorizationRepository,
     brandBrainRepository,
     customerTokenVerifier,
+    generationJobRepository,
+    servicePrincipalVerifier,
   };
 }
 
