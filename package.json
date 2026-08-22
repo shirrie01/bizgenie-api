@@ -16,6 +16,7 @@
     "@supabase/supabase-js": "2.112.3",
     "express": "^4.19.2",
     "pg": "^8.22.0",
+    "stripe": "22.5.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

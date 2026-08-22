@@ -69,6 +69,21 @@ fail-closed; partial configuration fails startup. See
 `docs/security/CUSTOMER_TOKEN_VERIFICATION.md` for the full verification,
 principal-separation, rollout, and dormant Image boundary.
 
+## Stripe subscription lifecycle foundation
+
+BG-BILL-002B adds a pinned Stripe Node SDK, server-controlled plan-to-Price
+mapping, tenant-owned Customer mapping, hosted subscription Checkout boundary,
+raw-body webhook verification, event replay protection, subscription-to-
+entitlement lifecycle mapping, and idempotent monthly included-credit grants.
+
+The Stripe router is mounted only when the lifecycle service is injected.
+Checkout reuses the canonical verified customer token and tenant-membership
+authorization chain; only tenant owners may start Checkout. Production startup
+does not activate Stripe until the durable database adapter and deployment
+gates are approved. Configuration, status mapping, event allowlist,
+environment guards, and remaining tasks are documented in
+`docs/billing/STRIPE_SUBSCRIPTION_LIFECYCLE.md`.
+
 ## Customer identity and authorization foundation
 
 BG-AUTH-002A adds the provider-neutral customer actor, tenant membership,

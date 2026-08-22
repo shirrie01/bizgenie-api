@@ -12,7 +12,14 @@ const {
   CreditAccountSchema,
   CreditLedgerEntrySchema,
   TenantEntitlementSchema,
+  identifier,
 } = require("./schema");
+const {
+  StripeBillingConflictError,
+  StripeBillingResourceUnavailableError,
+  StripeEventConflictError,
+  StripeEventInProgressError,
+} = require("./stripe/errors");
 
 const ENTITLED_STATUSES = new Set(["active", "grace", "cancel_pending"]);
 const GENERIC_ENTRY_TYPES = new Set([
@@ -110,6 +117,42 @@ class BillingRepository {
   refund(_input) {
     throw new Error("BillingRepository.refund is not implemented");
   }
+
+  getStripeCustomerByTenant(_tenantId) {
+    throw new Error("BillingRepository.getStripeCustomerByTenant is not implemented");
+  }
+
+  getStripeCustomerById(_stripeCustomerId) {
+    throw new Error("BillingRepository.getStripeCustomerById is not implemented");
+  }
+
+  createStripeCustomerMapping(_input) {
+    throw new Error("BillingRepository.createStripeCustomerMapping is not implemented");
+  }
+
+  getStripeSubscription(_stripeSubscriptionId) {
+    throw new Error("BillingRepository.getStripeSubscription is not implemented");
+  }
+
+  applyStripeSubscriptionState(_input) {
+    throw new Error("BillingRepository.applyStripeSubscriptionState is not implemented");
+  }
+
+  beginStripeEvent(_input) {
+    throw new Error("BillingRepository.beginStripeEvent is not implemented");
+  }
+
+  completeStripeEvent(_input) {
+    throw new Error("BillingRepository.completeStripeEvent is not implemented");
+  }
+
+  abandonStripeEvent(_eventId) {
+    throw new Error("BillingRepository.abandonStripeEvent is not implemented");
+  }
+
+  recordBoltOnPaymentEvidence(_input) {
+    throw new Error("BillingRepository.recordBoltOnPaymentEvidence is not implemented");
+  }
 }
 
 class InMemoryBillingRepository extends BillingRepository {
@@ -118,8 +161,11 @@ class InMemoryBillingRepository extends BillingRepository {
     entitlements = [],
     accounts = [],
     projects = [],
+    stripeCustomers = [],
+    stripeSubscriptions = [],
     now = () => new Date(),
     idFactory = () => `ledger_${randomUUID()}`,
+    entitlementIdFactory = () => `entitlement_${randomUUID()}`,
   } = {}) {
     super();
     this.policies = new Map(
@@ -151,8 +197,18 @@ class InMemoryBillingRepository extends BillingRepository {
     this.idempotency = new Map();
     this.logicalEffects = new Map();
     this.accountLocks = new Map();
+    this.stripeCustomersByTenant = new Map();
+    this.stripeCustomersById = new Map();
+    this.stripeSubscriptions = new Map();
+    this.stripeEvents = new Map();
+    this.boltOnPaymentEvidence = new Map();
     this.now = now;
     this.idFactory = idFactory;
+    this.entitlementIdFactory = entitlementIdFactory;
+    for (const mapping of stripeCustomers) this.createStripeCustomerMapping(mapping);
+    for (const mapping of stripeSubscriptions) {
+      this.stripeSubscriptions.set(mapping.stripe_subscription_id, copy(mapping));
+    }
   }
 
   getActiveEntitlement(tenantId, at) {
@@ -426,6 +482,253 @@ class InMemoryBillingRepository extends BillingRepository {
         reserved_delta: 0,
       })
     );
+  }
+
+  getStripeCustomerByTenant(tenantId) {
+    return copy(this.stripeCustomersByTenant.get(identifier.parse(tenantId)) || null);
+  }
+
+  getStripeCustomerById(stripeCustomerId) {
+    return copy(this.stripeCustomersById.get(identifier.parse(stripeCustomerId)) || null);
+  }
+
+  createStripeCustomerMapping({ tenant_id, stripe_customer_id, livemode, created_at }) {
+    const tenantId = identifier.parse(tenant_id);
+    const customerId = identifier.parse(stripe_customer_id);
+    const candidate = Object.freeze({
+      tenant_id: tenantId,
+      stripe_customer_id: customerId,
+      livemode: Boolean(livemode),
+      created_at: created_at || this.now().toISOString(),
+    });
+    const byTenant = this.stripeCustomersByTenant.get(tenantId);
+    const byCustomer = this.stripeCustomersById.get(customerId);
+    if (byTenant || byCustomer) {
+      if (
+        byTenant?.stripe_customer_id === customerId &&
+        byCustomer?.tenant_id === tenantId &&
+        byTenant.livemode === candidate.livemode
+      ) {
+        return copy(byTenant);
+      }
+      throw new StripeBillingConflictError();
+    }
+    this.stripeCustomersByTenant.set(tenantId, candidate);
+    this.stripeCustomersById.set(customerId, candidate);
+    return copy(candidate);
+  }
+
+  getStripeSubscription(stripeSubscriptionId) {
+    return copy(this.stripeSubscriptions.get(identifier.parse(stripeSubscriptionId)) || null);
+  }
+
+  applyStripeSubscriptionState(input) {
+    const tenantId = identifier.parse(input.tenant_id);
+    const subscriptionId = identifier.parse(input.stripe_subscription_id);
+    const customerId = identifier.parse(input.stripe_customer_id);
+    const eventId = identifier.parse(input.event_id);
+    const customer = this.stripeCustomersByTenant.get(tenantId);
+    if (
+      !customer ||
+      customer.stripe_customer_id !== customerId ||
+      customer.livemode !== Boolean(input.livemode)
+    ) {
+      throw new StripeBillingResourceUnavailableError();
+    }
+
+    const existingMapping = this.stripeSubscriptions.get(subscriptionId);
+    const existingEntitlement = existingMapping
+      ? this.entitlements.find(
+        (value) => value.entitlement_id === existingMapping.entitlement_id
+      )
+      : null;
+    const staleResult = (reason) => Object.freeze({
+      stale: true,
+      stale_reason: reason,
+      mapping: copy(existingMapping),
+      entitlement: copy(existingEntitlement),
+    });
+    if (existingMapping) {
+      for (const [field, value] of [
+        ["tenant_id", tenantId],
+        ["stripe_customer_id", customerId],
+        ["policy_id", input.policy_id],
+        ["plan_code", input.plan_code],
+        ["stripe_price_id", input.stripe_price_id],
+        ["livemode", Boolean(input.livemode)],
+      ]) {
+        if (existingMapping[field] !== value) throw new StripeBillingConflictError();
+      }
+      if (eventId === existingMapping.last_event_id) {
+        return staleResult("same_event");
+      }
+      if (input.event_created < existingMapping.last_event_created) {
+        return staleResult("older_event");
+      }
+
+      const existingTerminal =
+        existingMapping.stripe_status === "canceled" ||
+        existingEntitlement?.status === "cancelled";
+      const incomingTerminal = input.entitlement_status === "cancelled";
+      if (input.event_created === existingMapping.last_event_created) {
+        if (existingTerminal) return staleResult("terminal_state");
+        if (!incomingTerminal) return staleResult("same_second_ambiguous");
+      } else if (existingTerminal && !incomingTerminal) {
+        return staleResult("terminal_state");
+      }
+    }
+
+    let entitlement = this.entitlements.find(
+      (value) => value.stripe_subscription_ref === subscriptionId
+    );
+    if (entitlement && entitlement.tenant_id !== tenantId) {
+      throw new StripeBillingConflictError();
+    }
+    if (!entitlement) {
+      const candidates = this.entitlements.filter(
+        (value) =>
+          value.tenant_id === tenantId &&
+          value.policy_id === input.policy_id &&
+          !value.stripe_subscription_ref
+      );
+      if (candidates.length > 1) throw new StripeBillingConflictError();
+      entitlement = candidates[0];
+    }
+
+    const serving = ENTITLED_STATUSES.has(input.entitlement_status);
+    const otherServing = this.entitlements.find(
+      (value) =>
+        value.tenant_id === tenantId &&
+        value !== entitlement &&
+        ENTITLED_STATUSES.has(value.status)
+    );
+    if (serving && otherServing) throw new StripeBillingConflictError();
+
+    const nextEntitlement = TenantEntitlementSchema.parse({
+      entitlement_id: entitlement?.entitlement_id || this.entitlementIdFactory(),
+      tenant_id: tenantId,
+      policy_id: entitlement?.policy_id || input.policy_id,
+      plan_code: entitlement?.plan_code || input.plan_code,
+      status: input.entitlement_status,
+      starts_at: entitlement?.starts_at || input.starts_at,
+      ends_at: input.ends_at,
+      reference_period_start: input.reference_period_start,
+      reference_period_end: input.reference_period_end,
+      included_monthly_credit_grant:
+        entitlement?.included_monthly_credit_grant ?? input.included_monthly_credit_grant,
+      stripe_subscription_ref: subscriptionId,
+      cancellation_effective_at: input.cancellation_effective_at,
+      grace_ends_at: input.grace_ends_at,
+    });
+    if (
+      nextEntitlement.policy_id !== input.policy_id ||
+      nextEntitlement.plan_code !== input.plan_code
+    ) {
+      throw new StripeBillingConflictError("A Stripe event cannot change a historical commercial policy version");
+    }
+
+    if (entitlement) {
+      const index = this.entitlements.indexOf(entitlement);
+      this.entitlements[index] = copy(nextEntitlement);
+    } else {
+      this.entitlements.push(copy(nextEntitlement));
+    }
+
+    const mapping = Object.freeze({
+      stripe_subscription_id: subscriptionId,
+      stripe_customer_id: customerId,
+      tenant_id: tenantId,
+      entitlement_id: nextEntitlement.entitlement_id,
+      policy_id: nextEntitlement.policy_id,
+      plan_code: nextEntitlement.plan_code,
+      stripe_price_id: identifier.parse(input.stripe_price_id),
+      stripe_status: input.stripe_status,
+      entitlement_status: nextEntitlement.status,
+      livemode: Boolean(input.livemode),
+      last_event_created: input.event_created,
+      last_event_id: eventId,
+      updated_at: this.now().toISOString(),
+    });
+    this.stripeSubscriptions.set(subscriptionId, mapping);
+    return Object.freeze({
+      stale: false,
+      mapping: copy(mapping),
+      entitlement: copy(nextEntitlement),
+    });
+  }
+
+  beginStripeEvent({ event_id, event_type, livemode, intent_hash, received_at }) {
+    const eventId = identifier.parse(event_id);
+    const existing = this.stripeEvents.get(eventId);
+    if (existing) {
+      if (
+        existing.event_type !== event_type ||
+        existing.livemode !== Boolean(livemode) ||
+        existing.intent_hash !== intent_hash
+      ) {
+        throw new StripeEventConflictError();
+      }
+      if (existing.status === "processed") {
+        return Object.freeze({ replay: true, result: copy(existing.result) });
+      }
+      if (existing.status === "failed") {
+        existing.status = "processing";
+        return Object.freeze({ replay: false });
+      }
+      throw new StripeEventInProgressError();
+    }
+    this.stripeEvents.set(eventId, {
+      event_id: eventId,
+      event_type,
+      livemode: Boolean(livemode),
+      intent_hash,
+      status: "processing",
+      received_at: received_at || this.now().toISOString(),
+    });
+    return Object.freeze({ replay: false });
+  }
+
+  completeStripeEvent({ event_id, result }) {
+    const record = this.stripeEvents.get(identifier.parse(event_id));
+    if (!record || record.status !== "processing") throw new StripeEventConflictError();
+    record.status = "processed";
+    record.processed_at = this.now().toISOString();
+    record.result = copy(result);
+    return copy(record);
+  }
+
+  abandonStripeEvent(eventId) {
+    const parsed = identifier.parse(eventId);
+    const record = this.stripeEvents.get(parsed);
+    if (record?.status === "processing") record.status = "failed";
+  }
+
+  recordBoltOnPaymentEvidence(input) {
+    const customer = this.stripeCustomersByTenant.get(identifier.parse(input.tenant_id));
+    if (!customer || customer.stripe_customer_id !== input.stripe_customer_id) {
+      throw new StripeBillingResourceUnavailableError();
+    }
+    const reference = identifier.parse(input.payment_reference);
+    const existing = this.boltOnPaymentEvidence.get(reference);
+    const evidence = Object.freeze({
+      tenant_id: customer.tenant_id,
+      stripe_customer_id: customer.stripe_customer_id,
+      payment_reference: reference,
+      stripe_event_id: identifier.parse(input.stripe_event_id),
+      stripe_price_id: identifier.parse(input.stripe_price_id),
+      credits: input.credits,
+      status: "verified",
+      created_at: this.now().toISOString(),
+    });
+    if (existing) {
+      const comparable = ({ created_at, ...value }) => value;
+      if (hashIntent(comparable(existing)) !== hashIntent(comparable(evidence))) {
+        throw new StripeBillingConflictError();
+      }
+      return copy(existing);
+    }
+    this.boltOnPaymentEvidence.set(reference, evidence);
+    return copy(evidence);
   }
 }
 
