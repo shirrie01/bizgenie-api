@@ -13,6 +13,7 @@ const {
 } = require("./src/authorization");
 const {
   UnconfiguredCustomerTokenVerifier,
+  createCustomerBillingTenantResolver,
   createCustomerGenerationBoundary,
   createSupabaseCustomerTokenVerifierFromEnv,
 } = require("./src/authentication");
@@ -66,6 +67,7 @@ const {
 // per-execution-class scopes; for now every generation job authorizes
 // exactly this one bounded downstream capability.
 const GENERATION_EXECUTE_SCOPE = "generation:execute";
+const { createStripeBillingRouter } = require("./src/billing");
 
 function requireAdmin(req, res, next) {
   const adminKey = process.env.ADMIN_KEY;
@@ -211,6 +213,7 @@ function createApp({
   generationJobRepository = new InMemoryGenerationJobRepository(),
   generationJobService,
   servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
+  stripeSubscriptionService,
   logger = console,
 } = {}) {
   const resolvedBranding = BrandingConfigSchema.parse(branding);
@@ -234,6 +237,24 @@ function createApp({
     brandBrainRepository,
   });
   const app = express();
+
+  // Stripe signature verification must see the exact request bytes. Mount
+  // this isolated router before the normal JSON parser; its Checkout handler
+  // installs its own bounded parser after the raw webhook route.
+  if (stripeSubscriptionService) {
+    app.use(
+      "/billing/stripe",
+      createStripeBillingRouter({
+        service: stripeSubscriptionService,
+        authorizeTenantRequest: createCustomerBillingTenantResolver({
+          tokenVerifier: customerTokenVerifier,
+          authorizationService: resolvedAuthorizationService,
+        }),
+        logger,
+      })
+    );
+  }
+
   app.use(express.json());
   const scriptHandler = createGenerateScriptHandler({
     brandBrainRepository,

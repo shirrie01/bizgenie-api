@@ -78,7 +78,7 @@ class BillingService {
     });
   }
 
-  async grantMonthlyCredits({ tenantId, idempotencyKey }) {
+  async grantMonthlyCredits({ tenantId, idempotencyKey, stripeEventReference }) {
     const entitlement = await this.readActiveEntitlement({ tenantId });
     const amount = entitlement.included_monthly_credit_grant;
     if (amount <= 0) {
@@ -96,6 +96,9 @@ class BillingService {
       entitlement_id: entitlement.entitlement_id,
       reference_period_start: entitlement.reference_period_start,
       reference_period_end: entitlement.reference_period_end,
+      stripe_event_ref: stripeEventReference
+        ? parseIdentifier(stripeEventReference)
+        : undefined,
     });
   }
 

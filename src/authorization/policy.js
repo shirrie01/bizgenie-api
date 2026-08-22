@@ -5,6 +5,7 @@ const AUTHORIZATION_ACTIONS = Object.freeze([
   "project:write",
   "brand:read",
   "brand:write",
+  "billing:checkout",
   "generation:create",
 ]);
 
