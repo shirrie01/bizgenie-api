@@ -1,4 +1,5 @@
 const express = require("express");
+const { sendGenerationBillingError } = require("../generation-billing");
 const {
   ImageGenerationValidationError,
   formatZodIssues,
@@ -16,7 +17,11 @@ function parseRequest(value) {
   return result.data;
 }
 
-function createImageGenerationRouter({ service, logger = console }) {
+function createImageGenerationRouter({
+  service,
+  generationBillingOrchestrator,
+  logger = console,
+}) {
   if (!service) {
     throw new Error("An image generation service is required");
   }
@@ -27,7 +32,14 @@ function createImageGenerationRouter({ service, logger = console }) {
     let input;
     try {
       input = parseRequest(req.body);
-      const record = await service.generate(input);
+      const operation = () => service.generate(input);
+      const record = res.locals.generationJob
+        ? await generationBillingOrchestrator.execute({
+            job: res.locals.generationJob,
+            expectedExecutionClass: "image.normal",
+            operation,
+          })
+        : await operation();
       logger.info?.("image generation completed", {
         execution_id: record.execution_id,
         generation_id: record.generation_id,
@@ -60,6 +72,9 @@ function createImageGenerationRouter({ service, logger = console }) {
   });
 
   router.use((error, _req, res, next) => {
+    if (sendGenerationBillingError(error, res, { kind: "image" })) {
+      return;
+    }
     if (sendImageGenerationError(error, res)) {
       return;
     }

@@ -141,6 +141,12 @@ function customer(client, token = "token-a") {
   return client.set("authorization", `Bearer ${token}`);
 }
 
+const existingBoundaryBillingFixture = Object.freeze({
+  execute({ operation }) {
+    return operation();
+  },
+});
+
 function appFixture(overrides = {}) {
   const tokenVerifier = overrides.customerTokenVerifier || new FixtureTokenVerifier();
   const imageGenerationRepository = new InMemoryImageGenerationRepository();
@@ -163,6 +169,7 @@ function appFixture(overrides = {}) {
     authorizationRepository: authorizationRepository(),
     brandBrainRepository: brandBrainRepository(),
     customerTokenVerifier: tokenVerifier,
+    generationBillingOrchestrator: existingBoundaryBillingFixture,
     imageGenerationRepository,
     imageProvider: {
       async generate(value) {

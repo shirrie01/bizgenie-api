@@ -50,6 +50,23 @@ PostgreSQL repository. The version-controlled schema and complete accounting,
 tenant-isolation, Sheets/Make projection, and follow-up contract are documented
 in `docs/billing/COMMERCIAL_CREDIT_LEDGER_FOUNDATION.md`.
 
+## Generation credit accounting
+
+BG-BILL-002C connects the active customer Text and Image paths to the existing
+immutable generation job and Billing ledger through one shared orchestrator.
+It reserves the server-owned policy cost before execution, coalesces duplicate
+job delivery, debits once on success, and releases once on failure. Video uses
+the same deterministic `video.normal` / `video.premium` contract without
+activating a customer route or provider. Automatic post-debit refunds remain
+disabled; an idempotent original-debit-bound seam is available for a future
+proven failure condition.
+
+No commercial prices are hard-coded. Production customer execution remains
+fail-closed until approved policy rows and the durable BG-BILL-002D repository
+adapter are configured. See
+`docs/billing/GENERATION_CREDIT_ACCOUNTING.md` for authority, idempotency,
+error, refund, migration, and activation boundaries.
+
 ## Customer-authenticated generation
 
 BG-AUTH-002B adds separate, fail-closed customer paths without changing the
@@ -671,8 +688,8 @@ requires:
   organization verification;
 - a durable image-generation/media repository and asset-storage adapter;
 - a rights- and tenant-aware reference asset loader;
-- an approved credit price, entitlement check, reservation, debit, or refund
-  flow; or
+- approved execution-cost policy data and the durable Billing production
+  adapter; or
 - approval, rejection, variation, or regeneration endpoints.
 
 Those dependencies require explicit storage, commercial, and production

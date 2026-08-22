@@ -56,6 +56,10 @@ const {
   createGenerationJobRecorder,
 } = require("./src/generation-jobs");
 const {
+  UnconfiguredGenerationBillingOrchestrator,
+  sendGenerationBillingError,
+} = require("./src/generation-billing");
+const {
   UnconfiguredServiceCredentialVerifier,
   createServiceCredentialVerifierFromEnv,
 } = require("./src/service-principal");
@@ -83,6 +87,7 @@ function requireAdmin(req, res, next) {
 function createGenerateScriptHandler({
   brandBrainRepository,
   branding,
+  generationBillingOrchestrator,
   scriptGenerator,
   logger,
 }) {
@@ -109,30 +114,40 @@ function createGenerateScriptHandler({
         });
       }
 
-      const brandContext = await resolveBrandBrainContext({
-        repository: brandBrainRepository,
-        projectId: project_id,
-        brandId: brand_id,
-        generationContext: {
-          platform,
-          scriptType: script_type,
-          audience,
-          intent: intent_stage,
-          voice: voice_style,
-        },
-      });
+      const execute = async () => {
+        const brandContext = await resolveBrandBrainContext({
+          repository: brandBrainRepository,
+          projectId: project_id,
+          brandId: brand_id,
+          generationContext: {
+            platform,
+            scriptType: script_type,
+            audience,
+            intent: intent_stage,
+            voice: voice_style,
+          },
+        });
 
-      const generation = await scriptGenerator(compiled_prompt, {
-        branding,
-        promptOptions: {
-          platform,
-          scriptType: script_type,
-          audience,
-          intent: intent_stage,
-          voice: voice_style,
-          brandContext,
-        },
-      });
+        return scriptGenerator(compiled_prompt, {
+          branding,
+          promptOptions: {
+            platform,
+            scriptType: script_type,
+            audience,
+            intent: intent_stage,
+            voice: voice_style,
+            brandContext,
+          },
+        });
+      };
+
+      const generation = res.locals.generationJob
+        ? await generationBillingOrchestrator.execute({
+            job: res.locals.generationJob,
+            expectedExecutionClass: "text.standard",
+            operation: execute,
+          })
+        : await execute();
 
       logger.info?.("generation completed", {
         execution_id,
@@ -146,6 +161,10 @@ function createGenerateScriptHandler({
       });
 
     } catch (err) {
+      if (sendGenerationBillingError(err, res, { kind: "script" })) {
+        return;
+      }
+
       if (err instanceof BrandBrainPersistenceError) {
         logger.error?.("brand brain persistence unavailable", {
           execution_id,
@@ -212,6 +231,7 @@ function createApp({
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
   generationJobService,
+  generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
   stripeSubscriptionService,
   logger = console,
@@ -259,6 +279,7 @@ function createApp({
   const scriptHandler = createGenerateScriptHandler({
     brandBrainRepository,
     branding: resolvedBranding,
+    generationBillingOrchestrator,
     scriptGenerator,
     logger,
   });
@@ -312,13 +333,21 @@ function createApp({
   app.use(
     "/generate-image",
     requireAdmin,
-    createImageGenerationRouter({ service: imageGenerationService, logger })
+    createImageGenerationRouter({
+      service: imageGenerationService,
+      generationBillingOrchestrator,
+      logger,
+    })
   );
 
   app.use(
     "/generate-video",
     requireAdmin,
-    createVideoGenerationRouter({ service: videoGenerationService, logger })
+    createVideoGenerationRouter({
+      service: videoGenerationService,
+      generationBillingOrchestrator,
+      logger,
+    })
   );
 
   app.post("/generate-script", requireAdmin, scriptHandler);
@@ -334,7 +363,11 @@ function createApp({
     "/customer/generate-image",
     customerImageBoundary,
     recordImageGenerationJob,
-    createImageGenerationRouter({ service: imageGenerationService, logger })
+    createImageGenerationRouter({
+      service: imageGenerationService,
+      generationBillingOrchestrator,
+      logger,
+    })
   );
 
   // Future bounded server-to-server execution seam. Customer generation is
