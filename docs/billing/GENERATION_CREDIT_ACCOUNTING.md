@@ -93,8 +93,9 @@ provider/model selection, ledger identity, or internal error detail.
   agreement with the bounded quality request. Submission reserves and executes
   once but does not debit. The separate idempotent success/failure settlement
   methods debit only after a later completed asset qualifies, or release after
-  a terminal failure. No customer Video route, Veo configuration, asset store,
-  or real provider is activated by this task.
+  a terminal failure. BG-ACT-001B now mounts that router behind canonical
+  customer authorization and immutable-job recording and composes Veo/storage
+  only when their explicit fail-closed activation gates pass.
 - Existing `ADMIN_KEY` Text, Image, and Video routes remain operational
   internal paths and are not reinterpreted as tenant-billable customer jobs.
 

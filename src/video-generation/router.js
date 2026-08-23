@@ -48,7 +48,9 @@ function createVideoGenerationRouter({
     let input;
     try {
       input = parse(VideoGenerationRequestSchema, req.body);
-      const operation = () => service.submit(input);
+      const operation = () => service.submit(input, {
+        job: res.locals.generationJob,
+      });
       const record = res.locals.generationJob
         ? await generationBillingOrchestrator.beginExecution({
             job: res.locals.generationJob,
@@ -76,6 +78,11 @@ function createVideoGenerationRouter({
     try {
       const generationId = parse(identifier, req.params.generationId);
       const record = await service.poll(generationId);
+      if (res.locals.generationJob && record.status === "completed") {
+        await generationBillingOrchestrator.settleSuccessfulExecution({
+          job: res.locals.generationJob,
+        });
+      }
       logger.info?.("video generation status checked", {
         execution_id: record.execution_id,
         generation_id: record.generation_id,
@@ -83,6 +90,18 @@ function createVideoGenerationRouter({
       });
       return res.status(responseStatus(record)).json(publicRecord(record));
     } catch (error) {
+      if (res.locals.generationJob) {
+        try {
+          const failed = service.get(req.params.generationId);
+          if (failed.status === "failed") {
+            await generationBillingOrchestrator.releaseFailedExecution({
+              job: res.locals.generationJob,
+            });
+          }
+        } catch (_settlementError) {
+          // Preserve the original sanitized Video failure contract.
+        }
+      }
       logger.warn?.("video generation poll failed", {
         generation_id: req.params.generationId,
         code: error?.code || "VIDEO_GENERATION_INTERNAL_ERROR",
@@ -91,10 +110,20 @@ function createVideoGenerationRouter({
     }
   });
 
-  router.get("/:generationId", (req, res, next) => {
+  router.get("/:generationId", async (req, res, next) => {
     try {
       const generationId = parse(identifier, req.params.generationId);
       const record = service.get(generationId);
+      if (res.locals.generationJob && record.status === "completed") {
+        await generationBillingOrchestrator.settleSuccessfulExecution({
+          job: res.locals.generationJob,
+        });
+      }
+      if (res.locals.generationJob && record.status === "failed") {
+        await generationBillingOrchestrator.releaseFailedExecution({
+          job: res.locals.generationJob,
+        });
+      }
       return res.status(responseStatus(record)).json(publicRecord(record));
     } catch (error) {
       return next(error);

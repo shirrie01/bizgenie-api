@@ -4,6 +4,7 @@ const { VideoGenerationRecordSchema } = require("./schema");
 const IMMUTABLE_FIELDS = new Set([
   "generation_id", "parent_generation_id", "transaction_correlation_id",
   "execution_id", "user_id", "project_id", "brand_id", "campaign_id",
+  "tenant_id", "generation_job_id",
   "content_item_id", "video_purpose", "quality", "aspect_ratio",
   "duration_seconds", "created_at",
 ]);

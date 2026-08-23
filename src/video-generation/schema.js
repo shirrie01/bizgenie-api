@@ -76,6 +76,7 @@ const NormalizedVideoAssetSourceSchema = z.object({
 }).strict();
 
 const NormalizedVideoAssetSchema = NormalizedVideoAssetSourceSchema.extend({
+  asset_id: identifier.optional(),
   byte_size: z.number().int().positive().optional(),
 }).strict();
 
@@ -125,6 +126,8 @@ const VideoGenerationRecordSchema = z.object({
   transaction_correlation_id: identifier.optional(),
   execution_id: identifier,
   user_id: identifier,
+  tenant_id: identifier.optional(),
+  generation_job_id: identifier.optional(),
   project_id: identifier,
   brand_id: identifier.optional(),
   campaign_id: identifier.optional(),

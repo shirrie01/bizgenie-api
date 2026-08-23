@@ -36,6 +36,9 @@ function responseBody(kind, error) {
       script_body: "",
     };
   }
+  if (kind === "video") {
+    return { status: "failed", error, video: null };
+  }
   return {
     status: "failed",
     error,
@@ -54,8 +57,8 @@ function createCustomerGenerationBoundary({
       "Customer generation requires token verification and authorization dependencies"
     );
   }
-  if (!new Set(["script", "image"]).has(kind)) {
-    throw new TypeError("Customer generation kind must be script or image");
+  if (!new Set(["script", "image", "video"]).has(kind)) {
+    throw new TypeError("Customer generation kind must be script, image, or video");
   }
 
   return async function requireAuthorizedCustomer(req, res, next) {
@@ -120,4 +123,5 @@ module.exports = {
   AUTHORIZATION_UNAVAILABLE_ERROR,
   createCustomerGenerationBoundary,
   extractBearerToken,
+  responseBody,
 };

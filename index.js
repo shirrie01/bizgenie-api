@@ -15,8 +15,14 @@ const {
   UnconfiguredCustomerTokenVerifier,
   createCustomerBillingTenantResolver,
   createCustomerGenerationBoundary,
+  createCustomerVideoStatusBoundary,
   createSupabaseCustomerTokenVerifierFromEnv,
 } = require("./src/authentication");
+const {
+  createCorsMiddleware,
+  createMediaProductionComposition,
+  loadCorsConfig,
+} = require("./src/activation");
 const {
   InMemoryBrandBrainRepository,
   createPostgresBrandBrainRepositoryFromEnv,
@@ -74,6 +80,7 @@ const GENERATION_EXECUTE_SCOPE = "generation:execute";
 const {
   createPostgresBillingProductionComposition,
   createStripeBillingRouter,
+  createStripeProductionComposition,
 } = require("./src/billing");
 
 function requireAdmin(req, res, next) {
@@ -237,6 +244,7 @@ function createApp({
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
   stripeSubscriptionService,
+  corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
 } = {}) {
   const resolvedBranding = BrandingConfigSchema.parse(branding);
@@ -260,6 +268,7 @@ function createApp({
     brandBrainRepository,
   });
   const app = express();
+  app.use(createCorsMiddleware({ config: corsConfig }));
 
   // Stripe signature verification must see the exact request bytes. Mount
   // this isolated router before the normal JSON parser; its Checkout handler
@@ -298,6 +307,19 @@ function createApp({
     kind: "image",
     logger,
   });
+  const customerVideoBoundary = createCustomerGenerationBoundary({
+    tokenVerifier: customerTokenVerifier,
+    authorizationService: resolvedAuthorizationService,
+    kind: "video",
+    logger,
+  });
+  const customerVideoStatusBoundary = createCustomerVideoStatusBoundary({
+    tokenVerifier: customerTokenVerifier,
+    authorizationService: resolvedAuthorizationService,
+    videoGenerationService,
+    generationJobRepository,
+    logger,
+  });
   const recordScriptGenerationJob = createGenerationJobRecorder({
     generationJobService: resolvedGenerationJobService,
     executionClass: "text.standard",
@@ -310,6 +332,13 @@ function createApp({
     executionClass: "image.normal",
     allowedScopes: [GENERATION_EXECUTE_SCOPE],
     kind: "image",
+    logger,
+  });
+  const recordVideoGenerationJob = createGenerationJobRecorder({
+    generationJobService: resolvedGenerationJobService,
+    executionClass: (body) => `video.${body?.quality}`,
+    allowedScopes: [GENERATION_EXECUTE_SCOPE],
+    kind: "video",
     logger,
   });
 
@@ -373,6 +402,28 @@ function createApp({
     })
   );
 
+  const customerVideoRouter = createVideoGenerationRouter({
+    service: videoGenerationService,
+    generationBillingOrchestrator,
+    logger,
+  });
+  app.use(
+    "/customer/generate-video",
+    (req, res, next) =>
+      req.method === "POST" && req.path === "/"
+        ? customerVideoBoundary(req, res, next)
+        : next(),
+    (req, res, next) =>
+      req.method === "POST" && req.path === "/"
+        ? recordVideoGenerationJob(req, res, next)
+        : next(),
+    (req, res, next) =>
+      req.path !== "/"
+        ? customerVideoStatusBoundary(req, res, next)
+        : next(),
+    customerVideoRouter
+  );
+
   // Future bounded server-to-server execution seam. Customer generation is
   // currently executed in-process only after the mandatory job recorder
   // above succeeds; this route does not dispatch to Make or a provider.
@@ -393,6 +444,7 @@ function createApp({
         req.path.startsWith("/generate-image") ||
         req.path.startsWith("/generate-video") ||
         req.path.startsWith("/customer/generate-image") ||
+        req.path.startsWith("/customer/generate-video") ||
         req.path.startsWith("/customer/generate-script")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
@@ -419,7 +471,10 @@ function createApp({
         });
       }
 
-      if (req.path.startsWith("/generate-video")) {
+      if (
+        req.path.startsWith("/generate-video") ||
+        req.path.startsWith("/customer/generate-video")
+      ) {
         return res.status(400).json({
           status: "failed",
           error: {
@@ -484,6 +539,15 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     env,
     logger,
   });
+  const media = await createMediaProductionComposition({
+    pool: brandBrainRepository.pool,
+    env,
+  });
+  const stripe = createStripeProductionComposition({
+    billingRepository: billing.billingRepository,
+    billingService: billing.billingService,
+    env,
+  });
   const servicePrincipalVerifier = createServiceCredentialVerifierFromEnv({
     env,
   });
@@ -494,7 +558,13 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       customerTokenVerifier,
       generationJobRepository,
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
+      imageProvider: media.imageProvider,
       servicePrincipalVerifier,
+      stripeSubscriptionService: stripe.stripeSubscriptionService,
+      videoProvider: media.videoProvider,
+      videoAssetStore: media.videoAssetStore,
+      videoReferenceAssetLoader: media.videoReferenceAssetLoader,
+      corsConfig: loadCorsConfig({ env }),
       logger,
     }),
     authorizationRepository,
@@ -504,7 +574,11 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,
     generationBillingOrchestrator: billing.generationBillingOrchestrator,
+    mediaAssetRepository: media.mediaAssetRepository,
+    media,
     servicePrincipalVerifier,
+    stripeSubscriptionService: stripe.stripeSubscriptionService,
+    stripe,
   };
 }
 

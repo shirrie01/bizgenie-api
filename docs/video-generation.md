@@ -2,11 +2,11 @@
 
 ## Status
 
-This is a provider-neutral, administration-only foundation. Production activation,
-credentials, deployment, a customer JWT-authenticated Video route, durable Billing
-activation, and provider calls are intentionally absent. BG-BILL-002C supplies the
-immutable-job-driven `video.normal` / `video.premium` accounting contract without
-activating this provider path.
+This remains a provider-neutral foundation. BG-ACT-001B adds a fail-closed,
+JWT-authenticated customer route and staging composition for the existing
+immutable-job-driven `video.normal` / `video.premium` Billing contract. Provider,
+storage, Billing, Stripe, and CORS activation remain OFF by default; no credential,
+deployment, migration application, provider call, or production state is included.
 
 ## Verified Google contract
 
@@ -88,15 +88,16 @@ The request retains the existing ownership-readiness fields (`user_id`,
 `project_id`, optional `brand_id`, campaign and content lineage), but the admin
 key remains the only authentication boundary. Request `user_id` is metadata, not
 proof of identity. Customer-facing production activation remains blocked on the
-canonical tenant authorization work.
+separate production gate. The customer endpoints and staging requirements are
+documented in `docs/activation/STAGING_ACTIVATION.md`.
 
 ## Durable asset boundary
 
 Video bytes are never stored in the application database. The service uses an
 injected asset store with the same `save()` shape already used by Image. It passes
 a provider output location plus lineage and expects normalized durable metadata
-back. No production asset store is configured by this task, so the default route
-fails closed before production use.
+back. BG-ACT-001B supplies the private GCS and PostgreSQL media-asset adapters
+behind explicit environment gates; the default route still fails closed.
 
 Input and reference locations use a separate injected
 `VideoReferenceAssetLoader`. Public requests identify BizGenie assets by

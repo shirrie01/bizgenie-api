@@ -9,6 +9,8 @@ const { compileImagePrompt } = require("./promptCompiler");
 const { normalizeProviderResult } = require("./provider");
 const { ImageGenerationRequestSchema } = require("./schema");
 
+const IMAGE_REFERENCE_RIGHT = "image.generate.reference";
+
 class ImageGenerationService {
   constructor({
     repository,
@@ -72,14 +74,22 @@ class ImageGenerationService {
     }
   }
 
-  async generate(value) {
+  async generate(value, { job } = {}) {
     const request = ImageGenerationRequestSchema.parse(value);
+    if (
+      job &&
+      (job.project_id !== request.project_id ||
+        job.actor_correlation?.auth_user_id !== request.user_id)
+    ) {
+      throw new ImageGenerationInternalError();
+    }
     const createdAt = this.timestamp();
     this.repository.create({
       generation_id: request.generation_id,
       parent_generation_id: request.parent_generation_id,
       execution_id: request.execution_id,
       user_id: request.user_id,
+      ...(job ? { tenant_id: job.tenant_id, generation_job_id: job.job_id } : {}),
       project_id: request.project_id,
       brand_id: request.brand_id,
       campaign_id: request.campaign_id,
@@ -99,14 +109,27 @@ class ImageGenerationService {
         updated_at: this.timestamp(),
       });
 
+      const referenceAssets = (request.reference_assets || []).map((asset) => ({
+        asset_id: asset.asset_id,
+        ...(job ? { tenant_id: job.tenant_id } : {}),
+        project_id: request.project_id,
+        requested_by_user_id: request.user_id,
+        required_right: IMAGE_REFERENCE_RIGHT,
+        generation_id: request.generation_id,
+        execution_id: request.execution_id,
+      }));
       const result = await this.callProvider({
         prompt,
         aspect_ratio: request.aspect_ratio,
-        reference_assets: request.reference_assets || [],
+        reference_assets: referenceAssets,
         metadata: {
           generation_id: request.generation_id,
           execution_id: request.execution_id,
           user_id: request.user_id,
+          ...(job ? {
+            tenant_id: job.tenant_id,
+            generation_job_id: job.job_id,
+          } : {}),
           project_id: request.project_id,
           brand_id: request.brand_id,
           campaign_id: request.campaign_id,
