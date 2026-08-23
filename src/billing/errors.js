@@ -6,6 +6,21 @@ class BillingError extends Error {
   }
 }
 
+class BillingConfigurationError extends BillingError {
+  constructor(message = "Durable billing is not configured") {
+    super("BILLING_NOT_CONFIGURED", message);
+  }
+}
+
+class BillingPersistenceError extends BillingError {
+  constructor() {
+    super(
+      "BILLING_PERSISTENCE_UNAVAILABLE",
+      "Durable billing persistence is unavailable"
+    );
+  }
+}
+
 class CommercialPolicyUnavailableError extends BillingError {
   constructor() {
     super(
@@ -82,7 +97,9 @@ class InvalidFinancialOperationError extends BillingError {
 }
 
 module.exports = {
+  BillingConfigurationError,
   BillingError,
+  BillingPersistenceError,
   CommercialPolicyUnavailableError,
   CreditAccountUnavailableError,
   DuplicateFinancialEffectError,

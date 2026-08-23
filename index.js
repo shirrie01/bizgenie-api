@@ -71,7 +71,10 @@ const {
 // per-execution-class scopes; for now every generation job authorizes
 // exactly this one bounded downstream capability.
 const GENERATION_EXECUTE_SCOPE = "generation:execute";
-const { createStripeBillingRouter } = require("./src/billing");
+const {
+  createPostgresBillingProductionComposition,
+  createStripeBillingRouter,
+} = require("./src/billing");
 
 function requireAdmin(req, res, next) {
   const adminKey = process.env.ADMIN_KEY;
@@ -476,6 +479,11 @@ async function createProductionApp({ env = process.env, logger = console } = {})
   const generationJobRepository = new PostgresGenerationJobRepository({
     pool: brandBrainRepository.pool,
   });
+  const billing = await createPostgresBillingProductionComposition({
+    pool: brandBrainRepository.pool,
+    env,
+    logger,
+  });
   const servicePrincipalVerifier = createServiceCredentialVerifierFromEnv({
     env,
   });
@@ -485,6 +493,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       brandBrainRepository,
       customerTokenVerifier,
       generationJobRepository,
+      generationBillingOrchestrator: billing.generationBillingOrchestrator,
       servicePrincipalVerifier,
       logger,
     }),
@@ -492,6 +501,9 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     brandBrainRepository,
     customerTokenVerifier,
     generationJobRepository,
+    billingRepository: billing.billingRepository,
+    billingService: billing.billingService,
+    generationBillingOrchestrator: billing.generationBillingOrchestrator,
     servicePrincipalVerifier,
   };
 }
