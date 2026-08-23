@@ -153,6 +153,10 @@ class BillingRepository {
   recordBoltOnPaymentEvidence(_input) {
     throw new Error("BillingRepository.recordBoltOnPaymentEvidence is not implemented");
   }
+
+  reconcile(_input) {
+    throw new Error("BillingRepository.reconcile is not implemented");
+  }
 }
 
 class InMemoryBillingRepository extends BillingRepository {
@@ -315,10 +319,14 @@ class InMemoryBillingRepository extends BillingRepository {
   }
 
   replayFor(accountId, idempotencyKey, intentHash) {
-    const entryId = this.idempotency.get(`${accountId}\u0000${idempotencyKey}`);
+    const entryId = this.idempotency.get(idempotencyKey);
     if (!entryId) return null;
     const entry = this.entriesById.get(entryId);
-    if (!entry || entry.intent_hash !== intentHash) {
+    if (
+      !entry ||
+      entry.account_id !== accountId ||
+      entry.intent_hash !== intentHash
+    ) {
       throw new IdempotencyConflictError();
     }
     return copy(entry);
@@ -369,10 +377,7 @@ class InMemoryBillingRepository extends BillingRepository {
     const stored = Object.freeze(copy(entry));
     this.entries.push(stored);
     this.entriesById.set(stored.ledger_entry_id, stored);
-    this.idempotency.set(
-      `${account.account_id}\u0000${stored.idempotency_key}`,
-      stored.ledger_entry_id
-    );
+    this.idempotency.set(stored.idempotency_key, stored.ledger_entry_id);
     if (logicalKey) {
       this.logicalEffects.set(
         `${account.account_id}\u0000${logicalKey}`,
@@ -729,6 +734,49 @@ class InMemoryBillingRepository extends BillingRepository {
     }
     this.boltOnPaymentEvidence.set(reference, evidence);
     return copy(evidence);
+  }
+
+  reconcile({ olderThan, limit = 100 }) {
+    const threshold = Date.parse(olderThan);
+    const boundedLimit = Math.max(1, Math.min(limit, 500));
+    const staleReservations = this.entries
+      .filter(
+        (entry) =>
+          entry.entry_type === "reservation" &&
+          Date.parse(entry.occurred_at) < threshold &&
+          !this.entries.some(
+            (candidate) =>
+              ["debit", "reservation_release"].includes(candidate.entry_type) &&
+              candidate.reservation_entry_id === entry.ledger_entry_id
+          )
+      )
+      .slice(0, boundedLimit)
+      .map(copy);
+
+    const duplicateEffects = [];
+    const logical = new Map();
+    for (const entry of this.entries) {
+      const key = logicalKeyFor(entry);
+      if (!key) continue;
+      const scoped = `${entry.account_id}\u0000${key}`;
+      if (logical.has(scoped)) {
+        duplicateEffects.push({
+          account_id: entry.account_id,
+          logical_key: key,
+          ledger_entry_ids: [logical.get(scoped), entry.ledger_entry_id],
+        });
+      } else {
+        logical.set(scoped, entry.ledger_entry_id);
+      }
+    }
+
+    return Object.freeze({
+      stale_reservations: staleReservations,
+      invalid_settlements: [],
+      orphan_refunds: [],
+      duplicate_effects: duplicateEffects.slice(0, boundedLimit),
+      monthly_grant_mismatches: [],
+    });
   }
 }
 

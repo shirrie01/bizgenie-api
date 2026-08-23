@@ -154,7 +154,7 @@ do $$
 declare
   grantee text;
 begin
-  foreach grantee in array['anon', 'authenticated', 'service_role'] loop
+  foreach grantee in array array['anon', 'authenticated', 'service_role'] loop
     if exists (select 1 from pg_roles where rolname = grantee) then
       execute format(
         'revoke all on table public.generation_jobs from %I',

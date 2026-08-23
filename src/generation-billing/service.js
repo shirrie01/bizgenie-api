@@ -1,5 +1,5 @@
 const { createHash } = require("node:crypto");
-const { InsufficientCreditsError } = require("../billing");
+const { InsufficientCreditsError } = require("../billing/errors");
 const { freezeGenerationJob } = require("../generation-jobs");
 const {
   GenerationBillingAuthorityError,
