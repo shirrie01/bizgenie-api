@@ -32,7 +32,9 @@ function createImageGenerationRouter({
     let input;
     try {
       input = parseRequest(req.body);
-      const operation = () => service.generate(input);
+      const operation = () => service.generate(input, {
+        job: res.locals.generationJob,
+      });
       const record = res.locals.generationJob
         ? await generationBillingOrchestrator.execute({
             job: res.locals.generationJob,

@@ -6,6 +6,8 @@ const IMMUTABLE_FIELDS = new Set([
   "parent_generation_id",
   "execution_id",
   "user_id",
+  "tenant_id",
+  "generation_job_id",
   "project_id",
   "brand_id",
   "campaign_id",

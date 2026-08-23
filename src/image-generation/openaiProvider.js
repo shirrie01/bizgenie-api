@@ -177,6 +177,8 @@ function sanitizeLineage(metadata = {}) {
     "generation_id",
     "execution_id",
     "user_id",
+    "tenant_id",
+    "generation_job_id",
     "project_id",
     "brand_id",
     "campaign_id",
@@ -419,6 +421,7 @@ class OpenAIImageProvider extends ImageGenerationProvider {
     }
 
     const parsed = NormalizedImageAssetSchema.safeParse({
+      ...(stored?.asset_id ? { asset_id: stored.asset_id } : {}),
       location: stored?.location,
       mime_type: mimeType,
       width: output.width,

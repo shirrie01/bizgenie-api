@@ -18,6 +18,10 @@ const {
   GenerationBillingOrchestrator,
   GenerationBillingUnavailableError,
 } = require("../src/generation-billing");
+const {
+  PostgresMediaAssetRepository,
+  objectKey,
+} = require("../src/media");
 
 const ADMIN_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const postgresDescribe = ADMIN_DATABASE_URL ? describe : describe.skip;
@@ -119,6 +123,7 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
   async function resetFixture() {
     await pool.query(`
       TRUNCATE TABLE
+        public.media_assets,
         public.stripe_bolt_on_payment_evidence,
         public.stripe_webhook_events,
         public.stripe_subscription_mappings,
@@ -774,6 +779,48 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
         client.release();
       }
     }
+  });
+
+  it("persists tenant/project media authority and denies cross-boundary lookup", async () => {
+    const media = new PostgresMediaAssetRepository({ pool });
+    await media.initialize();
+    const assetId = "33333333-3333-4333-8333-333333333333";
+    await media.create({
+      asset_id: assetId,
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      generation_job_id: "job_image",
+      generation_id: "generation_image_001",
+      source_kind: "generated",
+      media_kind: "image",
+      storage_bucket: "bizgenie-staging-media",
+      storage_key: objectKey({
+        tenantId: "tenant_a",
+        projectId: "project_a",
+        mediaKind: "image",
+        assetId,
+        extension: "png",
+      }),
+      mime_type: "image/png",
+      width: 1024,
+      height: 1024,
+      byte_size: 1024,
+      allowed_uses: ["image.generate.reference"],
+      status: "active",
+      created_at: NOW,
+    });
+    assert.ok(await media.findAuthorizedReference({
+      assetId,
+      tenantId: "tenant_a",
+      projectId: "project_a",
+      requiredRight: "image.generate.reference",
+    }));
+    assert.equal(await media.findAuthorizedReference({
+      assetId,
+      tenantId: "tenant_b",
+      projectId: "project_b",
+      requiredRight: "image.generate.reference",
+    }), null);
   });
 
   it("reports old unfinished reservations without mutating them", async () => {

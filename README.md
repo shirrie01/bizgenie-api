@@ -492,6 +492,10 @@ field types fail fast rather than silently applying partial branding.
 
 ## Environment variables
 
+The fail-closed non-production activation variables and safe staging sequence
+are documented in
+[`docs/activation/STAGING_ACTIVATION.md`](docs/activation/STAGING_ACTIVATION.md).
+
 - `ADMIN_KEY` — required for all administration and script-generation routes.
 - `BRAND_BRAIN_DATABASE_URL` — required server-only Supabase/PostgreSQL
   session-pooler connection string used by production startup.
@@ -515,10 +519,11 @@ remains process-local and is reset whenever the process restarts.
 
 ## Generation completion protection
 
-The administration-only Video foundation and asynchronous contract are documented
+The Video foundation and asynchronous contract are documented
 in [`docs/video-generation.md`](docs/video-generation.md). The production
-application factory does not configure or activate a video provider, durable asset
-store, or rights-aware reference loader. Video input/reference locations are
+application factory configures a video provider, durable asset store, and
+rights-aware reference loader only when every explicit staging/production gate
+passes; they remain unconfigured by default. Video input/reference locations are
 resolved server-side from BizGenie asset identities; caller-supplied provider
 locations are never authoritative. Every Veo submission explicitly sends
 `generateAudio: false` and exposes no customer audio control.
@@ -681,17 +686,17 @@ polling, and raw responses remain adapter concerns. Results must normalize to
 provider, provider job identifier, and an externally stored image asset. Large
 binary assets are never accepted in the request or media record.
 
-The approved provider adapter is complete, but production activation still
-requires:
+The approved provider adapter and fail-closed durable media composition are
+complete, but any environment activation still requires:
 
 - an OpenAI project/API key with GPT Image 2 access and any required
   organization verification;
-- a durable image-generation/media repository and asset-storage adapter;
-- a rights- and tenant-aware reference asset loader;
+- the unapplied durable media migration and an existing private storage bucket;
+- explicit Image, media, Billing, environment, and CORS activation gates;
 - approved execution-cost policy data and the durable Billing production
   adapter; or
 - approval, rejection, variation, or regeneration endpoints.
 
-Those dependencies require explicit storage, commercial, and production
-configuration tasks. The in-memory repository is for deterministic tests and
-dependency injection only; it must not become the production system of record.
+Those dependencies require explicit storage, commercial, and environment
+configuration tasks. The in-memory repositories remain deterministic test
+dependencies and never become the production system of record.

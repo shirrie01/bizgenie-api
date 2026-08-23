@@ -33,7 +33,10 @@ const imageAspectRatios = ["1:1", "4:5", "9:16", "16:9"];
 const ReferenceAssetSchema = z
   .object({
     asset_id: identifier,
-    location: assetLocation,
+    // Kept optional for backwards-compatible parsing only. The service never
+    // forwards a customer-supplied location; providers resolve the durable
+    // asset_id through the rights-aware server-side loader.
+    location: assetLocation.optional(),
     mime_type: mimeType.optional(),
     width: dimension.optional(),
     height: dimension.optional(),
@@ -68,6 +71,7 @@ const ImageGenerationRequestSchema = z
 
 const NormalizedImageAssetSchema = z
   .object({
+    asset_id: identifier.optional(),
     location: assetLocation,
     mime_type: mimeType,
     width: dimension.optional(),
@@ -89,6 +93,8 @@ const ImageGenerationRecordSchema = z
     parent_generation_id: identifier.optional(),
     execution_id: identifier,
     user_id: identifier,
+    tenant_id: identifier.optional(),
+    generation_job_id: identifier.optional(),
     project_id: identifier,
     brand_id: identifier.optional(),
     campaign_id: identifier.optional(),

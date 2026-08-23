@@ -13,6 +13,9 @@ function failureBody(kind) {
       script_body: "",
     };
   }
+  if (kind === "video") {
+    return { status: "failed", error: GENERATION_JOB_UNAVAILABLE_ERROR, video: null };
+  }
   return {
     status: "failed",
     error: GENERATION_JOB_UNAVAILABLE_ERROR,
@@ -38,14 +41,17 @@ function createGenerationJobRecorder({
   if (!generationJobService) {
     throw new TypeError("A generation job service is required");
   }
-  if (typeof executionClass !== "string" || !executionClass.trim()) {
+  if (
+    typeof executionClass !== "function" &&
+    (typeof executionClass !== "string" || !executionClass.trim())
+  ) {
     throw new TypeError("An execution class is required");
   }
   if (!Array.isArray(allowedScopes) || allowedScopes.length === 0) {
     throw new TypeError("At least one allowed scope is required");
   }
-  if (!new Set(["script", "image"]).has(kind)) {
-    throw new TypeError("Generation job response kind must be script or image");
+  if (!new Set(["script", "image", "video"]).has(kind)) {
+    throw new TypeError("Generation job response kind must be script, image, or video");
   }
 
   return async function recordGenerationJob(req, res, next) {
@@ -66,9 +72,15 @@ function createGenerationJobRecorder({
           ? body.execution_id
           : randomUUID();
 
+      const resolvedExecutionClass = typeof executionClass === "function"
+        ? executionClass(body)
+        : executionClass;
+      if (typeof resolvedExecutionClass !== "string" || !resolvedExecutionClass.trim()) {
+        throw new TypeError("An execution class is required");
+      }
       const job = await generationJobService.authorizeAndCreateJob({
         authorization,
-        executionClass,
+        executionClass: resolvedExecutionClass,
         requestCorrelationId,
         idempotencyKey: requestCorrelationId,
         allowedScopes,

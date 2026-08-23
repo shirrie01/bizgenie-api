@@ -74,6 +74,7 @@ class VideoGenerationService {
     try {
       loaded = await this.referenceAssetLoader.load({
         asset_id: asset.asset_id,
+        ...(request.tenant_id ? { tenant_id: request.tenant_id } : {}),
         project_id: request.project_id,
         requested_by_user_id: request.user_id,
         required_right: VIDEO_REFERENCE_RIGHT,
@@ -106,8 +107,19 @@ class VideoGenerationService {
     return { inputImage: undefined, referenceAssets };
   }
 
-  async submit(value) {
+  async submit(value, { job } = {}) {
     const request = VideoGenerationRequestSchema.parse(value);
+    if (
+      job &&
+      (job.project_id !== request.project_id ||
+        job.actor_correlation?.auth_user_id !== request.user_id)
+    ) {
+      throw new VideoGenerationInternalError();
+    }
+    const authorizedRequest = {
+      ...request,
+      ...(job ? { tenant_id: job.tenant_id } : {}),
+    };
     const createdAt = this.timestamp();
     this.repository.create({
       generation_id: request.generation_id,
@@ -115,6 +127,7 @@ class VideoGenerationService {
       transaction_correlation_id: request.transaction_correlation_id,
       execution_id: request.execution_id,
       user_id: request.user_id,
+      ...(job ? { tenant_id: job.tenant_id, generation_job_id: job.job_id } : {}),
       project_id: request.project_id,
       brand_id: request.brand_id,
       campaign_id: request.campaign_id,
@@ -130,7 +143,7 @@ class VideoGenerationService {
 
     try {
       const brandContext = await this.resolveContext(request);
-      const { inputImage, referenceAssets } = await this.resolveProviderInputs(request);
+      const { inputImage, referenceAssets } = await this.resolveProviderInputs(authorizedRequest);
       const prompt = compileVideoPrompt({
         ...request,
         input_image: inputImage,
@@ -149,6 +162,10 @@ class VideoGenerationService {
             generation_id: request.generation_id,
             execution_id: request.execution_id,
             user_id: request.user_id,
+            ...(job ? {
+              tenant_id: job.tenant_id,
+              generation_job_id: job.job_id,
+            } : {}),
             project_id: request.project_id,
             brand_id: request.brand_id,
             campaign_id: request.campaign_id,
@@ -187,6 +204,8 @@ class VideoGenerationService {
           parent_generation_id: record.parent_generation_id,
           execution_id: record.execution_id,
           user_id: record.user_id,
+          tenant_id: record.tenant_id,
+          generation_job_id: record.generation_job_id,
           project_id: record.project_id,
           brand_id: record.brand_id,
           campaign_id: record.campaign_id,
