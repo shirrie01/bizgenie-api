@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { setTimeout: delay } = require("node:timers/promises");
 const { after, before, beforeEach, describe, it } = require("node:test");
 const { Pool } = require("pg");
 const {
@@ -251,6 +252,25 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     });
   }
 
+  async function waitForTestDatabaseDisconnect() {
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      const connections = await adminPool.query(
+        `SELECT count(*)::integer AS count
+           FROM pg_stat_activity
+          WHERE datname = $1`,
+        [testDatabase]
+      );
+      if (connections.rows[0].count === 0) return;
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `Timed out waiting for PostgreSQL clients to disconnect from ${testDatabase}`
+        );
+      }
+      await delay(10);
+    }
+  }
+
   before(async () => {
     adminPool = new Pool({ connectionString: ADMIN_DATABASE_URL, max: 4 });
     testDatabase = `bizgenie_billing_${process.pid}_${Date.now()}`.toLowerCase();
@@ -300,7 +320,8 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
   after(async () => {
     await pool?.end();
     if (adminPool && testDatabase) {
-      await adminPool.query(`DROP DATABASE IF EXISTS ${testDatabase} WITH (FORCE)`);
+      await waitForTestDatabaseDisconnect();
+      await adminPool.query(`DROP DATABASE IF EXISTS ${testDatabase}`);
     }
     await adminPool?.end();
   });
@@ -879,3 +900,4 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     assert.equal((await service.readBalance({ tenantId: "tenant_a" })).available_balance, 1);
   });
 });
+
