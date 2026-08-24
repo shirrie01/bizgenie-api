@@ -65,8 +65,8 @@ describe("Google Vertex Veo submission mapping", () => {
       durationSeconds: 6,
       resolution: "720p",
       generateAudio: false,
-      task: "textToVideo",
     });
+    assert.equal(Object.hasOwn(test.calls[0].body.parameters, "task"), false);
     assert.equal(GOOGLE_VEO_NATIVE_AUDIO, false);
   });
 
@@ -77,6 +77,7 @@ describe("Google Vertex Veo submission mapping", () => {
     assert.equal(result.provider_model, GOOGLE_VEO_PREMIUM_MODEL);
     assert.match(test.calls[0].url, new RegExp(`${GOOGLE_VEO_PREMIUM_MODEL}:predictLongRunning$`));
     assert.equal(test.calls[0].body.parameters.generateAudio, false);
+    assert.equal(Object.hasOwn(test.calls[0].body.parameters, "task"), false);
   });
 
   it("maps a starting image to image-to-video", async () => {
@@ -88,7 +89,7 @@ describe("Google Vertex Veo submission mapping", () => {
       gcsUri: "gs://bizgenie-test/input/start.png",
       mimeType: "image/png",
     });
-    assert.equal(test.calls[0].body.parameters.task, "imageToVideo");
+    assert.equal(Object.hasOwn(test.calls[0].body.parameters, "task"), false);
   });
 
   it("maps supported subject references and locks them to eight seconds", async () => {
@@ -103,7 +104,7 @@ describe("Google Vertex Veo submission mapping", () => {
       image: { gcsUri: "gs://bizgenie-test/input/product.jpg", mimeType: "image/jpeg" },
       referenceType: "asset",
     }]);
-    assert.equal(test.calls[0].body.parameters.task, "referenceToVideo");
+    assert.equal(Object.hasOwn(test.calls[0].body.parameters, "task"), false);
   });
 });
 
