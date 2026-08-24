@@ -900,4 +900,3 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     assert.equal((await service.readBalance({ tenantId: "tenant_a" })).available_balance, 1);
   });
 });
-
