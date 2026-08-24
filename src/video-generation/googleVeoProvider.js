@@ -131,13 +131,10 @@ class GoogleVertexVeoProvider extends VideoGenerationProvider {
       throw new VideoProviderRejectedError();
     }
     const instance = { prompt: prompt.trim() };
-    let task = "textToVideo";
     if (inputImage) {
       instance.image = providerImage(inputImage);
-      task = "imageToVideo";
     } else if (referenceAssets.length) {
       instance.referenceImages = referenceAssets.map((asset) => ({ image: providerImage(asset), referenceType: "asset" }));
-      task = "referenceToVideo";
     }
     const body = {
       instances: [instance],
@@ -148,7 +145,6 @@ class GoogleVertexVeoProvider extends VideoGenerationProvider {
         durationSeconds,
         resolution: GOOGLE_VEO_RESOLUTION,
         generateAudio: GOOGLE_VEO_NATIVE_AUDIO,
-        task,
       },
     };
     const response = await this.transport.post(this.endpoint(model, "predictLongRunning"), body);
