@@ -48,7 +48,8 @@ test("webhook preserves exact raw bytes and Stripe signature header", async () =
     },
     logger: { info() {}, warn() {}, error() {} },
   });
-  const payload = Buffer.from('{"id":"evt_test_001","type":"invoice.paid"}');
+  const payload = '{"id":"evt_test_001","type":"invoice.paid"}';
+  const expectedBytes = Buffer.from(payload, "utf8");
 
   const response = await request(app)
     .post("/webhook")
@@ -64,7 +65,7 @@ test("webhook preserves exact raw bytes and Stripe signature header", async () =
   });
   assert.equal(seen.length, 1);
   assert.equal(Buffer.isBuffer(seen[0].rawBody), true);
-  assert.deepEqual(seen[0].rawBody, payload);
+  assert.deepEqual(seen[0].rawBody, expectedBytes);
   assert.equal(seen[0].signature, "t=1,v1=test");
 });
 
