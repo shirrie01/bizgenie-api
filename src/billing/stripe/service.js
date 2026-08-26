@@ -291,7 +291,10 @@ class StripeSubscriptionService {
     }
     const lifecycle = await this.processSubscription(subscription, event);
     if (event.type !== "invoice.paid") return { lifecycle, grant: null };
-    if (invoice.paid !== true || invoice.status !== "paid") {
+    if (
+      invoice.status !== "paid" ||
+      (Object.hasOwn(invoice, "paid") && invoice.paid !== true)
+    ) {
       throw new StripeBillingStateError();
     }
     if (!["subscription_create", "subscription_cycle"].includes(invoice.billing_reason)) {
