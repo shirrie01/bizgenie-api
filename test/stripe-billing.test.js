@@ -28,77 +28,732 @@ const WEBHOOK_SECRET = "whsec_test_secret_123";
 const USER_A = "11111111-1111-4111-8111-111111111111";
 
 function policy(overrides = {}) {
-  return { policy_id: "policy_standard_v1", plan_code: "standard", policy_version: 1, status: "active", included_monthly_credits: 10, bolt_on_eligible: true, effective_from: "2026-01-01T00:00:00.000Z", execution_costs: { "text.standard": 1 }, ...overrides };
+  return {
+    policy_id: "policy_standard_v1",
+    plan_code: "standard",
+    policy_version: 1,
+    status: "active",
+    included_monthly_credits: 10,
+    bolt_on_eligible: true,
+    effective_from: "2026-01-01T00:00:00.000Z",
+    execution_costs: { "text.standard": 1 },
+    ...overrides,
+  };
 }
+
 function entitlement(overrides = {}) {
-  return { entitlement_id: "entitlement_tenant_a", tenant_id: "tenant_a", policy_id: "policy_standard_v1", plan_code: "standard", status: "active", starts_at: "2026-01-01T00:00:00.000Z", reference_period_start: "2026-08-01T00:00:00.000Z", reference_period_end: "2026-09-01T00:00:00.000Z", included_monthly_credit_grant: 10, ...overrides };
+  return {
+    entitlement_id: "entitlement_tenant_a",
+    tenant_id: "tenant_a",
+    policy_id: "policy_standard_v1",
+    plan_code: "standard",
+    status: "active",
+    starts_at: "2026-01-01T00:00:00.000Z",
+    reference_period_start: "2026-08-01T00:00:00.000Z",
+    reference_period_end: "2026-09-01T00:00:00.000Z",
+    included_monthly_credit_grant: 10,
+    ...overrides,
+  };
 }
+
 function subscription(overrides = {}) {
-  return { id: "sub_launch_001", object: "subscription", customer: "cus_tenant_a", status: "active", created: 1767225600, start_date: 1767225600, cancel_at: null, cancel_at_period_end: false, ended_at: null, canceled_at: null, items: { data: [{ id: "si_launch_001", current_period_start: PERIOD_START, current_period_end: PERIOD_END, price: { id: "price_StandardTest" } }] }, ...overrides };
+  return {
+    id: "sub_launch_001",
+    object: "subscription",
+    customer: "cus_tenant_a",
+    status: "active",
+    created: 1767225600,
+    start_date: 1767225600,
+    cancel_at: null,
+    cancel_at_period_end: false,
+    ended_at: null,
+    canceled_at: null,
+    items: {
+      data: [{
+        id: "si_launch_001",
+        current_period_start: PERIOD_START,
+        current_period_end: PERIOD_END,
+        price: { id: "price_StandardTest" },
+      }],
+    },
+    ...overrides,
+  };
 }
+
 function event(type, object, overrides = {}) {
-  return { id: `evt_${type.replaceAll(".", "_")}_001`, object: "event", type, created: EVENT_CREATED, livemode: false, data: { object }, ...overrides };
+  return {
+    id: `evt_${type.replaceAll(".", "_")}_001`,
+    object: "event",
+    type,
+    created: EVENT_CREATED,
+    livemode: false,
+    data: { object },
+    ...overrides,
+  };
 }
+
 function invoice(overrides = {}) {
-  return { id: "in_launch_001", object: "invoice", customer: "cus_tenant_a", paid: true, status: "paid", billing_reason: "subscription_cycle", parent: { type: "subscription_details", subscription_details: { subscription: "sub_launch_001" } }, ...overrides };
+  return {
+    id: "in_launch_001",
+    object: "invoice",
+    customer: "cus_tenant_a",
+    paid: true,
+    status: "paid",
+    billing_reason: "subscription_cycle",
+    parent: {
+      type: "subscription_details",
+      subscription_details: { subscription: "sub_launch_001" },
+    },
+    ...overrides,
+  };
 }
+
 function setup({ policies, entitlements, config: configOverrides } = {}) {
   let ledgerId = 1;
-  const repository = new InMemoryBillingRepository({ policies: policies || [policy()], entitlements: entitlements || [entitlement()], accounts: [{ account_id: "account_tenant_a", tenant_id: "tenant_a", status: "active", created_at: "2026-01-01T00:00:00.000Z" }], now: () => new Date(NOW), idFactory: () => `ledger_stripe_${ledgerId++}`, entitlementIdFactory: () => "entitlement_from_stripe" });
+  const repository = new InMemoryBillingRepository({
+    policies: policies || [policy()],
+    entitlements: entitlements || [entitlement()],
+    accounts: [{
+      account_id: "account_tenant_a",
+      tenant_id: "tenant_a",
+      status: "active",
+      created_at: "2026-01-01T00:00:00.000Z",
+    }],
+    now: () => new Date(NOW),
+    idFactory: () => `ledger_stripe_${ledgerId++}`,
+    entitlementIdFactory: () => "entitlement_from_stripe",
+  });
   const billingService = new BillingService({ repository, now: () => new Date(NOW) });
   const verifier = new Stripe("sk_test_offline_only", { apiVersion: Stripe.API_VERSION });
   const calls = { customers: [], sessions: [], retrieves: [] };
   let retrievedSubscription = subscription();
-  const stripe = { webhooks: verifier.webhooks, customers: { create: async (...args) => { calls.customers.push(args); return { id: "cus_tenant_a" }; } }, checkout: { sessions: { create: async (...args) => { calls.sessions.push(args); return { id: "cs_test_launch_001", url: "https://checkout.stripe.test/session" }; } } }, subscriptions: { retrieve: async (id) => { calls.retrieves.push(id); return retrievedSubscription; } } };
-  const config = { mode: "test", secretKey: "sk_test_offline_only", webhookSecret: WEBHOOK_SECRET, successUrl: "https://app.bizgenie.test/billing/success", cancelUrl: "https://app.bizgenie.test/billing/cancel", pastDueGraceDays: 7, plans: { standard: { priceId: "price_StandardTest", policyId: "policy_standard_v1" } }, ...configOverrides };
-  const service = new StripeSubscriptionService({ stripe, repository, billingService, config, now: () => new Date(NOW) });
-  return { billingService, calls, config, repository, service, setRetrievedSubscription(value) { retrievedSubscription = value; }, verifier };
+  const stripe = {
+    webhooks: verifier.webhooks,
+    customers: {
+      create: async (...args) => {
+        calls.customers.push(args);
+        return { id: "cus_tenant_a" };
+      },
+    },
+    checkout: {
+      sessions: {
+        create: async (...args) => {
+          calls.sessions.push(args);
+          return { id: "cs_test_launch_001", url: "https://checkout.stripe.test/session" };
+        },
+      },
+    },
+    subscriptions: {
+      retrieve: async (id) => {
+        calls.retrieves.push(id);
+        return retrievedSubscription;
+      },
+    },
+  };
+  const config = {
+    mode: "test",
+    secretKey: "sk_test_offline_only",
+    webhookSecret: WEBHOOK_SECRET,
+    successUrl: "https://app.bizgenie.test/billing/success",
+    cancelUrl: "https://app.bizgenie.test/billing/cancel",
+    pastDueGraceDays: 7,
+    plans: {
+      standard: {
+        priceId: "price_StandardTest",
+        policyId: "policy_standard_v1",
+      },
+    },
+    ...configOverrides,
+  };
+  const service = new StripeSubscriptionService({
+    stripe,
+    repository,
+    billingService,
+    config,
+    now: () => new Date(NOW),
+  });
+  return {
+    billingService,
+    calls,
+    config,
+    repository,
+    service,
+    setRetrievedSubscription(value) { retrievedSubscription = value; },
+    verifier,
+  };
 }
-async function mapCustomer(repository, tenantId = "tenant_a", customerId = "cus_tenant_a") { return repository.createStripeCustomerMapping({ tenant_id: tenantId, stripe_customer_id: customerId, livemode: false }); }
-function sign(verifier, payload) { return verifier.webhooks.generateTestHeaderString({ payload, secret: WEBHOOK_SECRET, timestamp: Math.floor(Date.now() / 1000) }); }
+
+async function mapCustomer(repository, tenantId = "tenant_a", customerId = "cus_tenant_a") {
+  return repository.createStripeCustomerMapping({
+    tenant_id: tenantId,
+    stripe_customer_id: customerId,
+    livemode: false,
+  });
+}
+
+function sign(verifier, payload) {
+  return verifier.webhooks.generateTestHeaderString({
+    payload,
+    secret: WEBHOOK_SECRET,
+    // Stripe enforces a short replay window for signatures. Keep lifecycle
+    // event timestamps fixed, but sign the HTTP request at execution time.
+    timestamp: Math.floor(Date.now() / 1000),
+  });
+}
+
 function checkoutAuthorization({ role = "owner" } = {}) {
-  return { authorizationRepository: new InMemoryAuthorizationRepository({ customerProfiles: [{ auth_user_id: USER_A, display_name: "Customer A" }], tenants: [{ tenant_id: "tenant_a", name: "Tenant A", created_by: USER_A }, { tenant_id: "tenant_b", name: "Tenant B", created_by: USER_A }], memberships: [{ tenant_id: "tenant_a", auth_user_id: USER_A, role }] }), customerTokenVerifier: { async verifyAccessToken(token) { if (token !== "signed-customer-token-a") throw new AuthenticationRequiredError(); return Object.freeze({ kind: "customer", auth_user_id: USER_A }); } } };
+  return {
+    authorizationRepository: new InMemoryAuthorizationRepository({
+      customerProfiles: [{ auth_user_id: USER_A, display_name: "Customer A" }],
+      tenants: [
+        { tenant_id: "tenant_a", name: "Tenant A", created_by: USER_A },
+        { tenant_id: "tenant_b", name: "Tenant B", created_by: USER_A },
+      ],
+      memberships: [
+        { tenant_id: "tenant_a", auth_user_id: USER_A, role },
+      ],
+    }),
+    customerTokenVerifier: {
+      async verifyAccessToken(token) {
+        if (token !== "signed-customer-token-a") {
+          throw new AuthenticationRequiredError();
+        }
+        return Object.freeze({ kind: "customer", auth_user_id: USER_A });
+      },
+    },
+  };
 }
 
 describe("Stripe server configuration", () => {
-  it("loads only approved server-side plan mappings", () => { const config = loadStripeBillingConfig({ env: { STRIPE_MODE: "test", STRIPE_SECRET_KEY: "sk_test_configured", STRIPE_WEBHOOK_SECRET: "whsec_configured", STRIPE_SUCCESS_URL: "http://localhost:3000/billing/success", STRIPE_CANCEL_URL: "http://localhost:3000/billing/cancel", STRIPE_PRICE_STANDARD: "price_StandardTest", STRIPE_POLICY_STANDARD: "policy_standard_v1" } }); assert.equal(config.plans.standard.priceId, "price_StandardTest"); assert.equal(config.pastDueGraceDays, 7); assert.equal(Stripe.PACKAGE_VERSION, STRIPE_SDK_VERSION); assert.equal(Stripe.API_VERSION, STRIPE_API_VERSION); });
-  it("rejects key-mode mismatches and non-HTTPS live return URLs", () => { assert.throws(() => loadStripeBillingConfig({ env: { STRIPE_MODE: "live", STRIPE_SECRET_KEY: "sk_test_wrong_mode", STRIPE_WEBHOOK_SECRET: "whsec_configured", STRIPE_SUCCESS_URL: "http://localhost/success", STRIPE_CANCEL_URL: "https://app.bizgenie.test/cancel", STRIPE_PRICE_STANDARD: "price_StandardLive", STRIPE_POLICY_STANDARD: "policy_standard_v1" } })); });
+  it("loads only approved server-side plan mappings", () => {
+    const config = loadStripeBillingConfig({ env: {
+      STRIPE_MODE: "test",
+      STRIPE_SECRET_KEY: "sk_test_configured",
+      STRIPE_WEBHOOK_SECRET: "whsec_configured",
+      STRIPE_SUCCESS_URL: "http://localhost:3000/billing/success",
+      STRIPE_CANCEL_URL: "http://localhost:3000/billing/cancel",
+      STRIPE_PRICE_STANDARD: "price_StandardTest",
+      STRIPE_POLICY_STANDARD: "policy_standard_v1",
+    } });
+    assert.equal(config.plans.standard.priceId, "price_StandardTest");
+    assert.equal(config.pastDueGraceDays, 7);
+    assert.equal(Stripe.PACKAGE_VERSION, STRIPE_SDK_VERSION);
+    assert.equal(Stripe.API_VERSION, STRIPE_API_VERSION);
+  });
+
+  it("rejects key-mode mismatches and non-HTTPS live return URLs", () => {
+    assert.throws(() => loadStripeBillingConfig({ env: {
+      STRIPE_MODE: "live",
+      STRIPE_SECRET_KEY: "sk_test_wrong_mode",
+      STRIPE_WEBHOOK_SECRET: "whsec_configured",
+      STRIPE_SUCCESS_URL: "http://localhost/success",
+      STRIPE_CANCEL_URL: "https://app.bizgenie.test/cancel",
+      STRIPE_PRICE_STANDARD: "price_StandardLive",
+      STRIPE_POLICY_STANDARD: "policy_standard_v1",
+    } }));
+  });
 });
 
 describe("Stripe Checkout boundary", () => {
-  it("creates approved subscription Checkout using only server-controlled values", async () => { const { calls, repository, service } = setup(); const result = await service.createCheckoutSession({ tenantAuthorization: { tenant_id: "tenant_a" }, request: { plan_code: "standard", request_id: "checkout_request_001" } }); assert.equal(result.checkout_session_id, "cs_test_launch_001"); assert.equal((await repository.getStripeCustomerByTenant("tenant_a")).stripe_customer_id, "cus_tenant_a"); assert.deepEqual(calls.sessions[0][0].line_items, [{ price: "price_StandardTest", quantity: 1 }]); assert.equal(calls.sessions[0][0].customer, "cus_tenant_a"); assert.equal(calls.sessions[0][0].success_url, "https://app.bizgenie.test/billing/success"); assert.deepEqual(calls.sessions[0][0].subscription_data.billing_mode, { type: "flexible" }); assert.match(calls.sessions[0][1].idempotencyKey, /^bizgenie:checkout:tenant_a:/); });
-  it("rejects arbitrary price, customer, tenant, and URL inputs", async () => { const { calls, service } = setup(); await assert.rejects(service.createCheckoutSession({ tenantAuthorization: { tenant_id: "tenant_a" }, request: { plan_code: "standard", request_id: "checkout_request_002", price_id: "price_attacker", product_id: "prod_attacker", stripe_customer_id: "cus_attacker", tenant_id: "tenant_b", user_id: "user_attacker", stripe_secret: "sk_live_attacker", webhook_secret: "whsec_attacker", success_url: "https://attacker.test" } })); assert.equal(calls.customers.length, 0); assert.equal(calls.sessions.length, 0); });
-  it("derives Checkout tenant authority from the verified owner membership", async () => { const { calls, service } = setup(); const app = createApp({ stripeSubscriptionService: service, ...checkoutAuthorization(), logger: { info() {}, warn() {}, error() {} } }); const response = await request(app).post("/billing/stripe/checkout").set("authorization", "Bearer signed-customer-token-a").send({ tenant_id: "tenant_a", plan_code: "standard", request_id: "checkout_request_http_001" }); assert.equal(response.status, 201); assert.equal(calls.customers.length, 1); assert.equal(calls.sessions[0][0].client_reference_id, "tenant_a"); });
-  it("does not trust tenant_id, user_id, or a non-owner membership as Checkout authority", async () => { for (const scenario of [{ authorization: checkoutAuthorization(), body: { tenant_id: "tenant_b", plan_code: "standard", request_id: "checkout_request_tenant_b" }, expectedStatus: 404 }, { authorization: checkoutAuthorization({ role: "member" }), body: { tenant_id: "tenant_a", plan_code: "standard", request_id: "checkout_request_member" }, expectedStatus: 404 }, { authorization: checkoutAuthorization(), body: { tenant_id: "tenant_a", user_id: "attacker-selected-user", plan_code: "standard", request_id: "checkout_request_user_override" }, expectedStatus: 400 }]) { const { calls, service } = setup(); const app = createApp({ stripeSubscriptionService: service, ...scenario.authorization, logger: { info() {}, warn() {}, error() {} } }); const response = await request(app).post("/billing/stripe/checkout").set("authorization", "Bearer signed-customer-token-a").send(scenario.body); assert.equal(response.status, scenario.expectedStatus); assert.equal(calls.customers.length, 0); } });
-  it("requires a customer Bearer token rather than an admin or service credential", async () => { const { calls, service } = setup(); const app = createApp({ stripeSubscriptionService: service, ...checkoutAuthorization(), logger: { info() {}, warn() {}, error() {} } }); for (const headers of [{}, { "x-admin-key": "admin-key-value" }, { "x-service-credential": "service-credential-value" }]) { let pending = request(app).post("/billing/stripe/checkout").send({ tenant_id: "tenant_a", plan_code: "standard", request_id: "checkout_request_wrong_principal" }); for (const [name, value] of Object.entries(headers)) pending = pending.set(name, value); const response = await pending; assert.equal(response.status, 401); } assert.equal(calls.customers.length, 0); });
-  it("does not let one Stripe customer bind to a second tenant", async () => { const { repository } = setup(); await mapCustomer(repository); assert.throws(() => repository.createStripeCustomerMapping({ tenant_id: "tenant_b", stripe_customer_id: "cus_tenant_a", livemode: false }), StripeBillingConflictError); });
+  it("creates approved subscription Checkout using only server-controlled values", async () => {
+    const { calls, repository, service } = setup();
+    const result = await service.createCheckoutSession({
+      tenantAuthorization: { tenant_id: "tenant_a" },
+      request: { plan_code: "standard", request_id: "checkout_request_001" },
+    });
+    assert.equal(result.checkout_session_id, "cs_test_launch_001");
+    assert.equal((await repository.getStripeCustomerByTenant("tenant_a")).stripe_customer_id, "cus_tenant_a");
+    assert.deepEqual(calls.sessions[0][0].line_items, [
+      { price: "price_StandardTest", quantity: 1 },
+    ]);
+    assert.equal(calls.sessions[0][0].customer, "cus_tenant_a");
+    assert.equal(calls.sessions[0][0].success_url, "https://app.bizgenie.test/billing/success");
+    assert.deepEqual(calls.sessions[0][0].subscription_data.billing_mode, { type: "flexible" });
+    assert.match(calls.sessions[0][1].idempotencyKey, /^bizgenie:checkout:tenant_a:/);
+  });
+
+  it("rejects arbitrary price, customer, tenant, and URL inputs", async () => {
+    const { calls, service } = setup();
+    await assert.rejects(
+      service.createCheckoutSession({
+        tenantAuthorization: { tenant_id: "tenant_a" },
+        request: {
+          plan_code: "standard",
+          request_id: "checkout_request_002",
+          price_id: "price_attacker",
+          product_id: "prod_attacker",
+          stripe_customer_id: "cus_attacker",
+          tenant_id: "tenant_b",
+          user_id: "user_attacker",
+          stripe_secret: "sk_live_attacker",
+          webhook_secret: "whsec_attacker",
+          success_url: "https://attacker.test",
+        },
+      })
+    );
+    assert.equal(calls.customers.length, 0);
+    assert.equal(calls.sessions.length, 0);
+  });
+
+  it("derives Checkout tenant authority from the verified owner membership", async () => {
+    const { calls, service } = setup();
+    const app = createApp({
+      stripeSubscriptionService: service,
+      ...checkoutAuthorization(),
+      logger: { info() {}, warn() {}, error() {} },
+    });
+
+    const response = await request(app)
+      .post("/billing/stripe/checkout")
+      .set("authorization", "Bearer signed-customer-token-a")
+      .send({
+        tenant_id: "tenant_a",
+        plan_code: "standard",
+        request_id: "checkout_request_http_001",
+      });
+
+    assert.equal(response.status, 201);
+    assert.equal(calls.customers.length, 1);
+    assert.equal(calls.sessions[0][0].client_reference_id, "tenant_a");
+  });
+
+  it("does not trust tenant_id, user_id, or a non-owner membership as Checkout authority", async () => {
+    for (const scenario of [
+      {
+        authorization: checkoutAuthorization(),
+        body: {
+          tenant_id: "tenant_b",
+          plan_code: "standard",
+          request_id: "checkout_request_tenant_b",
+        },
+        expectedStatus: 404,
+      },
+      {
+        authorization: checkoutAuthorization({ role: "member" }),
+        body: {
+          tenant_id: "tenant_a",
+          plan_code: "standard",
+          request_id: "checkout_request_member",
+        },
+        expectedStatus: 404,
+      },
+      {
+        authorization: checkoutAuthorization(),
+        body: {
+          tenant_id: "tenant_a",
+          user_id: "attacker-selected-user",
+          plan_code: "standard",
+          request_id: "checkout_request_user_override",
+        },
+        expectedStatus: 400,
+      },
+    ]) {
+      const { calls, service } = setup();
+      const app = createApp({
+        stripeSubscriptionService: service,
+        ...scenario.authorization,
+        logger: { info() {}, warn() {}, error() {} },
+      });
+      const response = await request(app)
+        .post("/billing/stripe/checkout")
+        .set("authorization", "Bearer signed-customer-token-a")
+        .send(scenario.body);
+      assert.equal(response.status, scenario.expectedStatus);
+      assert.equal(calls.customers.length, 0);
+      assert.equal(calls.sessions.length, 0);
+    }
+  });
+
+  it("requires a customer Bearer token rather than an admin or service credential", async () => {
+    const { calls, service } = setup();
+    const app = createApp({
+      stripeSubscriptionService: service,
+      ...checkoutAuthorization(),
+      logger: { info() {}, warn() {}, error() {} },
+    });
+
+    for (const headers of [
+      {},
+      { "x-admin-key": "admin-key-value" },
+      { "x-service-credential": "service-credential-value" },
+    ]) {
+      const pending = request(app)
+        .post("/billing/stripe/checkout")
+        .send({
+          tenant_id: "tenant_a",
+          plan_code: "standard",
+          request_id: "checkout_request_wrong_principal",
+        });
+      for (const [name, value] of Object.entries(headers)) pending.set(name, value);
+      const response = await pending;
+      assert.equal(response.status, 401);
+    }
+    assert.equal(calls.customers.length, 0);
+    assert.equal(calls.sessions.length, 0);
+  });
+
+  it("does not let one Stripe customer bind to a second tenant", async () => {
+    const { repository } = setup();
+    await mapCustomer(repository);
+    assert.throws(
+      () => repository.createStripeCustomerMapping({
+        tenant_id: "tenant_b",
+        stripe_customer_id: "cus_tenant_a",
+        livemode: false,
+      }),
+      StripeBillingConflictError
+    );
+  });
 });
 
 describe("Stripe subscription lifecycle", () => {
-  it("maps every Stripe subscription status into BizGenie authority", () => { assert.equal(mapStripeStatus("trialing"), "active"); assert.equal(mapStripeStatus("active"), "active"); assert.equal(mapStripeStatus("active", { cancelScheduled: true }), "cancel_pending"); assert.equal(mapStripeStatus("past_due"), "grace"); assert.equal(mapStripeStatus("unpaid"), "inactive"); assert.equal(mapStripeStatus("canceled"), "cancelled"); assert.equal(mapStripeStatus("incomplete"), "inactive"); assert.equal(mapStripeStatus("incomplete_expired"), "inactive"); assert.equal(mapStripeStatus("paused"), "inactive"); });
-  it("activates the canonical tenant entitlement without trusting metadata", async () => { const { repository, service } = setup(); await mapCustomer(repository); const forged = subscription({ metadata: { bizgenie_tenant_id: "tenant_b" } }); const result = await service.processVerifiedEvent(event("customer.subscription.created", forged)); const mapping = await repository.getStripeSubscription("sub_launch_001"); assert.equal(result.handled, true); assert.equal(mapping.tenant_id, "tenant_a"); assert.equal(mapping.policy_id, "policy_standard_v1"); assert.equal(mapping.stripe_status, "active"); });
-  it("maps past due to a deterministic grace window", async () => { const { repository, service } = setup(); await mapCustomer(repository); const result = await service.processSubscription(subscription({ status: "past_due" }), event("customer.subscription.updated", subscription({ status: "past_due" }))); assert.equal(result.entitlement.status, "grace"); assert.equal(result.entitlement.grace_ends_at, "2026-08-27T12:00:00.000Z"); });
-  it("maps scheduled and terminal cancellation deliberately", async () => { const { repository, service } = setup(); await mapCustomer(repository); const pending = await service.processSubscription(subscription({ cancel_at_period_end: true }), event("customer.subscription.updated", subscription())); assert.equal(pending.entitlement.status, "cancel_pending"); const cancelled = await service.processSubscription(subscription({ status: "canceled", ended_at: EVENT_CREATED + 60 }), event("customer.subscription.updated", subscription(), { id: "evt_subscription_cancelled_later", created: EVENT_CREATED + 60 })); assert.equal(cancelled.entitlement.status, "cancelled"); });
-  it("treats subscription deletion as cancelled", async () => { const { repository, service } = setup(); await mapCustomer(repository); const result = await service.processVerifiedEvent(event("customer.subscription.deleted", subscription({ status: "canceled", ended_at: EVENT_CREATED }))); assert.equal(result.handled, true); assert.equal((await repository.getStripeSubscription("sub_launch_001")).stripe_status, "canceled"); });
-  it("fails safely for unknown customers and subscriptions", async () => { const { service } = setup(); await assert.rejects(service.processVerifiedEvent(event("customer.subscription.created", subscription())), StripeBillingResourceUnavailableError); });
-  it("rejects test events in live mode and live events in test mode", async () => { const { repository, service } = setup(); await mapCustomer(repository); await assert.rejects(service.processVerifiedEvent(event("customer.subscription.created", subscription(), { livemode: true })), StripeEnvironmentMismatchError); });
+  it("maps every Stripe subscription status into BizGenie authority", () => {
+    assert.equal(mapStripeStatus("trialing"), "active");
+    assert.equal(mapStripeStatus("active"), "active");
+    assert.equal(mapStripeStatus("active", { cancelScheduled: true }), "cancel_pending");
+    assert.equal(mapStripeStatus("past_due"), "grace");
+    assert.equal(mapStripeStatus("unpaid"), "inactive");
+    assert.equal(mapStripeStatus("canceled"), "cancelled");
+    assert.equal(mapStripeStatus("incomplete"), "inactive");
+    assert.equal(mapStripeStatus("incomplete_expired"), "inactive");
+    assert.equal(mapStripeStatus("paused"), "inactive");
+  });
+
+  it("activates the canonical tenant entitlement without trusting metadata", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    const forged = subscription({ metadata: { bizgenie_tenant_id: "tenant_b" } });
+    const result = await service.processVerifiedEvent(event("customer.subscription.created", forged));
+    const mapping = await repository.getStripeSubscription("sub_launch_001");
+    assert.equal(result.handled, true);
+    assert.equal(mapping.tenant_id, "tenant_a");
+    assert.equal(mapping.policy_id, "policy_standard_v1");
+    assert.equal(mapping.stripe_status, "active");
+  });
+
+  it("maps past due to a deterministic grace window", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    const result = await service.processSubscription(
+      subscription({ status: "past_due" }),
+      event("customer.subscription.updated", subscription({ status: "past_due" }))
+    );
+    assert.equal(result.entitlement.status, "grace");
+    assert.equal(result.entitlement.grace_ends_at, "2026-08-27T12:00:00.000Z");
+  });
+
+  it("maps scheduled and terminal cancellation deliberately", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    const pending = await service.processSubscription(
+      subscription({ cancel_at_period_end: true }),
+      event("customer.subscription.updated", subscription())
+    );
+    assert.equal(pending.entitlement.status, "cancel_pending");
+    assert.equal(pending.entitlement.cancellation_effective_at, "2026-09-01T00:00:00.000Z");
+    const cancelled = await service.processSubscription(
+      subscription({ status: "canceled", ended_at: EVENT_CREATED + 60 }),
+      event("customer.subscription.updated", subscription(), {
+        id: "evt_subscription_cancelled_later",
+        created: EVENT_CREATED + 60,
+      })
+    );
+    assert.equal(cancelled.entitlement.status, "cancelled");
+  });
+
+  it("treats subscription deletion as cancelled", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    const deleted = event(
+      "customer.subscription.deleted",
+      subscription({ status: "canceled", ended_at: EVENT_CREATED })
+    );
+    const result = await service.processVerifiedEvent(deleted);
+    assert.equal(result.handled, true);
+    assert.equal(
+      (await repository.getStripeSubscription("sub_launch_001")).stripe_status,
+      "canceled"
+    );
+  });
+
+  it("does not resurrect a deleted subscription from a same-second stale update", async () => {
+    const { calls, repository, service, setRetrievedSubscription } = setup();
+    await mapCustomer(repository);
+    const deleted = event(
+      "customer.subscription.deleted",
+      subscription({ status: "canceled", ended_at: EVENT_CREATED }),
+      { id: "evt_deleted_before_stale_update" }
+    );
+    await service.processVerifiedEvent(deleted);
+
+    setRetrievedSubscription(subscription({ status: "active" }));
+    const stale = await service.processVerifiedEvent(event(
+      "customer.subscription.updated",
+      subscription({ status: "active" }),
+      { id: "evt_same_second_stale_update" }
+    ));
+
+    const mapping = await repository.getStripeSubscription("sub_launch_001");
+    assert.equal(stale.stale, true);
+    assert.equal(mapping.stripe_status, "canceled");
+    assert.equal(repository.entitlements[0].status, "cancelled");
+    assert.deepEqual(calls.retrieves, ["sub_launch_001"]);
+  });
+
+  it("does not let different same-second events arbitrarily reverse state", async () => {
+    const { repository, service, setRetrievedSubscription } = setup();
+    await mapCustomer(repository);
+    setRetrievedSubscription(subscription({ status: "past_due" }));
+    await service.processVerifiedEvent(event(
+      "customer.subscription.updated",
+      subscription({ status: "active" }),
+      { id: "evt_same_second_first" }
+    ));
+
+    setRetrievedSubscription(subscription({ status: "active" }));
+    const ambiguous = await service.processVerifiedEvent(event(
+      "customer.subscription.resumed",
+      subscription({ status: "past_due" }),
+      { id: "evt_same_second_second" }
+    ));
+
+    const mapping = await repository.getStripeSubscription("sub_launch_001");
+    assert.equal(ambiguous.stale, true);
+    assert.equal(mapping.stripe_status, "past_due");
+    assert.equal(repository.entitlements[0].status, "grace");
+  });
+
+  it("accepts a genuinely later transition proved by current Stripe state", async () => {
+    const { calls, repository, service, setRetrievedSubscription } = setup();
+    await mapCustomer(repository);
+    setRetrievedSubscription(subscription({ status: "past_due" }));
+    await service.processVerifiedEvent(event(
+      "customer.subscription.updated",
+      subscription({ status: "past_due" }),
+      { id: "evt_recovery_before" }
+    ));
+
+    setRetrievedSubscription(subscription({ status: "active" }));
+    const recovered = await service.processVerifiedEvent(event(
+      "customer.subscription.resumed",
+      subscription({ status: "past_due" }),
+      { id: "evt_recovery_after", created: EVENT_CREATED + 1 }
+    ));
+
+    const mapping = await repository.getStripeSubscription("sub_launch_001");
+    assert.equal(recovered.stale, false);
+    assert.equal(mapping.stripe_status, "active");
+    assert.equal(repository.entitlements[0].status, "active");
+    assert.deepEqual(calls.retrieves, ["sub_launch_001", "sub_launch_001"]);
+  });
+
+  it("refuses a webhook-driven historical policy switch", async () => {
+    const v2 = policy({ policy_id: "policy_standard_v2", policy_version: 2 });
+    const { repository, service } = setup({
+      policies: [policy(), v2],
+      config: {
+        plans: {
+          standard: { priceId: "price_StandardTest", policyId: "policy_standard_v2" },
+        },
+      },
+    });
+    await mapCustomer(repository);
+    await assert.rejects(
+      service.processVerifiedEvent(event("customer.subscription.updated", subscription())),
+      StripeBillingConflictError
+    );
+    assert.equal(repository.entitlements[0].policy_id, "policy_standard_v1");
+  });
+
+  it("fails safely for unknown customers and subscriptions", async () => {
+    const { service } = setup();
+    await assert.rejects(
+      service.processVerifiedEvent(event("customer.subscription.created", subscription())),
+      StripeBillingResourceUnavailableError
+    );
+  });
+
+  it("rejects test events in live mode and live events in test mode", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    await assert.rejects(
+      service.processVerifiedEvent(event("customer.subscription.created", subscription(), { livemode: true })),
+      StripeEnvironmentMismatchError
+    );
+  });
+
+  it("rejects webhook events created with an unexpected Stripe API version", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    await assert.rejects(
+      service.processVerifiedEvent(event(
+        "customer.subscription.created",
+        subscription(),
+        { api_version: "2025-01-01.acacia" }
+      ))
+    );
+    assert.equal(repository.stripeEvents.size, 0);
+  });
+
+  it("preserves tenant isolation during current-state reconciliation", async () => {
+    const { repository, service, setRetrievedSubscription } = setup();
+    await mapCustomer(repository);
+    await service.processVerifiedEvent(event(
+      "customer.subscription.created",
+      subscription(),
+      { id: "evt_tenant_a_subscription" }
+    ));
+    await mapCustomer(repository, "tenant_b", "cus_tenant_b");
+    const tenantBSubscription = subscription({ customer: "cus_tenant_b" });
+    setRetrievedSubscription(tenantBSubscription);
+
+    await assert.rejects(
+      service.processVerifiedEvent(event(
+        "customer.subscription.updated",
+        tenantBSubscription,
+        { id: "evt_tenant_b_reassignment", created: EVENT_CREATED + 60 }
+      )),
+      StripeBillingConflictError
+    );
+    assert.equal(
+      (await repository.getStripeSubscription("sub_launch_001")).tenant_id,
+      "tenant_a"
+    );
+  });
 });
 
 describe("Stripe webhook verification and financial idempotency", () => {
-  it("mounts raw webhook verification before the global JSON middleware", async () => { const { repository, service, verifier } = setup(); await mapCustomer(repository); const payload = JSON.stringify(event("customer.subscription.created", subscription())); const app = createApp({ stripeSubscriptionService: service, logger: { info() {}, warn() {}, error() {} } }); const response = await request(app).post("/billing/stripe/webhook").set("content-type", "application/json").set("stripe-signature", sign(verifier, payload)).send(payload); assert.equal(response.status, 200); assert.deepEqual(response.body, { received: true, handled: true, replay: false }); });
-  it("ignores an identical event replay after the first effect", async () => { const { repository, service } = setup(); await mapCustomer(repository); const stripeEvent = event("customer.subscription.created", subscription()); const first = await service.processVerifiedEvent(stripeEvent); const replay = await service.processVerifiedEvent(stripeEvent); assert.equal(first.replay, false); assert.equal(replay.replay, true); });
-  it("grants monthly included credits once on paid subscription invoices", async () => { const { repository, service } = setup(); await mapCustomer(repository); await service.processVerifiedEvent(event("customer.subscription.created", subscription())); const paid = event("invoice.paid", invoice(), { id: "evt_invoice_paid_renewal_001", created: EVENT_CREATED + 60 }); const first = await service.processVerifiedEvent(paid); const replay = await service.processVerifiedEvent(paid); const duplicateDelivery = await service.processVerifiedEvent({ ...paid, id: "evt_invoice_paid_renewal_002" }); assert.equal(first.monthly_grant_applied, true); assert.equal(replay.replay, true); assert.equal(duplicateDelivery.monthly_grant_applied, true); assert.equal(repository.listLedger("tenant_a").length, 1); assert.equal((await service.billingService.readBalance({ tenantId: "tenant_a" })).available_balance, 10); });
-  it("accepts Dahlia invoice.paid payloads without the legacy paid boolean", async () => {
+  it("mounts raw webhook verification before the global JSON middleware", async () => {
+    const { repository, service, verifier } = setup();
+    await mapCustomer(repository);
+    const payload = JSON.stringify(event("customer.subscription.created", subscription()));
+    const app = createApp({
+      stripeSubscriptionService: service,
+      logger: { info() {}, warn() {}, error() {} },
+    });
+    const response = await request(app)
+      .post("/billing/stripe/webhook")
+      .set("content-type", "application/json")
+      .set("stripe-signature", sign(verifier, payload))
+      .send(payload);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { received: true, handled: true, replay: false });
+  });
+
+  it("rejects invalid and missing signatures without diagnostics or secret leakage", async () => {
+    const { service } = setup();
+    const logs = [];
+    const app = createApp({
+      stripeSubscriptionService: service,
+      logger: {
+        info() {},
+        warn(...values) { logs.push(values); },
+        error(...values) { logs.push(values); },
+      },
+    });
+    for (const signature of ["bad_signature", null]) {
+      let pending = request(app)
+        .post("/billing/stripe/webhook")
+        .set("content-type", "application/json");
+      if (signature) pending = pending.set("stripe-signature", signature);
+      const response = await pending.send("{\"card\":\"4242424242424242\"}");
+      assert.equal(response.status, 400);
+      assert.equal(response.body.error.code, "STRIPE_SIGNATURE_INVALID");
+    }
+    const exposed = JSON.stringify({ logs });
+    assert.doesNotMatch(exposed, /whsec_test_secret_123|4242424242424242|bad_signature/);
+  });
+
+  it("ignores an identical event replay after the first effect", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    const stripeEvent = event("customer.subscription.created", subscription());
+    const first = await service.processVerifiedEvent(stripeEvent);
+    const replay = await service.processVerifiedEvent(stripeEvent);
+    assert.equal(first.replay, false);
+    assert.equal(replay.replay, true);
+    assert.equal(repository.stripeEvents.size, 1);
+  });
+
+  it("recovers a failed event claim on a legitimate retry", async () => {
+    const { repository, service } = setup();
+    const stripeEvent = event("customer.subscription.created", subscription());
+    await assert.rejects(
+      service.processVerifiedEvent(stripeEvent),
+      StripeBillingResourceUnavailableError
+    );
+    assert.equal(repository.stripeEvents.get(stripeEvent.id).status, "failed");
+    await mapCustomer(repository);
+    const recovered = await service.processVerifiedEvent(stripeEvent);
+    assert.equal(recovered.handled, true);
+    assert.equal(repository.stripeEvents.get(stripeEvent.id).status, "processed");
+  });
+
+  it("rejects conflicting reuse of a processed Stripe event ID", async () => {
+    const { repository, service } = setup();
+    await mapCustomer(repository);
+    const stripeEvent = event("customer.subscription.created", subscription());
+    await service.processVerifiedEvent(stripeEvent);
+    await assert.rejects(
+      service.processVerifiedEvent({
+        ...stripeEvent,
+        data: { object: subscription({ status: "past_due" }) },
+      })
+    );
+  });
+
+  it("grants monthly included credits once on paid subscription invoices", async () => {
     const { repository, service } = setup();
     await mapCustomer(repository);
     await service.processVerifiedEvent(event("customer.subscription.created", subscription()));
-    const dahliaInvoice = invoice();
-    delete dahliaInvoice.paid;
-    const result = await service.processVerifiedEvent(event("invoice.paid", dahliaInvoice, { id: "evt_invoice_paid_dahlia_001", api_version: "2026-07-29.dahlia", created: EVENT_CREATED + 60 }));
-    assert.equal(result.monthly_grant_applied, true);
+    const paid = event("invoice.paid", invoice(), {
+      id: "evt_invoice_paid_renewal_001",
+      created: EVENT_CREATED + 60,
+    });
+    const first = await service.processVerifiedEvent(paid);
+    const replay = await service.processVerifiedEvent(paid);
+    const duplicateDelivery = await service.processVerifiedEvent({
+      ...paid,
+      id: "evt_invoice_paid_renewal_002",
+    });
+    assert.equal(first.monthly_grant_applied, true);
+    assert.equal(replay.replay, true);
+    assert.equal(duplicateDelivery.monthly_grant_applied, true);
     assert.equal(repository.listLedger("tenant_a").length, 1);
     assert.equal((await service.billingService.readBalance({ tenantId: "tenant_a" })).available_balance, 10);
   });
-  it("does not grant credits for failed, unpaid, or non-cycle subscription invoices", async () => { for (const candidate of [{ type: "invoice.payment_failed", invoice: invoice({ paid: false, status: "open" }) }, { type: "invoice.paid", invoice: invoice({ billing_reason: "manual" }) }]) { const { repository, service } = setup(); await mapCustomer(repository); await service.processVerifiedEvent(event("customer.subscription.created", subscription())); await service.processVerifiedEvent(event(candidate.type, candidate.invoice, { id: `evt_${candidate.type.replaceAll(".", "_")}_nonqualifying`, created: EVENT_CREATED + 60 })); assert.equal(repository.listLedger("tenant_a").length, 0); } });
-  it("fails closed when an invoice references an unmapped subscription customer", async () => { const { service } = setup(); await assert.rejects(service.processVerifiedEvent(event("invoice.paid", invoice(), { id: "evt_unknown_invoice_001" })), StripeBillingResourceUnavailableError); });
+
+  it("does not grant credits for failed, unpaid, or non-cycle subscription invoices", async () => {
+    for (const candidate of [
+      {
+        type: "invoice.payment_failed",
+        invoice: invoice({ paid: false, status: "open" }),
+      },
+      {
+        type: "invoice.paid",
+        invoice: invoice({ billing_reason: "manual" }),
+      },
+    ]) {
+      const { repository, service } = setup();
+      await mapCustomer(repository);
+      await service.processVerifiedEvent(event(
+        "customer.subscription.created",
+        subscription()
+      ));
+      await service.processVerifiedEvent(event(candidate.type, candidate.invoice, {
+        id: `evt_${candidate.type.replaceAll(".", "_")}_nonqualifying`,
+        created: EVENT_CREATED + 60,
+      }));
+      assert.equal(repository.listLedger("tenant_a").length, 0);
+    }
+  });
+
+  it("fails closed when an invoice references an unmapped subscription customer", async () => {
+    const { service } = setup();
+    const paid = event("invoice.paid", invoice(), { id: "evt_unknown_invoice_001" });
+    await assert.rejects(
+      service.processVerifiedEvent(paid),
+      StripeBillingResourceUnavailableError
+    );
+  });
 });
