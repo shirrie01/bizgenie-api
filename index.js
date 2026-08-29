@@ -44,6 +44,7 @@ const {
 } = require("./src/image-generation");
 const {
   InMemoryVideoGenerationRepository,
+  PostgresVideoGenerationRepository,
   UnconfiguredVideoAssetStore,
   UnconfiguredVideoGenerationProvider,
   UnconfiguredVideoReferenceAssetLoader,
@@ -534,6 +535,10 @@ async function createProductionApp({ env = process.env, logger = console } = {})
   const generationJobRepository = new PostgresGenerationJobRepository({
     pool: brandBrainRepository.pool,
   });
+  const videoGenerationRepository = new PostgresVideoGenerationRepository({
+    pool: brandBrainRepository.pool,
+  });
+  await videoGenerationRepository.initialize();
   const billing = await createPostgresBillingProductionComposition({
     pool: brandBrainRepository.pool,
     env,
@@ -559,6 +564,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       generationJobRepository,
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
       imageProvider: media.imageProvider,
+      videoGenerationRepository,
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       videoProvider: media.videoProvider,
@@ -571,6 +577,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     brandBrainRepository,
     customerTokenVerifier,
     generationJobRepository,
+    videoGenerationRepository,
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,
     generationBillingOrchestrator: billing.generationBillingOrchestrator,
