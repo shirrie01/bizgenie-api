@@ -8,6 +8,7 @@ const {
   createCustomerActorFromVerifiedIdentity,
 } = require("../src/authorization");
 const { InMemoryBrandBrainRepository } = require("../src/brand-brain");
+const { BillingService, InMemoryBillingRepository } = require("../src/billing");
 const { GenerationBillingOrchestrator } = require("../src/generation-billing");
 const { InMemoryGenerationJobRepository } = require("../src/generation-jobs");
 const {
@@ -28,9 +29,10 @@ class Tokens {
 }
 
 class FixtureVideoProvider extends VideoGenerationProvider {
-  constructor({ fail = false } = {}) {
+  constructor({ fail = false, processingPolls = 0 } = {}) {
     super();
     this.fail = fail;
+    this.processingPolls = processingPolls;
     this.submissions = 0;
     this.polls = 0;
   }
@@ -44,6 +46,15 @@ class FixtureVideoProvider extends VideoGenerationProvider {
   }
   async poll() {
     this.polls += 1;
+    if (this.processingPolls > 0) {
+      this.processingPolls -= 1;
+      return {
+        provider: "fixture",
+        provider_job_id: "operation_video_001",
+        provider_model: "fixture-video-model",
+        status: "processing",
+      };
+    }
     if (this.fail) {
       return {
         provider: "fixture",
@@ -166,6 +177,104 @@ function customer(client, token = "token-a") {
   return client.set("authorization", `Bearer ${token}`);
 }
 
+async function durableRestartFixture({ fail = false, processingPolls = 0 } = {}) {
+  const now = () => new Date("2026-08-29T20:00:00.000Z");
+  const billingRepository = new InMemoryBillingRepository({
+    policies: [{
+      policy_id: "restart_policy",
+      plan_code: "test",
+      policy_version: 1,
+      status: "active",
+      included_monthly_credits: 100,
+      bolt_on_eligible: false,
+      effective_from: "2026-01-01T00:00:00.000Z",
+      execution_costs: { "video.normal": 5, "video.premium": 9 },
+    }],
+    entitlements: [{
+      entitlement_id: "restart_entitlement",
+      tenant_id: "tenant_a",
+      policy_id: "restart_policy",
+      plan_code: "test",
+      status: "active",
+      starts_at: "2026-01-01T00:00:00.000Z",
+      reference_period_start: "2026-08-01T00:00:00.000Z",
+      reference_period_end: "2026-09-01T00:00:00.000Z",
+      included_monthly_credit_grant: 100,
+    }],
+    accounts: [{
+      account_id: "restart_account",
+      tenant_id: "tenant_a",
+      status: "active",
+      created_at: "2026-01-01T00:00:00.000Z",
+    }],
+    projects: [{ project_id: "project_a", tenant_id: "tenant_a" }],
+    now,
+  });
+  const billingService = new BillingService({ repository: billingRepository, now });
+  await billingService.adjustCredits({
+    tenantId: "tenant_a",
+    amount: 100,
+    direction: "credit",
+    transactionCorrelationId: "restart_fixture_funding",
+    idempotencyKey: "restart_fixture_funding",
+  });
+
+  const videoGenerationRepository = new InMemoryVideoGenerationRepository();
+  const generationJobRepository = new InMemoryGenerationJobRepository();
+  const provider = new FixtureVideoProvider({ fail, processingPolls });
+  let assetSaves = 0;
+  function freshApp() {
+    const generationBillingOrchestrator = new GenerationBillingOrchestrator({
+      billingService,
+      logger: { error() {} },
+    });
+    return createApp({
+      authorizationRepository: authorizationRepository(),
+      brandBrainRepository: new InMemoryBrandBrainRepository(),
+      customerTokenVerifier: new Tokens(),
+      generationBillingOrchestrator,
+      generationJobRepository,
+      videoGenerationRepository,
+      videoProvider: provider,
+      videoAssetStore: {
+        async save({ source }) {
+          assetSaves += 1;
+          return {
+            asset_id: "44444444-4444-4444-8444-444444444444",
+            location: "gs://bizgenie-staging-media/reconstructed/video.mp4",
+            mime_type: source.mime_type,
+            width: source.width,
+            height: source.height,
+            duration_seconds: source.duration_seconds,
+            container: "mp4",
+            byte_size: 2048,
+          };
+        },
+      },
+      videoReferenceAssetLoader: { async load() { throw new Error("not used"); } },
+      logger: { info() {}, warn() {}, error() {} },
+    });
+  }
+  return {
+    billingRepository,
+    billingService,
+    freshApp,
+    generationJobRepository,
+    provider,
+    assetSaves: () => assetSaves,
+  };
+}
+
+function financialEffects(repository) {
+  const ledger = repository.listLedger("tenant_a");
+  return Object.fromEntries(
+    ["reservation", "debit", "reservation_release"].map((type) => [
+      type,
+      ledger.filter((entry) => entry.entry_type === type).length,
+    ])
+  );
+}
+
 describe("customer Video Auth -> immutable job -> Billing -> async settlement", () => {
   it("authorizes and reserves submission, then debits only after durable completion", async () => {
     const f = fixture();
@@ -201,67 +310,8 @@ describe("customer Video Auth -> immutable job -> Billing -> async settlement", 
   });
 
   it("reconstructs an accepted async Video in a fresh app instance without resubmission", async () => {
-    const durableVideoRepository = new InMemoryVideoGenerationRepository();
-    const durableJobRepository = new InMemoryGenerationJobRepository();
-    const provider = new FixtureVideoProvider();
-    const effects = { reserve: 0, debit: 0, release: 0 };
-
-    const billingService = {
-      async createReservation(input) {
-        effects.reserve += 1;
-        return {
-          ledger_entry_id: "reservation_restart_001",
-          generation_id: input.generationId,
-        };
-      },
-      async finalizeDebit() {
-        effects.debit += 1;
-        return { ledger_entry_id: "debit_restart_001" };
-      },
-      async releaseReservation() {
-        effects.release += 1;
-        return { ledger_entry_id: "release_restart_001" };
-      },
-    };
-
-    const generationBillingOrchestrator = new GenerationBillingOrchestrator({
-      billingService,
-      logger: { error() {} },
-    });
-
-    function freshApp() {
-      return createApp({
-        authorizationRepository: authorizationRepository(),
-        brandBrainRepository: new InMemoryBrandBrainRepository(),
-        customerTokenVerifier: new Tokens(),
-        generationBillingOrchestrator,
-        generationJobRepository: durableJobRepository,
-        videoGenerationRepository: durableVideoRepository,
-        videoProvider: provider,
-        videoAssetStore: {
-          async save({ source }) {
-            return {
-              asset_id: "44444444-4444-4444-8444-444444444444",
-              location: "gs://bizgenie-staging-media/reconstructed/video.mp4",
-              mime_type: source.mime_type,
-              width: source.width,
-              height: source.height,
-              duration_seconds: source.duration_seconds,
-              container: "mp4",
-              byte_size: 2048,
-            };
-          },
-        },
-        videoReferenceAssetLoader: {
-          async load() {
-            throw new Error("not used");
-          },
-        },
-        logger: { info() {}, warn() {}, error() {} },
-      });
-    }
-
-    const firstApp = freshApp();
+    const f = await durableRestartFixture();
+    const firstApp = f.freshApp();
 
     const submitted = await customer(
       request(firstApp).post("/customer/generate-video")
@@ -271,13 +321,16 @@ describe("customer Video Auth -> immutable job -> Billing -> async settlement", 
     }));
 
     assert.equal(submitted.status, 202);
-    assert.equal(provider.submissions, 1);
-    assert.equal(effects.reserve, 1);
-    assert.equal(effects.debit, 0);
+    assert.equal(f.provider.submissions, 1);
+    assert.deepEqual(financialEffects(f.billingRepository), {
+      reservation: 1,
+      debit: 0,
+      reservation_release: 0,
+    });
 
     // Simulate process replacement: discard the first Express/service graph
     // and construct a new one against the same durable authorities.
-    const restartedApp = freshApp();
+    const restartedApp = f.freshApp();
 
     const completed = await customer(
       request(restartedApp).post(
@@ -287,23 +340,134 @@ describe("customer Video Auth -> immutable job -> Billing -> async settlement", 
 
     assert.equal(completed.status, 200);
     assert.equal(completed.body.status, "completed");
-    assert.equal(provider.submissions, 1);
-    assert.equal(provider.polls, 1);
-    assert.equal(effects.reserve, 1);
-    assert.equal(effects.debit, 1);
-    assert.equal(effects.release, 0);
+    assert.equal(f.provider.submissions, 1);
+    assert.equal(f.provider.polls, 1);
+    assert.equal(f.assetSaves(), 1);
+    assert.deepEqual(financialEffects(f.billingRepository), {
+      reservation: 1,
+      debit: 1,
+      reservation_release: 0,
+    });
 
+    const alreadySettledRestart = f.freshApp();
     const repeated = await customer(
-      request(restartedApp).post(
+      request(alreadySettledRestart).post(
         "/customer/generate-video/generation_video_restart_001/poll"
       )
     );
 
     assert.equal(repeated.status, 200);
     assert.equal(repeated.body.status, "completed");
-    assert.equal(provider.submissions, 1);
-    assert.equal(provider.polls, 1);
-    assert.equal(effects.debit, 1);
+    assert.equal(f.provider.submissions, 1);
+    assert.equal(f.provider.polls, 1);
+    assert.equal(f.assetSaves(), 1);
+    assert.deepEqual(financialEffects(f.billingRepository), {
+      reservation: 1,
+      debit: 1,
+      reservation_release: 0,
+    });
+  });
+
+  it("keeps a reconstructed reservation open while Video is still processing", async () => {
+    const f = await durableRestartFixture({ processingPolls: 1 });
+    await customer(request(f.freshApp()).post("/customer/generate-video")).send(
+      videoRequest({
+        execution_id: "execution_video_processing_restart",
+        generation_id: "generation_video_processing_restart",
+      })
+    );
+
+    const processing = await customer(
+      request(f.freshApp()).post(
+        "/customer/generate-video/generation_video_processing_restart/poll"
+      )
+    );
+    assert.equal(processing.status, 202);
+    assert.equal(processing.body.status, "processing");
+    assert.equal(f.provider.submissions, 1);
+    assert.deepEqual(financialEffects(f.billingRepository), {
+      reservation: 1,
+      debit: 0,
+      reservation_release: 0,
+    });
+  });
+
+  it("reconstructs and releases a terminal provider failure exactly once", async () => {
+    const f = await durableRestartFixture({ fail: true });
+    await customer(request(f.freshApp()).post("/customer/generate-video")).send(
+      videoRequest({
+        execution_id: "execution_video_failure_restart",
+        generation_id: "generation_video_failure_restart",
+      })
+    );
+
+    const failed = await customer(
+      request(f.freshApp()).post(
+        "/customer/generate-video/generation_video_failure_restart/poll"
+      )
+    );
+    assert.equal(failed.status, 502);
+    assert.deepEqual(financialEffects(f.billingRepository), {
+      reservation: 1,
+      debit: 0,
+      reservation_release: 1,
+    });
+
+    const repeated = await customer(
+      request(f.freshApp()).get(
+        "/customer/generate-video/generation_video_failure_restart"
+      )
+    );
+    assert.equal(repeated.status, 200);
+    assert.equal(repeated.body.status, "failed");
+    assert.deepEqual(financialEffects(f.billingRepository), {
+      reservation: 1,
+      debit: 0,
+      reservation_release: 1,
+    });
+  });
+
+  it("fails closed when reconstructed job or reservation authority is mismatched", async () => {
+    const f = await durableRestartFixture();
+    await customer(request(f.freshApp()).post("/customer/generate-video")).send(
+      videoRequest({
+        execution_id: "execution_video_mismatch_restart",
+        generation_id: "generation_video_mismatch_restart",
+      })
+    );
+    const [job] = [...f.generationJobRepository.jobsById.values()];
+    const forged = { ...job, execution_class: "video.premium" };
+    const restarted = new GenerationBillingOrchestrator({
+      billingService: f.billingService,
+      logger: { error() {} },
+    });
+    await assert.rejects(
+      restarted.settleSuccessfulExecution({ job: forged }),
+      (error) => error.code === "GENERATION_BILLING_UNAVAILABLE"
+    );
+
+    const canonicalLookup = f.billingRepository.findGenerationBillingState.bind(
+      f.billingRepository
+    );
+    f.billingRepository.findGenerationBillingState = async (input) => {
+      const state = await canonicalLookup(input);
+      return {
+        ...state,
+        reservation: { ...state.reservation, project_id: "project_b" },
+      };
+    };
+    await assert.rejects(
+      new GenerationBillingOrchestrator({
+        billingService: f.billingService,
+        logger: { error() {} },
+      }).settleSuccessfulExecution({ job }),
+      (error) => error.code === "GENERATION_BILLING_UNAVAILABLE"
+    );
+    assert.deepEqual(financialEffects(f.billingRepository), {
+      reservation: 1,
+      debit: 0,
+      reservation_release: 0,
+    });
   });
 
   it("denies cross-tenant status/poll access before provider or Billing settlement", async () => {

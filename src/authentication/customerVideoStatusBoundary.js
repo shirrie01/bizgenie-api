@@ -7,7 +7,16 @@ function createCustomerVideoStatusBoundary({tokenVerifier,authorizationService,v
       const actor=await tokenVerifier.verifyAccessToken(extractBearerToken(req.header("authorization")));
       const record=await videoGenerationService.get(generationId); if(!record.tenant_id||!record.generation_job_id) throw new AuthorizationDeniedError();
       const authorization=record.brand_id?await authorizationService.authorizeProjectBrand({actor,tenantId:record.tenant_id,projectId:record.project_id,brandId:record.brand_id,action:"generation:create"}):await authorizationService.authorizeProject({actor,tenantId:record.tenant_id,projectId:record.project_id,action:"generation:create"});
-      const job=await generationJobRepository.getById(record.generation_job_id); if(!job||job.tenant_id!==authorization.tenant_id||job.project_id!==authorization.project_id||job.actor_correlation?.auth_user_id!==actor.auth_user_id) throw new AuthorizationDeniedError();
+      const job=await generationJobRepository.getById(record.generation_job_id); if(
+        !job||
+        job.job_id!==record.generation_job_id||
+        job.tenant_id!==authorization.tenant_id||
+        job.project_id!==authorization.project_id||
+        job.request_correlation_id!==record.execution_id||
+        job.execution_class!==`video.${record.quality}`||
+        job.actor_correlation?.auth_user_id!==actor.auth_user_id||
+        record.user_id!==actor.auth_user_id
+      ) throw new AuthorizationDeniedError();
       res.locals.customerAuthorization=authorization; res.locals.generationJob=job; return next();
     }catch(error){
       if(error instanceof AuthenticationRequiredError) return res.status(401).json(responseBody("video",AUTHENTICATION_ERROR));
