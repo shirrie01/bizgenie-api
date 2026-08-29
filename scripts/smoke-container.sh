@@ -44,35 +44,30 @@ if [[ "$database_ready" != "true" ]]; then
   exit 1
 fi
 
-migration_applied=false
+schema_ready=false
 for _ in {1..30}; do
-  if docker exec --interactive "$database_container" \
-    psql --username postgres --dbname postgres \
-    < supabase/migrations/20260808170000_create_brand_brains.sql \
-    >/dev/null 2>&1; then
-    migration_applied=true
+  if {
+    docker exec --interactive "$database_container" \
+      psql --set ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      < supabase/migrations/20260808170000_create_brand_brains.sql &&
+    docker exec --interactive "$database_container" \
+      psql --set ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      < supabase/migrations/20260818010000_create_customer_tenant_authorization_foundation.sql &&
+    docker exec --interactive "$database_container" \
+      psql --set ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      < supabase/migrations/20260821000000_create_generation_jobs.sql &&
+    docker exec --interactive "$database_container" \
+      psql --set ON_ERROR_STOP=1 --username postgres --dbname postgres \
+      < supabase/migrations/20260829143000_create_durable_video_generations.sql
+  } >/dev/null 2>&1; then
+    schema_ready=true
     break
   fi
   sleep 1
 done
-if [[ "$migration_applied" != "true" ]]; then
-  echo "Brand Brain migration could not be applied to disposable PostgreSQL" >&2
-  exit 1
-fi
 
-video_migration_applied=false
-for _ in {1..30}; do
-  if docker exec --interactive "$database_container" \
-    psql --username postgres --dbname postgres \
-    < supabase/migrations/20260829143000_create_durable_video_generations.sql \
-    >/dev/null 2>&1; then
-    video_migration_applied=true
-    break
-  fi
-  sleep 1
-done
-if [[ "$video_migration_applied" != "true" ]]; then
-  echo "Durable Video migration could not be applied to disposable PostgreSQL" >&2
+if [[ "$schema_ready" != "true" ]]; then
+  echo "Required disposable PostgreSQL schema could not be initialized" >&2
   exit 1
 fi
 
