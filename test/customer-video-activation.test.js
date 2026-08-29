@@ -200,6 +200,112 @@ describe("customer Video Auth -> immutable job -> Billing -> async settlement", 
     assert.equal(f.provider.submissions, 1);
   });
 
+  it("reconstructs an accepted async Video in a fresh app instance without resubmission", async () => {
+    const durableVideoRepository = new InMemoryVideoGenerationRepository();
+    const durableJobRepository = new InMemoryGenerationJobRepository();
+    const provider = new FixtureVideoProvider();
+    const effects = { reserve: 0, debit: 0, release: 0 };
+
+    const billingService = {
+      async createReservation(input) {
+        effects.reserve += 1;
+        return {
+          ledger_entry_id: "reservation_restart_001",
+          generation_id: input.generationId,
+        };
+      },
+      async finalizeDebit() {
+        effects.debit += 1;
+        return { ledger_entry_id: "debit_restart_001" };
+      },
+      async releaseReservation() {
+        effects.release += 1;
+        return { ledger_entry_id: "release_restart_001" };
+      },
+    };
+
+    const generationBillingOrchestrator = new GenerationBillingOrchestrator({
+      billingService,
+      logger: { error() {} },
+    });
+
+    function freshApp() {
+      return createApp({
+        authorizationRepository: authorizationRepository(),
+        brandBrainRepository: new InMemoryBrandBrainRepository(),
+        customerTokenVerifier: new Tokens(),
+        generationBillingOrchestrator,
+        generationJobRepository: durableJobRepository,
+        videoGenerationRepository: durableVideoRepository,
+        videoProvider: provider,
+        videoAssetStore: {
+          async save({ source }) {
+            return {
+              asset_id: "44444444-4444-4444-8444-444444444444",
+              location: "gs://bizgenie-staging-media/reconstructed/video.mp4",
+              mime_type: source.mime_type,
+              width: source.width,
+              height: source.height,
+              duration_seconds: source.duration_seconds,
+              container: "mp4",
+              byte_size: 2048,
+            };
+          },
+        },
+        videoReferenceAssetLoader: {
+          async load() {
+            throw new Error("not used");
+          },
+        },
+        logger: { info() {}, warn() {}, error() {} },
+      });
+    }
+
+    const firstApp = freshApp();
+
+    const submitted = await customer(
+      request(firstApp).post("/customer/generate-video")
+    ).send(videoRequest({
+      execution_id: "execution_video_restart_001",
+      generation_id: "generation_video_restart_001",
+    }));
+
+    assert.equal(submitted.status, 202);
+    assert.equal(provider.submissions, 1);
+    assert.equal(effects.reserve, 1);
+    assert.equal(effects.debit, 0);
+
+    // Simulate process replacement: discard the first Express/service graph
+    // and construct a new one against the same durable authorities.
+    const restartedApp = freshApp();
+
+    const completed = await customer(
+      request(restartedApp).post(
+        "/customer/generate-video/generation_video_restart_001/poll"
+      )
+    );
+
+    assert.equal(completed.status, 200);
+    assert.equal(completed.body.status, "completed");
+    assert.equal(provider.submissions, 1);
+    assert.equal(provider.polls, 1);
+    assert.equal(effects.reserve, 1);
+    assert.equal(effects.debit, 1);
+    assert.equal(effects.release, 0);
+
+    const repeated = await customer(
+      request(restartedApp).post(
+        "/customer/generate-video/generation_video_restart_001/poll"
+      )
+    );
+
+    assert.equal(repeated.status, 200);
+    assert.equal(repeated.body.status, "completed");
+    assert.equal(provider.submissions, 1);
+    assert.equal(provider.polls, 1);
+    assert.equal(effects.debit, 1);
+  });
+
   it("denies cross-tenant status/poll access before provider or Billing settlement", async () => {
     const f = fixture();
     await customer(request(f.app).post("/customer/generate-video")).send(videoRequest());

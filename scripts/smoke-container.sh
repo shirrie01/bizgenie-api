@@ -44,19 +44,60 @@ if [[ "$database_ready" != "true" ]]; then
   exit 1
 fi
 
-migration_applied=false
+schema_ready=false
 for _ in {1..30}; do
   if docker exec --interactive "$database_container" \
-    psql --username postgres --dbname postgres \
-    < supabase/migrations/20260808170000_create_brand_brains.sql \
-    >/dev/null 2>&1; then
-    migration_applied=true
-    break
+    psql --set ON_ERROR_STOP=1 --username postgres --dbname postgres <<'SQL' >/dev/null 2>&1
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated NOLOGIN;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role NOLOGIN;
+  END IF;
+END
+$$;
+
+CREATE SCHEMA IF NOT EXISTS auth;
+
+CREATE TABLE IF NOT EXISTS auth.users (
+  id uuid PRIMARY KEY
+);
+
+CREATE OR REPLACE FUNCTION auth.uid()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT NULL::uuid;
+$$;
+SQL
+  then
+    migrations_ok=true
+    for migration in $(find supabase/migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+      if ! docker exec --interactive "$database_container" \
+        psql --set ON_ERROR_STOP=1 --username postgres --dbname postgres \
+        < "$migration" >/dev/null 2>&1; then
+        migrations_ok=false
+        echo "Failed disposable PostgreSQL migration: $migration" >&2
+        break
+      fi
+    done
+
+    if [[ "$migrations_ok" == "true" ]]; then
+      schema_ready=true
+      break
+    fi
   fi
   sleep 1
 done
-if [[ "$migration_applied" != "true" ]]; then
-  echo "Brand Brain migration could not be applied to disposable PostgreSQL" >&2
+
+if [[ "$schema_ready" != "true" ]]; then
+  echo "Required disposable PostgreSQL schema could not be initialized" >&2
   exit 1
 fi
 
