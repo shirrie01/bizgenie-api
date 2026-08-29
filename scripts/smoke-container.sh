@@ -60,6 +60,22 @@ if [[ "$migration_applied" != "true" ]]; then
   exit 1
 fi
 
+video_migration_applied=false
+for _ in {1..30}; do
+  if docker exec --interactive "$database_container" \
+    psql --username postgres --dbname postgres \
+    < supabase/migrations/20260829143000_create_durable_video_generations.sql \
+    >/dev/null 2>&1; then
+    video_migration_applied=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$video_migration_applied" != "true" ]]; then
+  echo "Durable Video migration could not be applied to disposable PostgreSQL" >&2
+  exit 1
+fi
+
 database_url="postgresql://postgres:${database_password}@${database_container}:5432/postgres"
 
 docker run --detach \
