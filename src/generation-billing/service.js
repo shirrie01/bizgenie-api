@@ -66,6 +66,7 @@ class GenerationBillingOrchestrator {
     const state = {
       job,
       fingerprint,
+      reconstructionPromise: null,
       reservationPromise: null,
       executionPromise: null,
       debitPromise: null,
@@ -105,6 +106,55 @@ class GenerationBillingOrchestrator {
         });
     }
     return state.reservationPromise;
+  }
+
+  reconstruct(state) {
+    if (!state.reconstructionPromise) {
+      const job = state.job;
+      state.reconstructionPromise = Promise.resolve()
+        .then(() =>
+          this.billingService.findGenerationBillingState({
+            tenantId: job.tenant_id,
+            projectId: job.project_id,
+            generationId: job.job_id,
+            executionId: job.request_correlation_id,
+            transactionCorrelationId: job.request_correlation_id,
+            executionClass: job.execution_class,
+            reservationIdempotencyKey: financialIdempotencyKey(
+              "reserve",
+              job.job_id
+            ),
+            debitIdempotencyKey: financialIdempotencyKey("debit", job.job_id),
+            releaseIdempotencyKey: financialIdempotencyKey(
+              "release",
+              job.job_id
+            ),
+          })
+        )
+        .then((durable) => {
+          if (!durable?.reservation) {
+            throw new GenerationBillingAuthorityError();
+          }
+          if (!state.reservationPromise) {
+            state.reservationPromise = Promise.resolve(durable.reservation);
+          }
+          if (durable.settlement?.entry_type === "debit") {
+            state.debit = durable.settlement;
+            state.debitPromise = Promise.resolve(durable.settlement);
+          } else if (
+            durable.settlement?.entry_type === "reservation_release"
+          ) {
+            state.releasePromise = Promise.resolve(durable.settlement);
+          }
+          return durable;
+        })
+        .catch((error) => {
+          state.reconstructionPromise = null;
+          if (error instanceof GenerationBillingAuthorityError) throw error;
+          throw new GenerationBillingUnavailableError();
+        });
+    }
+    return state.reconstructionPromise;
   }
 
   executeOnce(state, operation) {
@@ -184,24 +234,29 @@ class GenerationBillingOrchestrator {
 
   async settleSuccessfulExecution({ job }) {
     const state = this.stateFor(job);
-    if (
-      !state.reservationPromise ||
-      !state.executionPromise ||
-      state.releasePromise
-    ) {
+    if (!state.reservationPromise || !state.executionPromise) {
+      await this.reconstruct(state);
+    }
+    if (state.releasePromise) {
       throw new GenerationBillingAuthorityError();
     }
     const reservation = await state.reservationPromise;
-    const outcome = await state.executionPromise;
-    if (!outcome.ok) throw new GenerationBillingAuthorityError();
+    let outcome;
+    if (state.executionPromise) {
+      outcome = await state.executionPromise;
+      if (!outcome.ok) throw new GenerationBillingAuthorityError();
+    }
 
     await this.debitOnce(state, reservation);
-    return outcome.value;
+    return outcome?.value;
   }
 
   async releaseFailedExecution({ job }) {
     const state = this.stateFor(job);
-    if (!state.reservationPromise || state.debit) {
+    if (!state.reservationPromise) {
+      await this.reconstruct(state);
+    }
+    if (state.debit) {
       throw new GenerationBillingAuthorityError();
     }
     const reservation = await state.reservationPromise;

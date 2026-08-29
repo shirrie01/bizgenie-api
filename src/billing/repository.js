@@ -96,6 +96,12 @@ class BillingRepository {
     throw new Error("BillingRepository.readBalance is not implemented");
   }
 
+  findGenerationBillingState(_input) {
+    throw new Error(
+      "BillingRepository.findGenerationBillingState is not implemented"
+    );
+  }
+
   appendFinancialTransaction(_input) {
     throw new Error(
       "BillingRepository.appendFinancialTransaction is not implemented"
@@ -200,6 +206,7 @@ class InMemoryBillingRepository extends BillingRepository {
     this.entriesById = new Map();
     this.idempotency = new Map();
     this.logicalEffects = new Map();
+    this.reservationExecutionClasses = new Map();
     this.accountLocks = new Map();
     this.stripeCustomersByTenant = new Map();
     this.stripeCustomersById = new Map();
@@ -252,6 +259,41 @@ class InMemoryBillingRepository extends BillingRepository {
     return this.entries
       .filter((entry) => entry.tenant_id === tenantId)
       .map(copy);
+  }
+
+  findGenerationBillingState(input) {
+    const reservations = this.entries.filter(
+      (entry) =>
+        entry.entry_type === "reservation" &&
+        (entry.idempotency_key === input.reservation_idempotency_key ||
+          entry.generation_id === input.generation_id)
+    );
+    if (reservations.length === 0) return null;
+    if (reservations.length !== 1) {
+      throw new FinancialResourceUnavailableError();
+    }
+
+    const reservation = reservations[0];
+    const authoritativeExecutionClass = this.reservationExecutionClasses.get(
+      reservation.ledger_entry_id
+    );
+    if (authoritativeExecutionClass !== input.execution_class) {
+      throw new FinancialResourceUnavailableError();
+    }
+
+    const settlements = this.entries.filter(
+      (entry) =>
+        ["debit", "reservation_release"].includes(entry.entry_type) &&
+        entry.reservation_entry_id === reservation.ledger_entry_id
+    );
+    if (settlements.length > 1) {
+      throw new FinancialResourceUnavailableError();
+    }
+    return Object.freeze({
+      execution_class: authoritativeExecutionClass,
+      reservation: copy(reservation),
+      settlement: copy(settlements[0] || null),
+    });
   }
 
   readBalance(tenantId) {
@@ -399,16 +441,29 @@ class InMemoryBillingRepository extends BillingRepository {
     );
   }
 
-  async createReservation(input) {
+  async createReservation({ execution_class, ...input }) {
     const account = this.requireAccount(input.tenant_id);
-    return this.withAccountLock(account.account_id, () =>
-      this.appendLocked(account, {
+    return this.withAccountLock(account.account_id, () => {
+      const reservation = this.appendLocked(account, {
         ...input,
         entry_type: "reservation",
         balance_delta: 0,
         reserved_delta: input.amount,
-      })
-    );
+      });
+      if (execution_class) {
+        const existing = this.reservationExecutionClasses.get(
+          reservation.ledger_entry_id
+        );
+        if (existing && existing !== execution_class) {
+          throw new FinancialResourceUnavailableError();
+        }
+        this.reservationExecutionClasses.set(
+          reservation.ledger_entry_id,
+          execution_class
+        );
+      }
+      return reservation;
+    });
   }
 
   requireRelatedEntry(tenantId, entryId, expectedType) {

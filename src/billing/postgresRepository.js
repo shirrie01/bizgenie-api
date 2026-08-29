@@ -532,6 +532,53 @@ class PostgresBillingRepository extends BillingRepository {
     });
   }
 
+  async findGenerationBillingState(input) {
+    return this.read(async () => {
+      const result = await this.pool.query(
+        `SELECT row_to_json(reservation) AS reservation,
+                job.execution_class,
+                row_to_json(settlement) AS settlement
+           FROM public.credit_ledger AS reservation
+           LEFT JOIN public.generation_jobs AS job
+             ON job.job_id = reservation.generation_id
+            AND job.tenant_id = reservation.tenant_id
+            AND job.project_id = reservation.project_id
+            AND job.execution_class = $3
+           LEFT JOIN public.credit_ledger AS settlement
+             ON settlement.account_id = reservation.account_id
+            AND settlement.tenant_id = reservation.tenant_id
+            AND settlement.reservation_entry_id = reservation.ledger_entry_id
+            AND settlement.entry_type IN ('debit', 'reservation_release')
+          WHERE reservation.entry_type = 'reservation'
+            AND (
+              reservation.idempotency_key = $1
+              OR reservation.generation_id = $2
+            )`,
+        [
+          input.reservation_idempotency_key,
+          input.generation_id,
+          input.execution_class,
+        ]
+      );
+      if (result.rows.length === 0) return null;
+      if (result.rows.length !== 1) {
+        throw new FinancialResourceUnavailableError();
+      }
+      const row = result.rows[0];
+      const reservation = mapLedger(row.reservation);
+      if (row.execution_class !== input.execution_class) {
+        throw new FinancialResourceUnavailableError();
+      }
+      return Object.freeze({
+        execution_class: row.execution_class,
+        reservation,
+        settlement: row.settlement?.ledger_entry_id
+          ? mapLedger(row.settlement)
+          : null,
+      });
+    });
+  }
+
   async requireLockedAccount(client, tenantId) {
     const result = await client.query(
       `SELECT account_id, tenant_id, status, created_at
@@ -732,7 +779,7 @@ class PostgresBillingRepository extends BillingRepository {
     });
   }
 
-  async createReservation(input) {
+  async createReservation({ execution_class: _executionClass, ...input }) {
     return this.withTransaction(async (client) => {
       const account = await this.requireLockedAccount(client, input.tenant_id);
       return this.appendLocked(client, account, {

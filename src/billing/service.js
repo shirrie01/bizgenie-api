@@ -2,6 +2,7 @@ const {
   CommercialPolicyUnavailableError,
   EntitlementInactiveError,
   ExecutionPriceUnavailableError,
+  FinancialResourceUnavailableError,
   InvalidFinancialOperationError,
 } = require("./errors");
 const { executionClass, identifier } = require("./schema");
@@ -17,6 +18,52 @@ function parseAmount(value) {
     );
   }
   return value;
+}
+
+function requireGenerationBillingAuthority(state, expected) {
+  if (!state) return null;
+  const reservation = state.reservation;
+  if (
+    state.execution_class !== expected.execution_class ||
+    !reservation ||
+    reservation.entry_type !== "reservation" ||
+    reservation.tenant_id !== expected.tenant_id ||
+    reservation.project_id !== expected.project_id ||
+    reservation.generation_id !== expected.generation_id ||
+    reservation.execution_id !== expected.execution_id ||
+    reservation.transaction_correlation_id !==
+      expected.transaction_correlation_id ||
+    reservation.idempotency_key !== expected.reservation_idempotency_key
+  ) {
+    throw new FinancialResourceUnavailableError();
+  }
+
+  const settlement = state.settlement || null;
+  if (!settlement) {
+    return Object.freeze({ reservation, settlement: null });
+  }
+  const settlementKey =
+    settlement.entry_type === "debit"
+      ? expected.debit_idempotency_key
+      : settlement.entry_type === "reservation_release"
+        ? expected.release_idempotency_key
+        : null;
+  if (
+    !settlementKey ||
+    settlement.account_id !== reservation.account_id ||
+    settlement.tenant_id !== reservation.tenant_id ||
+    settlement.amount !== reservation.amount ||
+    settlement.project_id !== reservation.project_id ||
+    settlement.generation_id !== reservation.generation_id ||
+    settlement.execution_id !== reservation.execution_id ||
+    settlement.transaction_correlation_id !==
+      reservation.transaction_correlation_id ||
+    settlement.reservation_entry_id !== reservation.ledger_entry_id ||
+    settlement.idempotency_key !== settlementKey
+  ) {
+    throw new FinancialResourceUnavailableError();
+  }
+  return Object.freeze({ reservation, settlement });
 }
 
 class BillingService {
@@ -67,6 +114,34 @@ class BillingService {
 
   async readBalance({ tenantId }) {
     return this.repository.readBalance(parseIdentifier(tenantId));
+  }
+
+  async findGenerationBillingState({
+    tenantId,
+    projectId,
+    generationId,
+    executionId,
+    transactionCorrelationId,
+    executionClass: requestedClass,
+    reservationIdempotencyKey,
+    debitIdempotencyKey,
+    releaseIdempotencyKey,
+  }) {
+    const expected = Object.freeze({
+      tenant_id: parseIdentifier(tenantId),
+      project_id: parseIdentifier(projectId),
+      generation_id: parseIdentifier(generationId),
+      execution_id: parseIdentifier(executionId),
+      transaction_correlation_id: parseIdentifier(transactionCorrelationId),
+      execution_class: executionClass.parse(requestedClass),
+      reservation_idempotency_key: parseIdentifier(
+        reservationIdempotencyKey
+      ),
+      debit_idempotency_key: parseIdentifier(debitIdempotencyKey),
+      release_idempotency_key: parseIdentifier(releaseIdempotencyKey),
+    });
+    const state = await this.repository.findGenerationBillingState(expected);
+    return requireGenerationBillingAuthority(state, expected);
   }
 
   async appendFinancialTransaction(input) {
@@ -150,6 +225,7 @@ class BillingService {
     return this.repository.createReservation({
       tenant_id: price.tenant_id,
       amount: price.credit_cost,
+      execution_class: price.execution_class,
       project_id: parseIdentifier(projectId),
       generation_id: parseIdentifier(generationId),
       execution_id: parseIdentifier(executionId),

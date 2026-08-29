@@ -481,6 +481,72 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     assert.equal(entries.filter((entry) => entry.entry_type === "reservation").length, 1);
   });
 
+  it("reconstructs reserved, debited, and released generation state from PostgreSQL", async () => {
+    await fund("tenant_a", 20, "restart_reconstruction");
+    const firstProcess = new GenerationBillingOrchestrator({
+      billingService: service,
+      logger: { error() {} },
+    });
+    const completedJob = jobObject("job_video");
+    await firstProcess.beginExecution({
+      job: completedJob,
+      expectedExecutionClass: "video.normal",
+      operation: async () => ({ status: "submitted" }),
+    });
+
+    const reconstructedService = new BillingService({
+      repository: new PostgresBillingRepository({
+        pool,
+        now: () => new Date(NOW),
+      }),
+      now: () => new Date(NOW),
+    });
+    const forgedProcess = new GenerationBillingOrchestrator({
+      billingService: reconstructedService,
+      logger: { error() {} },
+    });
+    await assert.rejects(
+      forgedProcess.settleSuccessfulExecution({
+        job: { ...completedJob, execution_class: "video.premium" },
+      }),
+      GenerationBillingUnavailableError
+    );
+
+    const secondProcess = new GenerationBillingOrchestrator({
+      billingService: reconstructedService,
+      logger: { error() {} },
+    });
+    await secondProcess.settleSuccessfulExecution({ job: completedJob });
+    const thirdProcess = new GenerationBillingOrchestrator({
+      billingService: reconstructedService,
+      logger: { error() {} },
+    });
+    await thirdProcess.settleSuccessfulExecution({ job: completedJob });
+
+    const failedJob = jobObject("job_release");
+    await firstProcess.beginExecution({
+      job: failedJob,
+      expectedExecutionClass: "video.normal",
+      operation: async () => ({ status: "submitted" }),
+    });
+    await new GenerationBillingOrchestrator({
+      billingService: reconstructedService,
+      logger: { error() {} },
+    }).releaseFailedExecution({ job: failedJob });
+    await new GenerationBillingOrchestrator({
+      billingService: reconstructedService,
+      logger: { error() {} },
+    }).releaseFailedExecution({ job: failedJob });
+
+    const entries = await repository.listLedger("tenant_a");
+    assert.equal(entries.filter((entry) => entry.entry_type === "reservation").length, 2);
+    assert.equal(entries.filter((entry) => entry.entry_type === "debit").length, 1);
+    assert.equal(
+      entries.filter((entry) => entry.entry_type === "reservation_release").length,
+      1
+    );
+  });
+
   it("fails closed for concurrent global idempotency reuse across immutable authority", async () => {
     await fund("tenant_a", 10, "a");
     await fund("tenant_b", 10, "b");

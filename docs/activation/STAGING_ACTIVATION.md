@@ -60,10 +60,13 @@ Submission uses the existing verified customer authorization chain, creates
 the existing immutable generation job with `video.normal` or `video.premium`,
 and reserves credits before provider submission. A processing result remains
 reserved. Completion debits only after durable asset persistence. A terminal
-provider failure releases the reservation. Repeated poll/get calls reuse the
-existing idempotent settlement promise and durable Billing effect. Status and
-poll authority is derived from the stored Video record and immutable job;
-customer query/body values cannot reinterpret it for another tenant.
+provider failure releases the reservation. A fresh process reconstructs the
+reservation and any debit/release from the canonical Billing ledger by the
+immutable generation job and deterministic financial keys; process-local
+promises remain only a coalescing cache. Repeated poll/get calls reuse the
+durable exactly-once Billing effect. Status and poll authority is derived from
+the stored Video record and immutable job; customer query/body values cannot
+reinterpret it for another tenant.
 
 ## Activation variables
 
