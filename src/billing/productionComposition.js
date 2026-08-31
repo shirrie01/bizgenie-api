@@ -1,6 +1,7 @@
 const { GenerationBillingOrchestrator, UnconfiguredGenerationBillingOrchestrator } = require("../generation-billing");
 const { BillingConfigurationError } = require("./errors");
 const { PostgresBillingRepository } = require("./postgresRepository");
+const { qualifiesForBoundedPostDebitRefund } = require("./refundPolicy");
 const { executionClass, identifier } = require("./schema");
 const { BillingService } = require("./service");
 
@@ -63,6 +64,7 @@ async function createPostgresBillingProductionComposition({
   });
   const generationBillingOrchestrator = new GenerationBillingOrchestrator({
     billingService,
+    qualifiesForRefund: qualifiesForBoundedPostDebitRefund,
     logger,
   });
   return Object.freeze({
