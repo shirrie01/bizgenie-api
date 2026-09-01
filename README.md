@@ -36,9 +36,21 @@ The tests do not call Vertex AI and do not require Google Cloud credentials.
 - `POST /generate-video` — authenticated asynchronous video submission.
 - `GET /generate-video/:generationId` — reads current video generation state.
 - `POST /generate-video/:generationId/poll` — resumes an accepted operation.
+- `POST /public/paid-beta-interest` — disabled-by-default, write-only paid-beta
+  interest receipt; no public read/list route is exposed.
 
 The authenticated routes require the `x-admin-key` header to exactly match the
 `ADMIN_KEY` environment variable.
+
+## Paid-beta interest capture
+
+BG-LAUNCH-002F adds a strict, consent-aware public submission boundary backed
+by dedicated append-only PostgreSQL interest/receipt records and durable HMAC-
+pseudonymized abuse buckets. It is off by default, uses the existing exact-
+origin CORS allowlist, does not create Auth/Billing/tenant authority, and sends
+no email or external notification. The exact frontend request, privacy,
+retention, activation, Checkout return-route, and rollback contracts are in
+`docs/launch/PAID_BETA_CAPTURE_AND_CHECKOUT_RETURN.md`.
 
 ## Commercial policy and credit-ledger foundation
 

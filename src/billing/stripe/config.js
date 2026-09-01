@@ -11,6 +11,9 @@ const testUrl = z.string().url().refine((value) => {
     (url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname));
 });
 
+const CHECKOUT_SUCCESS_PATH = "/billing/checkout/success";
+const CHECKOUT_CANCEL_PATH = "/billing/checkout/cancel";
+
 const plan = z.object({
   priceId: z.string().regex(/^price_[A-Za-z0-9]+$/),
   policyId: z.string().trim().min(1).max(128),
@@ -33,6 +36,22 @@ const StripeBillingConfigSchema = z.object({
   for (const key of ["successUrl", "cancelUrl"]) {
     if (!urlSchema.safeParse(config[key]).success) {
       ctx.addIssue({ code: "custom", path: [key], message: "Unsafe Stripe return URL" });
+    }
+  }
+  const success = new URL(config.successUrl);
+  const cancel = new URL(config.cancelUrl);
+  if (success.origin !== cancel.origin) {
+    ctx.addIssue({ code: "custom", path: ["cancelUrl"], message: "Stripe return origins must match" });
+  }
+  for (const [key, url, expectedPath] of [
+    ["successUrl", success, CHECKOUT_SUCCESS_PATH],
+    ["cancelUrl", cancel, CHECKOUT_CANCEL_PATH],
+  ]) {
+    if (
+      url.pathname !== expectedPath || url.search || url.hash ||
+      url.username || url.password
+    ) {
+      ctx.addIssue({ code: "custom", path: [key], message: "Unsafe Stripe return route" });
     }
   }
   if (Object.keys(config.plans).length === 0) {
@@ -87,6 +106,8 @@ function createStripeClient({ config }) {
 }
 
 module.exports = {
+  CHECKOUT_CANCEL_PATH,
+  CHECKOUT_SUCCESS_PATH,
   STRIPE_API_VERSION,
   STRIPE_SDK_VERSION,
   StripeBillingConfigSchema,

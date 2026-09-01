@@ -154,8 +154,8 @@ function setup({ policies, entitlements, config: configOverrides } = {}) {
     mode: "test",
     secretKey: "sk_test_offline_only",
     webhookSecret: WEBHOOK_SECRET,
-    successUrl: "https://app.bizgenie.test/billing/success",
-    cancelUrl: "https://app.bizgenie.test/billing/cancel",
+    successUrl: "https://app.bizgenie.test/billing/checkout/success",
+    cancelUrl: "https://app.bizgenie.test/billing/checkout/cancel",
     pastDueGraceDays: 7,
     plans: {
       standard: {
@@ -230,8 +230,8 @@ describe("Stripe server configuration", () => {
       STRIPE_MODE: "test",
       STRIPE_SECRET_KEY: "sk_test_configured",
       STRIPE_WEBHOOK_SECRET: "whsec_configured",
-      STRIPE_SUCCESS_URL: "http://localhost:3000/billing/success",
-      STRIPE_CANCEL_URL: "http://localhost:3000/billing/cancel",
+      STRIPE_SUCCESS_URL: "http://localhost:3000/billing/checkout/success",
+      STRIPE_CANCEL_URL: "http://localhost:3000/billing/checkout/cancel",
       STRIPE_PRICE_STANDARD: "price_StandardTest",
       STRIPE_POLICY_STANDARD: "policy_standard_v1",
     } });
@@ -252,6 +252,27 @@ describe("Stripe server configuration", () => {
       STRIPE_POLICY_STANDARD: "policy_standard_v1",
     } }));
   });
+
+  it("rejects unsafe, malformed, or non-contract Checkout return destinations", () => {
+    const base = {
+      STRIPE_MODE: "test",
+      STRIPE_SECRET_KEY: "sk_test_configured",
+      STRIPE_WEBHOOK_SECRET: "whsec_configured",
+      STRIPE_SUCCESS_URL: "https://app.bizgenie.test/billing/checkout/success",
+      STRIPE_CANCEL_URL: "https://app.bizgenie.test/billing/checkout/cancel",
+      STRIPE_PRICE_STANDARD: "price_StandardTest",
+      STRIPE_POLICY_STANDARD: "policy_standard_v1",
+    };
+    for (const override of [
+      { STRIPE_SUCCESS_URL: "https://api.bizgenie.test/" },
+      { STRIPE_SUCCESS_URL: "https://app.bizgenie.test/billing/checkout/success?trusted=true" },
+      { STRIPE_CANCEL_URL: "https://app.bizgenie.test/billing/checkout/cancel#fragment" },
+      { STRIPE_CANCEL_URL: "https://attacker.test/billing/checkout/cancel" },
+      { STRIPE_SUCCESS_URL: "javascript:alert(1)" },
+    ]) {
+      assert.throws(() => loadStripeBillingConfig({ env: { ...base, ...override } }));
+    }
+  });
 });
 
 describe("Stripe Checkout boundary", () => {
@@ -267,7 +288,7 @@ describe("Stripe Checkout boundary", () => {
       { price: "price_StandardTest", quantity: 1 },
     ]);
     assert.equal(calls.sessions[0][0].customer, "cus_tenant_a");
-    assert.equal(calls.sessions[0][0].success_url, "https://app.bizgenie.test/billing/success");
+    assert.equal(calls.sessions[0][0].success_url, "https://app.bizgenie.test/billing/checkout/success");
     assert.deepEqual(calls.sessions[0][0].subscription_data.billing_mode, { type: "flexible" });
     assert.match(calls.sessions[0][1].idempotencyKey, /^bizgenie:checkout:tenant_a:/);
   });
