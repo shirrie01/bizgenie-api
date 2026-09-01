@@ -1,5 +1,17 @@
 # Staging activation layer
 
+## Current evidence authority
+
+The configuration contract below remains canonical for safe environment
+composition. The current BG-ACT-001 acceptance state, evidence classifications,
+Tenant B matrix, failure-drill matrix and proposed verdict are governed by
+[`BG-ACT-001_FINAL_EVIDENCE_PACK.md`](BG-ACT-001_FINAL_EVIDENCE_PACK.md).
+
+That pack supersedes earlier activation summaries wherever their historical
+baseline, blocker list or restart instruction conflicts with the 1 September
+2026 Issue #39 canonical lock. It does not authorise production or close Issue
+#39.
+
 BG-ACT-001B adds only the repository seams proven missing by the BG-ACT-001
 reconnaissance. It does not activate or deploy any environment and it does not
 change canonical Auth, Billing, generation-job, provider-selection, or

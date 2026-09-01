@@ -1,5 +1,26 @@
 # BizGenie Mission Control v1.0
 
+## Current paid-activation authority
+
+BG-ACT-001 is in **review** with its final evidence reconciled. The canonical
+pack is
+[`docs/activation/BG-ACT-001_FINAL_EVIDENCE_PACK.md`](../activation/BG-ACT-001_FINAL_EVIDENCE_PACK.md).
+
+| Control | Current state |
+| --- | --- |
+| Canonical `main` | `5df5b470a4472c479907a900754f2ab352b36826` (tree `82a5cd092bcdbbca69b09ae170a1b547068df2a9`) |
+| Complete / pass | Dedicated staging, migrations/RLS, Auth/service boundary, Billing, media, Image, Video, Stripe test lifecycle, Tenant A Golden Journey, 15 Tenant B behaviours, failure drills, restart/recovery and rollback readiness |
+| Partial | Public frontend integration; the authenticated staging API and Stripe lifecycle passed, while public launch integration remains in Issue #51 |
+| Unrecovered | Original `B-ISO-01`/`B-ISO-02` specimen labels and identifiers only; underlying isolation requirements are covered |
+| Production | Untouched, disabled and unauthorised |
+| Proposed verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
+| Exact restart point | Human review of the BG-ACT-001L evidence PR against Issue #39; do not merge, close the issue or activate production without explicit next authority |
+
+Issue #51 / BG-LAUNCH-002 remains a separate parallel launch-preparation
+programme. It cannot alter BG-ACT-001 technical authority or authorise
+production. Historical activation summaries are retained as evidence but are
+superseded when they conflict with the final pack.
+
 ## Purpose
 
 Mission Control is the operating layer for planning, building, verifying and continuously improving BizGenie. It exists to prevent architectural drift, uncontrolled scope, unverified completion and loss of strategic knowledge.
