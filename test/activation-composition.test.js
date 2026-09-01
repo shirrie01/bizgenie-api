@@ -20,6 +20,12 @@ const {
   GoogleVertexVeoProvider,
   UnconfiguredVideoGenerationProvider,
 } = require("../src/video-generation");
+const {
+  PaidBetaCaptureService,
+  PaidBetaConfigurationError,
+  createPaidBetaProductionComposition,
+  loadPaidBetaCaptureConfig,
+} = require("../src/paid-beta");
 const { createApp } = require("../index");
 
 function mediaPool() {
@@ -72,8 +78,8 @@ function stripeEnv(overrides = {}) {
     STRIPE_MODE: "test",
     STRIPE_SECRET_KEY: "sk_test_staging",
     STRIPE_WEBHOOK_SECRET: "whsec_staging",
-    STRIPE_SUCCESS_URL: "https://staging-frontend.example/billing/success",
-    STRIPE_CANCEL_URL: "https://staging-frontend.example/billing/cancel",
+    STRIPE_SUCCESS_URL: "https://staging-frontend.example/billing/checkout/success",
+    STRIPE_CANCEL_URL: "https://staging-frontend.example/billing/checkout/cancel",
     STRIPE_PRICE_STANDARD: "price_StagingStandard",
     STRIPE_POLICY_STANDARD: "policy_staging_standard_v1",
     ...overrides,
@@ -164,6 +170,74 @@ describe("Stripe production composition gates", () => {
         ...dependencies,
         env: stripeEnv({ BIZGENIE_ENVIRONMENT: "production" }),
       }),
+      ActivationConfigurationError
+    );
+  });
+});
+
+describe("paid-beta production composition gates", () => {
+  const pool = {
+    async query(sql) {
+      if (sql.includes("to_regclass('public.paid_beta_interests')")) {
+        return { rows: [{
+          interests: "paid_beta_interests",
+          receipts: "paid_beta_interest_receipts",
+          rate_limits: "paid_beta_rate_limit_buckets",
+          interests_rls: true,
+          receipts_rls: true,
+          interests_immutable: true,
+          receipts_immutable: true,
+        }] };
+      }
+      if (sql.includes("information_schema.role_table_grants")) {
+        return { rowCount: 0, rows: [] };
+      }
+      throw new Error("unexpected paid-beta initialization query");
+    },
+  };
+
+  function captureEnv(overrides = {}) {
+    return {
+      BIZGENIE_ENVIRONMENT: "staging",
+      PAID_BETA_CAPTURE_ENABLED: "true",
+      PAID_BETA_SUBMISSION_HASH_SECRET: "s".repeat(32),
+      PAID_BETA_CLIENT_HASH_SECRET: "c".repeat(32),
+      ...overrides,
+    };
+  }
+
+  it("keeps public capture disabled by default", async () => {
+    const result = await createPaidBetaProductionComposition({ pool, env: {} });
+    assert.equal(result.enabled, false);
+    assert.equal(result.service, null);
+  });
+
+  it("enables capture only with explicit staging configuration and durable tables", async () => {
+    const result = await createPaidBetaProductionComposition({
+      pool,
+      env: captureEnv(),
+    });
+    assert.equal(result.enabled, true);
+    assert.ok(result.service instanceof PaidBetaCaptureService);
+  });
+
+  it("fails closed for weak/shared secrets and production without its gate", () => {
+    assert.throws(
+      () => loadPaidBetaCaptureConfig({ env: captureEnv({
+        PAID_BETA_SUBMISSION_HASH_SECRET: "weak",
+      }) }),
+      PaidBetaConfigurationError
+    );
+    assert.throws(
+      () => loadPaidBetaCaptureConfig({ env: captureEnv({
+        PAID_BETA_CLIENT_HASH_SECRET: "s".repeat(32),
+      }) }),
+      PaidBetaConfigurationError
+    );
+    assert.throws(
+      () => loadPaidBetaCaptureConfig({ env: captureEnv({
+        BIZGENIE_ENVIRONMENT: "production",
+      }) }),
       ActivationConfigurationError
     );
   });

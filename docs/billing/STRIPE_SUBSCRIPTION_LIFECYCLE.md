@@ -49,8 +49,8 @@ All values are server controlled:
 | `STRIPE_MODE` | Exactly `test` or `live` |
 | `STRIPE_SECRET_KEY` | Matching `sk_test_` or `sk_live_` server key |
 | `STRIPE_WEBHOOK_SECRET` | Endpoint-specific `whsec_` signing secret |
-| `STRIPE_SUCCESS_URL` | Approved Checkout success URL |
-| `STRIPE_CANCEL_URL` | Approved Checkout cancel URL |
+| `STRIPE_SUCCESS_URL` | Approved frontend origin plus exact `/billing/checkout/success` route |
+| `STRIPE_CANCEL_URL` | Same approved frontend origin plus exact `/billing/checkout/cancel` route |
 | `STRIPE_PRICE_STANDARD` | Approved Stripe recurring Price for Standard |
 | `STRIPE_POLICY_STANDARD` | Existing BG-BILL-002A policy ID for Standard |
 | `STRIPE_PRICE_PRO` | Approved Stripe recurring Price for Pro, if enabled |
@@ -58,6 +58,11 @@ All values are server controlled:
 | `STRIPE_PAST_DUE_GRACE_DAYS` | Server-owned grace duration; defaults to seven days |
 
 Live mode requires HTTPS return URLs. Test mode permits HTTPS or loopback HTTP.
+Both URLs must share an origin and use the exact routes above with no
+credentials, query, or fragment. Browser return is not financial authority;
+the frontend must retrieve tenant-authorized subscription/entitlement state
+from the backend after success. See
+`../launch/PAID_BETA_CAPTURE_AND_CHECKOUT_RETURN.md`.
 An event whose `livemode` or API version differs from the configured environment
 fails before any state change.
 

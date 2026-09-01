@@ -23,6 +23,13 @@ const {
   PostgresMediaAssetRepository,
   objectKey,
 } = require("../src/media");
+const {
+  PAID_BETA_CONSENT_VERSION,
+  PAID_BETA_CONSENT_WORDING,
+  PaidBetaCaptureService,
+  PaidBetaRateLimitError,
+  PostgresPaidBetaRepository,
+} = require("../src/paid-beta");
 
 const ADMIN_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const postgresDescribe = ADMIN_DATABASE_URL ? describe : describe.skip;
@@ -124,6 +131,9 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
   async function resetFixture() {
     await pool.query(`
       TRUNCATE TABLE
+        public.paid_beta_interest_receipts,
+        public.paid_beta_interests,
+        public.paid_beta_rate_limit_buckets,
         public.media_assets,
         public.stripe_bolt_on_payment_evidence,
         public.stripe_webhook_events,
@@ -866,6 +876,130 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
         client.release();
       }
     }
+  });
+
+  it("captures and deduplicates paid-beta interest under real PostgreSQL concurrency", async () => {
+    const paidBetaRepository = new PostgresPaidBetaRepository({ pool });
+    await paidBetaRepository.initialize();
+    const paidBetaService = new PaidBetaCaptureService({
+      repository: paidBetaRepository,
+      config: {
+        enabled: true,
+        submissionHashSecret: "s".repeat(32),
+        clientHashSecret: "c".repeat(32),
+        consentVersion: PAID_BETA_CONSENT_VERSION,
+        consentWording: PAID_BETA_CONSENT_WORDING,
+        rateLimitMaxAttempts: 20,
+        rateLimitWindowSeconds: 900,
+      },
+      now: () => new Date("2026-09-01T17:00:00.000Z"),
+    });
+    const submission = {
+      name: "Ada Lovelace",
+      work_email: "ADA@example.com",
+      business_name: "Analytical Engines Ltd",
+      website_or_social_profile: "https://example.com/ada",
+      business_stage: "250k-1m",
+      primary_marketing_challenge: "Consistent launch campaigns",
+      privacy_contact_consent: true,
+      source: "homepage-paid-beta",
+      submission_id: "postgres_concurrent_001",
+    };
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => paidBetaService.capture(submission))
+    );
+    assert.equal(new Set(results.map((result) => result.reference_id)).size, 1);
+    const counts = await pool.query(`
+      SELECT
+        (SELECT count(*)::integer FROM public.paid_beta_interests) AS interests,
+        (SELECT count(*)::integer FROM public.paid_beta_interest_receipts) AS receipts`);
+    assert.deepEqual(counts.rows[0], { interests: 1, receipts: 1 });
+
+    const duplicateEmail = await paidBetaService.capture({
+      ...submission,
+      work_email: "ada@example.com",
+      submission_id: "postgres_concurrent_002",
+    });
+    assert.notEqual(duplicateEmail.reference_id, results[0].reference_id);
+    const deduplicated = await pool.query(`
+      SELECT
+        (SELECT count(*)::integer FROM public.paid_beta_interests) AS interests,
+        (SELECT count(*)::integer FROM public.paid_beta_interest_receipts) AS receipts`);
+    assert.deepEqual(deduplicated.rows[0], { interests: 1, receipts: 2 });
+  });
+
+  it("rate-limits paid-beta attempts atomically across real PostgreSQL sessions", async () => {
+    const paidBetaRepository = new PostgresPaidBetaRepository({ pool });
+    const input = {
+      client_hash: "a".repeat(64),
+      window_started_at: "2026-09-01T17:00:00.000Z",
+      expires_at: "2026-09-01T17:15:00.000Z",
+      maximum_attempts: 3,
+      now: "2026-09-01T17:00:01.000Z",
+    };
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 5 }, () => paidBetaRepository.consumeRateLimit(input))
+    );
+    assert.equal(attempts.filter((result) => result.status === "fulfilled").length, 3);
+    for (const rejected of attempts.filter((result) => result.status === "rejected")) {
+      assert.ok(rejected.reason instanceof PaidBetaRateLimitError);
+    }
+    const bucket = await pool.query(
+      "SELECT attempt_count FROM public.paid_beta_rate_limit_buckets WHERE client_hash = $1",
+      [input.client_hash]
+    );
+    assert.equal(bucket.rows[0].attempt_count, 3);
+  });
+
+  it("denies direct paid-beta table access and mutation for every Data API role", async () => {
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(`SET LOCAL ROLE ${role}`);
+        await assert.rejects(
+          client.query("SELECT * FROM public.paid_beta_interests"),
+          (error) => error.code === "42501"
+        );
+        await client.query("ROLLBACK");
+      } finally {
+        client.release();
+      }
+    }
+
+    const paidBetaRepository = new PostgresPaidBetaRepository({ pool });
+    const paidBetaService = new PaidBetaCaptureService({
+      repository: paidBetaRepository,
+      config: {
+        enabled: true,
+        submissionHashSecret: "s".repeat(32),
+        clientHashSecret: "c".repeat(32),
+        consentVersion: PAID_BETA_CONSENT_VERSION,
+        consentWording: PAID_BETA_CONSENT_WORDING,
+        rateLimitMaxAttempts: 5,
+        rateLimitWindowSeconds: 900,
+      },
+      now: () => new Date("2026-09-01T17:00:00.000Z"),
+    });
+    await paidBetaService.capture({
+      name: "Grace Hopper",
+      work_email: "grace@example.com",
+      business_name: "Compiler Co",
+      website_or_social_profile: "https://example.com/grace",
+      business_stage: "1m-5m",
+      primary_marketing_challenge: "Launch measurement",
+      privacy_contact_consent: true,
+      source: "homepage-paid-beta",
+      submission_id: "postgres_immutable_001",
+    });
+    await assert.rejects(
+      pool.query("UPDATE public.paid_beta_interest_receipts SET consent_version = 'changed'"),
+      (error) => error.code === "23514"
+    );
+    await assert.rejects(
+      pool.query("DELETE FROM public.paid_beta_interests"),
+      (error) => error.code === "23514"
+    );
   });
 
   it("persists tenant/project media authority and denies cross-boundary lookup", async () => {

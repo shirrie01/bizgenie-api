@@ -73,6 +73,10 @@ const {
 const {
   createServiceExecutionRouter,
 } = require("./src/service-execution");
+const {
+  createPaidBetaProductionComposition,
+  createPaidBetaRouter,
+} = require("./src/paid-beta");
 
 // The single scope this task defines. A future task may add narrower,
 // per-execution-class scopes; for now every generation job authorizes
@@ -245,6 +249,7 @@ function createApp({
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
   stripeSubscriptionService,
+  paidBetaCaptureService,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
 } = {}) {
@@ -285,6 +290,15 @@ function createApp({
         }),
         logger,
       })
+    );
+  }
+
+  // The public capture boundary owns its bounded parser and durable abuse
+  // check, so mount it before the application's general JSON parser.
+  if (paidBetaCaptureService) {
+    app.use(
+      "/public/paid-beta-interest",
+      createPaidBetaRouter({ service: paidBetaCaptureService, logger })
     );
   }
 
@@ -553,6 +567,10 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     billingService: billing.billingService,
     env,
   });
+  const paidBeta = await createPaidBetaProductionComposition({
+    pool: brandBrainRepository.pool,
+    env,
+  });
   const servicePrincipalVerifier = createServiceCredentialVerifierFromEnv({
     env,
   });
@@ -567,6 +585,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       videoGenerationRepository,
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
+      paidBetaCaptureService: paidBeta.service,
       videoProvider: media.videoProvider,
       videoAssetStore: media.videoAssetStore,
       videoReferenceAssetLoader: media.videoReferenceAssetLoader,
@@ -586,6 +605,9 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     servicePrincipalVerifier,
     stripeSubscriptionService: stripe.stripeSubscriptionService,
     stripe,
+    paidBetaCaptureRepository: paidBeta.repository,
+    paidBetaCaptureService: paidBeta.service,
+    paidBeta,
   };
 }
 

@@ -95,6 +95,11 @@ reinterpret it for another tenant.
 | `VIDEO_PROVIDER_TIMEOUT_MS` | Optional bounded provider transport timeout |
 | `STRIPE_BILLING_ENABLED` | Composes Stripe only with active durable Billing |
 | `STRIPE_MODE` | Must be `test` in staging and `live` in production |
+| `STRIPE_SUCCESS_URL` | Approved frontend origin plus exact `/billing/checkout/success` path |
+| `STRIPE_CANCEL_URL` | Same frontend origin plus exact `/billing/checkout/cancel` path |
+| `PAID_BETA_CAPTURE_ENABLED` | Enables the write-only paid-beta route after its migration/configuration checks |
+| `PAID_BETA_SUBMISSION_HASH_SECRET` | Server-only request-fingerprint HMAC secret |
+| `PAID_BETA_CLIENT_HASH_SECRET` | Distinct server-only abuse-identity HMAC secret |
 | `CORS_ENABLED` | Enables separate-frontend CORS; otherwise requests carrying `Origin` are denied |
 | `CORS_ALLOWED_ORIGINS` | Comma-separated exact URL origins; `*`, paths, queries, and fragments are rejected |
 
