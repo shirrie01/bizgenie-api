@@ -1,25 +1,41 @@
 # BizGenie Mission Control v1.0
 
-## Current paid-activation authority
+## Current campaign and paid-activation authority
 
-BG-ACT-001 is in **review** with its final evidence reconciled. The canonical
-pack is
+BG-ACT-001 / Issue #39 is **closed as completed**, following the
+[human acceptance and closure](https://github.com/shirrie01/bizgenie-api/issues/39#issuecomment-5497361809).
+The accepted historical pack is
 [`docs/activation/BG-ACT-001_FINAL_EVIDENCE_PACK.md`](../activation/BG-ACT-001_FINAL_EVIDENCE_PACK.md).
 
 | Control | Current state |
 | --- | --- |
-| Canonical `main` | `5df5b470a4472c479907a900754f2ab352b36826` (tree `82a5cd092bcdbbca69b09ae170a1b547068df2a9`) |
+| Verified `main` at I-A task start, 2026-09-02 | `16f1ecb5102b7acaf15d1b382d6a7eb7cd1182d2` (tree `c978e15e5956a1b5f83a31cb2ab8863f193ac3ff`); 0 open PRs before this task |
 | Complete / pass | Dedicated staging, migrations/RLS, Auth/service boundary, Billing, media, Image, Video, Stripe test lifecycle, Tenant A Golden Journey, 15 Tenant B behaviours, failure drills, restart/recovery and rollback readiness |
 | Partial | Public frontend integration; the authenticated staging API and Stripe lifecycle passed, while public launch integration remains in Issue #51 |
 | Unrecovered | Original `B-ISO-01`/`B-ISO-02` specimen labels and identifiers only; underlying isolation requirements are covered |
 | Production | Untouched, disabled and unauthorised |
-| Proposed verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
-| Exact restart point | Human review of the BG-ACT-001L evidence PR against Issue #39; do not merge, close the issue or activate production without explicit next authority |
+| Accepted Issue #39 verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
+| Campaign/calendar customer journey | GAP; not implemented/proven by the staging-generation verdict or the I-A contract |
+| BG-LAUNCH-002I-A | Contract pack in review; documentation only; architecture/human acceptance and merge pending |
+| Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [baseline/compatibility/verification](../launch/CAMPAIGN_SPINE_EVIDENCE.md) |
+| Exact restart point | Review the I-A PR and exact-head CI; merge only with separate explicit authority, then reverify main/Issue #51/overlaps and begin BG-LAUNCH-002I-B Additive Persistence |
 
 Issue #51 / BG-LAUNCH-002 remains a separate parallel launch-preparation
 programme. It cannot alter BG-ACT-001 technical authority or authorise
 production. Historical activation summaries are retained as evidence but are
-superseded when they conflict with the final pack.
+superseded when they conflict with the final pack and its subsequent human closure.
+The pack's original open-issue/review restart text is historical, not current authority.
+
+The current launch product authority is Issue #51 checkpoints
+[5508119002](https://github.com/shirrie01/bizgenie-api/issues/51#issuecomment-5508119002)
+and [5508588187](https://github.com/shirrie01/bizgenie-api/issues/51#issuecomment-5508588187).
+They lock the campaign-first manual-publication MVP and accepted experience target.
+I-A preserves verified Text/Image/Video, Auth, Billing, Brand Brain and durable storage;
+it supplies ownership, lifecycle, revisions, approval, publication, attribution,
+idempotency/concurrency and persistence contracts without implementing them.
+Paid-beta capture is merged but disabled/unstaged per the current checkpoint.
+Staging and production are untouched by I-A. Migrations, customer APIs, preview registry,
+connectors, W4B complete-journey proof and activation remain subsequent bounded work.
 
 ## Purpose
 
