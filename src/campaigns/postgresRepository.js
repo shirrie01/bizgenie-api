@@ -101,7 +101,10 @@ class PostgresCampaignRepository extends CampaignRepository {
     } catch (error) {
       try { await client.query("rollback"); } catch {}
       throw databaseError(error);
-    } finally { client.release(); }
+    } finally {
+      try { await client.query("select set_config('bizgenie.campaign_command','off',false)"); } catch {}
+      client.release();
+    }
   }
 
   async _captureBrandSnapshot(client, context, brandId) {
