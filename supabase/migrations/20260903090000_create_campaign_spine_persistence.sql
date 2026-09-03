@@ -418,7 +418,7 @@ $$;
 create or replace function campaign_private.reject_campaign_projection_identity_change()
 returns trigger language plpgsql set search_path = '' as $$
 begin
-  if current_setting('bizgenie.campaign_command', true) <> 'on' then
+  if current_setting('bizgenie.campaign_command', true) <> txid_current()::text then
     raise exception 'campaign projections require the controlled command transaction' using errcode = '55000';
   end if;
   return new;

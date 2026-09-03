@@ -149,7 +149,7 @@ class PostgresCampaignRepository extends CampaignRepository {
     for (const row of campaign.brand_snapshots.values()) await insert(client, "campaign_brand_snapshots", row);
     if (!before) await insert(client, "campaigns", { campaign_id: campaign.campaign_id, tenant_id: campaign.tenant_id, project_id: campaign.project_id, brand_id: campaign.brand_id, name: campaign.name, goal: campaign.goal, initial_brand_snapshot_id: campaign.initial_brand_snapshot_id, display_timezone: campaign.display_timezone, version: campaign.version, last_event_sequence: campaign.last_event_sequence, archived_at: campaign.archived_at, created_at: campaign.created_at, updated_at: campaign.updated_at, created_by: actorUuid(campaign.created_by) });
     else {
-      await client.query("select set_config('bizgenie.campaign_command','on',true)");
+      await client.query("select set_config('bizgenie.campaign_command',txid_current()::text,true)");
       await client.query(`update public.campaigns set name=$1,display_timezone=$2,version=$3,last_event_sequence=$4,archived_at=$5,updated_at=$6 where campaign_id=$7`, [campaign.name,campaign.display_timezone,campaign.version,campaign.last_event_sequence,campaign.archived_at,campaign.updated_at,campaign.campaign_id]);
     }
     for (const item of campaign.items.values()) {
