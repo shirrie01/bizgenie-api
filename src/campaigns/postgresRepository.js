@@ -68,7 +68,7 @@ class PostgresCampaignRepository extends CampaignRepository {
     try {
       await client.query("begin");
       await this._authorize(client, context, true);
-      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [["campaign-spine.v1",context.tenant_id,context.project_id,context.actor.auth_user_id,command.idempotency_key].join("\u0000")]);
+      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["campaign-spine.v1", context.tenant_id, context.project_id, context.actor.auth_user_id, command.idempotency_key])]);
       const existing = await client.query(`select intent_hash, result from public.campaign_command_receipts where namespace='campaign-spine.v1' and tenant_id=$1 and project_id=$2 and auth_user_id=$3 and idempotency_key=$4`, [context.tenant_id, context.project_id, context.actor.auth_user_id, command.idempotency_key]);
       const intentHash = hashIntent({ ...command, actor: context.actor });
       if (existing.rowCount) {
