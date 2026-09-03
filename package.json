@@ -10,6 +10,7 @@
     "start": "node index.js",
     "test": "node --test",
     "test:billing:postgres": "node --test test/postgres-billing.integration.test.js",
+    "test:campaign:postgres": "node --test test/postgres-campaign.integration.test.js",
     "test:brand-brain:integration": "node --test scripts/brand-brain-postgres-integration.js"
   },
   "dependencies": {
