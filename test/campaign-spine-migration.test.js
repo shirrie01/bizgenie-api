@@ -43,6 +43,7 @@ describe("campaign-spine additive migration contract", () => {
     assert.match(migration, /campaign_command_receipts_identity_unique[\s\S]*namespace, tenant_id, project_id, auth_user_id, idempotency_key/i);
     assert.match(migration, /reject_immutable_campaign_record/i);
     assert.match(migration, /reject_campaign_projection_identity_change/i);
+    assert.match(migration, /current_setting\('bizgenie\.campaign_command', true\) is distinct from txid_current\(\)::text/i);
     assert.match(migration, /on delete restrict/gi);
     assert.doesNotMatch(migration, /on delete cascade/i);
   });
