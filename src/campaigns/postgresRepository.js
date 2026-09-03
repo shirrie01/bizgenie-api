@@ -24,7 +24,10 @@ async function insert(client, table, row, conflict = "do nothing") {
   const entries = Object.entries(row).filter(([, value]) => value !== undefined);
   const columns = entries.map(([key]) => `"${key}"`).join(",");
   const placeholders = entries.map((_, index) => `$${index + 1}`).join(",");
-  await client.query(`insert into public.${table} (${columns}) values (${placeholders}) on conflict ${conflict}`, entries.map(([, value]) => value));
+  await client.query(
+    `insert into public.${table} (${columns}) values (${placeholders}) on conflict ${conflict}`,
+    entries.map(([, value]) => Array.isArray(value) ? JSON.stringify(value) : value),
+  );
 }
 
 class PostgresCampaignRepository extends CampaignRepository {
