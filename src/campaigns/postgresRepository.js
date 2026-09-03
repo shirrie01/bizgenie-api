@@ -93,6 +93,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       const after = memory.state.campaigns.get(result.campaign_id);
       await this._persistCampaign(client, before, after, command, context, intentHash, result);
       await client.query("set constraints all immediate");
+      await client.query("select set_config('bizgenie.campaign_command','off',true)");
       await this.fault("postgres_before_commit");
       await client.query("commit");
       await this.fault("postgres_after_commit");
