@@ -417,7 +417,15 @@ $$;
 
 create or replace function campaign_private.reject_campaign_projection_identity_change()
 returns trigger language plpgsql set search_path = '' as $$
+declare contains_projection boolean;
 begin
+  if tg_op = 'TRUNCATE' then
+    execute format('select exists(select 1 from %I.%I)', tg_table_schema, tg_table_name)
+      into contains_projection;
+    if not contains_projection then
+      return null;
+    end if;
+  end if;
   if current_setting('bizgenie.campaign_command', true) is distinct from txid_current()::text then
     raise exception 'campaign projections require the controlled command transaction' using errcode = '55000';
   end if;
