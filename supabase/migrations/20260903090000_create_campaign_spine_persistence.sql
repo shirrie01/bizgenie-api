@@ -402,7 +402,15 @@ create index if not exists campaign_publications_time_idx
 
 create or replace function campaign_private.reject_immutable_campaign_record()
 returns trigger language plpgsql set search_path = '' as $$
+declare contains_evidence boolean;
 begin
+  if tg_op = 'TRUNCATE' then
+    execute format('select exists(select 1 from %I.%I)', tg_table_schema, tg_table_name)
+      into contains_evidence;
+    if not contains_evidence then
+      return null;
+    end if;
+  end if;
   raise exception 'campaign evidence is immutable' using errcode = '55000';
 end;
 $$;

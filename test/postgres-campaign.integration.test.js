@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { after, before, beforeEach, describe, it } = require("node:test");
+const { after, before, describe, it } = require("node:test");
 const { Pool } = require("pg");
 const { PostgresCampaignRepository, CampaignIdempotencyError, CampaignResourceError } = require("../src/campaigns");
 
@@ -29,13 +29,9 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
       catch(error){error.message=`${filename}: ${error.message}`;throw error;}
     }
     repository=new PostgresCampaignRepository({pool,resolvePreviewReceipt:async(_context,payload)=>({render_receipt_id:payload.render_receipt_id,variant_id:payload.variant_id,revision_id:payload.revision_id,revision_content_hash:"b".repeat(64),profile_id:"instagram.feed",profile_version:1,profile_hash:"c".repeat(64),platform:"instagram",placement:"feed",format:"text",renderer_version:"renderer.v1",render_input_hash:"d".repeat(64),preview_digest:"e".repeat(64),rendered_at:new Date().toISOString()})});
-  });
-  after(async()=>{await pool?.end();if(adminPool&&database){for(let i=0;i<20;i++){try{await adminPool.query(`drop database if exists ${database}`);break;}catch{await new Promise((resolve)=>setTimeout(resolve,25));}}}await adminPool?.end();});
-  beforeEach(async()=>{
-    await pool.query(`truncate table public.campaign_command_receipts,public.campaign_events,public.campaign_publication_corrections,public.campaign_publications,public.campaign_attempt_resolutions,public.campaign_manual_attempts,public.campaign_schedule_entries,public.campaign_approval_events,public.campaign_preview_evidence,public.campaign_revisions,public.campaign_platform_variants,public.campaign_content_items,public.campaigns,public.campaign_brand_snapshots,public.media_assets,public.generation_jobs,public.brand_brains,public.projects,public.tenant_memberships,public.tenants,public.customer_profiles,auth.users restart identity cascade`);
     await pool.query(`insert into auth.users(id) values($1),($2); insert into public.customer_profiles(auth_user_id) values($1),($2); insert into public.tenants(tenant_id,name,created_by) values('tenant_a','A',$1),('tenant_b','B',$2); insert into public.tenant_memberships(tenant_id,auth_user_id,role) values('tenant_a',$1,'owner'),('tenant_a',$2,'member'),('tenant_b',$2,'owner'); insert into public.projects(project_id,tenant_id,name) values('project_a','tenant_a','A'),('project_b','tenant_b','B'); insert into public.brand_brains(brand_id,project_id,name,version,status,created_at,updated_at) values('brand_a','project_a','A',1,'approved',now(),now()),('brand_b','project_b','B',1,'approved',now(),now())`,[AUTH_A,AUTH_B]);
   });
-
+  after(async()=>{await pool?.end();if(adminPool&&database){for(let i=0;i<20;i++){try{await adminPool.query(`drop database if exists ${database}`);break;}catch{await new Promise((resolve)=>setTimeout(resolve,25));}}}await adminPool?.end();});
   it("initializes only when all fourteen relations are RLS-locked from direct roles",async()=>{await repository.initialize();});
 
   it("persists and reconstructs a campaign/item/revision across repository instances",async()=>{
