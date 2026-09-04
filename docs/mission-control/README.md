@@ -9,16 +9,17 @@ The accepted historical pack is
 
 | Control | Current state |
 | --- | --- |
-| Verified `main` at I-A task start, 2026-09-02 | `16f1ecb5102b7acaf15d1b382d6a7eb7cd1182d2` (tree `c978e15e5956a1b5f83a31cb2ab8863f193ac3ff`); 0 open PRs before this task |
+| Verified `main` at I-B task start, 2026-09-03 | `3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727` (tree `dbc7d815195f4643d4a55899d34ebb9393ec5223`); PR #54/I-A merged and 0 open PRs before I-B |
 | Complete / pass | Dedicated staging, migrations/RLS, Auth/service boundary, Billing, media, Image, Video, Stripe test lifecycle, Tenant A Golden Journey, 15 Tenant B behaviours, failure drills, restart/recovery and rollback readiness |
 | Partial | Public frontend integration; the authenticated staging API and Stripe lifecycle passed, while public launch integration remains in Issue #51 |
 | Unrecovered | Original `B-ISO-01`/`B-ISO-02` specimen labels and identifiers only; underlying isolation requirements are covered |
 | Production | Untouched, disabled and unauthorised |
 | Accepted Issue #39 verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
 | Campaign/calendar customer journey | GAP; not implemented/proven by the staging-generation verdict or the I-A contract |
-| BG-LAUNCH-002I-A | Contract pack in review; documentation only; architecture/human acceptance and merge pending |
-| Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [baseline/compatibility/verification](../launch/CAMPAIGN_SPINE_EVIDENCE.md) |
-| Exact restart point | Review the I-A PR and exact-head CI; merge only with separate explicit authority, then reverify main/Issue #51/overlaps and begin BG-LAUNCH-002I-B Additive Persistence |
+| BG-LAUNCH-002I-A | Accepted and merged through PR #54; its contract remains normative |
+| BG-LAUNCH-002I-B | Additive persistence implementation candidate in draft PR #55; unmerged, undeployed and not yet human-accepted |
+| Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [I-A evidence](../launch/CAMPAIGN_SPINE_EVIDENCE.md), [I-B evidence](../launch/CAMPAIGN_SPINE_PERSISTENCE_EVIDENCE.md) |
+| Exact restart point | Reconcile draft PR #55 and exact-head CI; complete human/architecture review and merge only with separate explicit authority. Then reverify main/Issue #51/open PRs before I-C; do not apply the migration to staging without separate authority |
 
 Issue #51 / BG-LAUNCH-002 remains a separate parallel launch-preparation
 programme. It cannot alter BG-ACT-001 technical authority or authorise
