@@ -6,7 +6,7 @@ const {
   CampaignValidationError,
   CampaignVersionError,
 } = require("./errors");
-const { emptyContent, hashIntent, parseCommand } = require("./schema");
+const { content: contentSchema, emptyContent, hashIntent, parseCommand } = require("./schema");
 
 const clone = (value) => structuredClone(value);
 const iso = (value) => new Date(value).toISOString();
@@ -42,6 +42,12 @@ function contentComplete(format, value) {
   const primary = value.asset_refs.filter((asset) => asset.role === "primary").length;
   if (format === "text") return Boolean(value.body || value.caption) && primary === 0;
   return primary === 1;
+}
+
+function parseContent(value) {
+  const parsed = contentSchema.safeParse(value);
+  if (!parsed.success) throw new CampaignValidationError();
+  return parsed.data;
 }
 
 function rollup(campaign, item) {
@@ -243,7 +249,7 @@ class CampaignTransaction {
     this.ensureWritable(campaign);
     if (campaign.items.size >= 500) throw new CampaignTransitionError("CAMPAIGN_LIMIT_REACHED");
     const itemId = this.id("content_item_ids"), variantId = this.id("variant_ids"), revisionId = this.id("revision_ids");
-    const content = clone(this.command.payload.initial_content || emptyContent());
+    const content = parseContent(this.command.payload.initial_content || emptyContent());
     const destinationKey = this.command.payload.destination_key || this.repository.idFactory();
     for (const existing of campaign.items.values()) for (const candidate of existing.variants.values()) if (candidate.destination_key === destinationKey && (candidate.platform !== this.command.payload.platform || candidate.destination_label !== this.command.payload.destination_label)) throw new CampaignResourceError();
     const revision = this.makeRevision(campaign, itemId, variantId, revisionId, 1, null, content, campaign.initial_brand_snapshot_id, "Initial draft");
@@ -261,7 +267,7 @@ class CampaignTransaction {
     const destinationKey = this.command.payload.destination_key || this.repository.idFactory();
     if ([...item.variants.values()].some((v) => v.platform === this.command.payload.platform && v.placement === this.command.payload.placement && v.destination_key === destinationKey)) throw new CampaignTransitionError("VARIANT_ALREADY_EXISTS");
     const variantId = this.id("variant_ids"), revisionId = this.id("revision_ids");
-    const revision = this.makeRevision(campaign, item.content_item_id, variantId, revisionId, 1, null, clone(this.command.payload.initial_content || emptyContent()), campaign.initial_brand_snapshot_id, "Initial draft");
+    const revision = this.makeRevision(campaign, item.content_item_id, variantId, revisionId, 1, null, parseContent(this.command.payload.initial_content || emptyContent()), campaign.initial_brand_snapshot_id, "Initial draft");
     const variant = { variant_id: variantId, platform: this.command.payload.platform, placement: this.command.payload.placement, destination_key: destinationKey, destination_label: this.command.payload.destination_label, workflow: "draft", current_revision_id: revisionId, active_approval_id: null, active_schedule_id: null, pending_attempt_id: null, publication_id: null, created_at: this.now, updated_at: this.now, revisions: new Map([[revisionId, revision]]) };
     item.variants.set(variantId, variant); item.updated_at = this.now;
     this.event("variant.created", { content_item_id: item.content_item_id, variant_id: variantId, platform: variant.platform, placement: variant.placement, destination_key: destinationKey, destination_label: variant.destination_label });
@@ -309,7 +315,7 @@ class CampaignTransaction {
       snapshotId = snapshot.brand_snapshot_id;
     }
     if (!campaign.brand_snapshots.has(snapshotId)) throw new CampaignResourceError();
-    const revision = this.makeRevision(campaign, item.content_item_id, variant.variant_id, revisionId, previous.revision_number + 1, previous.revision_id, clone(this.command.payload.content), snapshotId, this.command.payload.change_reason);
+    const revision = this.makeRevision(campaign, item.content_item_id, variant.variant_id, revisionId, previous.revision_number + 1, previous.revision_id, parseContent(this.command.payload.content), snapshotId, this.command.payload.change_reason);
     variant.revisions.set(revisionId, revision); variant.current_revision_id = revisionId; variant.workflow = "draft"; variant.updated_at = this.now;
     this.event("revision.created", { record: clone(revision) });
   }

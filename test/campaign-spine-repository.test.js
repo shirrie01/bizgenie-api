@@ -4,6 +4,7 @@ const {
   CampaignIdempotencyError,
   CampaignResourceError,
   CampaignTransitionError,
+  CampaignValidationError,
   CampaignVersionError,
   InMemoryCampaignRepository,
 } = require("../src/campaigns");
@@ -96,6 +97,17 @@ describe("campaign-spine deterministic repository", () => {
     const created = await repository.executeCommand(context, command("create_campaign", 0, { brand_id: "brand_a", name: "Launch", goal: "Launch clearly", display_timezone: "Europe/London" }));
     const item = await repository.executeCommand(context, command("create_content_item", 1, { name: "Empty", format: "image", platform: "instagram", placement: "feed", destination_label: "BizGenie" }, created.campaign_id));
     await assert.rejects(() => repository.executeCommand(context, command("submit_review", 2, { variant_id: item.created_ids.variant_ids[0], revision_id: item.created_ids.revision_ids[0] }, created.campaign_id)), (error) => error instanceof CampaignTransitionError && error.code === "CONTENT_INCOMPLETE");
+  });
+
+  it("rejects malformed or oversized nested content before persistence", async () => {
+    const repository = fixture();
+    const created = await repository.executeCommand(context, command("create_campaign", 0, { brand_id: "brand_a", name: "Launch", goal: "Launch clearly", display_timezone: "Europe/London" }));
+    const malformed = { title: null, body: "Valid", caption: null, alt_text: null, asset_refs: [], invented: true };
+    await assert.rejects(
+      () => repository.executeCommand(context, command("create_content_item", 1, { name: "Unsafe", format: "text", platform: "instagram", placement: "feed", destination_label: "BizGenie", initial_content: malformed }, created.campaign_id)),
+      CampaignValidationError,
+    );
+    assert.equal((await repository.getCampaign(context, created.campaign_id)).version, 1);
   });
 
   it("serializes concurrent edits so one aggregate version wins", async () => {
