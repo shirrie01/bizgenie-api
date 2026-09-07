@@ -2,6 +2,7 @@
 -- This migration creates empty relations only. It performs no legacy backfill and
 -- grants no customer, Data API, service-role, provider, Billing, or publishing access.
 
+begin;
 create schema if not exists campaign_private;
 revoke all on schema campaign_private from public;
 
@@ -159,6 +160,8 @@ alter table public.campaign_revisions
     (tenant_id, project_id, brand_id, campaign_id, content_item_id, variant_id, revision_id)
   on delete restrict;
 
+alter table public.campaign_platform_variants
+  drop constraint if exists campaign_platform_variants_current_revision_fkey;
 alter table public.campaign_platform_variants
   add constraint campaign_platform_variants_current_revision_fkey
   foreign key (tenant_id, project_id, brand_id, campaign_id, content_item_id, variant_id, current_revision_id)
@@ -366,6 +369,10 @@ create table if not exists public.campaign_events (
 
 -- Current projection pointers are deferred because records and projection updates
 -- are committed in one aggregate transaction.
+alter table public.campaign_platform_variants drop constraint if exists campaign_platform_variants_active_approval_fkey;
+alter table public.campaign_platform_variants drop constraint if exists campaign_platform_variants_active_schedule_fkey;
+alter table public.campaign_platform_variants drop constraint if exists campaign_platform_variants_pending_attempt_fkey;
+alter table public.campaign_platform_variants drop constraint if exists campaign_platform_variants_publication_fkey;
 alter table public.campaign_platform_variants
   add constraint campaign_platform_variants_active_approval_fkey
   foreign key (active_approval_id) references public.campaign_approval_events (approval_id)
@@ -428,6 +435,9 @@ begin
   end if;
   if current_setting('bizgenie.campaign_command', true) is distinct from txid_current()::text then
     raise exception 'campaign projections require the controlled command transaction' using errcode = '55000';
+  end if;
+  if tg_op in ('DELETE','TRUNCATE') then
+    raise exception 'campaign projections cannot be removed' using errcode='55000';
   end if;
   return new;
 end;
@@ -544,3 +554,204 @@ comment on table public.campaign_events is
   'Immutable ordered campaign-spine.v1 audit stream; sequence, not time, is authority.';
 comment on table public.campaign_command_receipts is
   'Immutable successful command receipts for campaign-spine.v1 replay recovery.';
+
+-- The transaction marker gates the internal seam; it never permits identity edits.
+create or replace function campaign_private.validate_projection_identity()
+returns trigger language plpgsql set search_path='' as $$
+declare mutable text[];
+begin
+  mutable := case tg_table_name
+    when 'campaigns' then array['name','display_timezone','version','last_event_sequence','archived_at','updated_at']
+    when 'campaign_content_items' then array['name','archived_at','updated_at']
+    else array['workflow','current_revision_id','active_approval_id','active_schedule_id','pending_attempt_id','publication_id','updated_at'] end;
+  if (to_jsonb(new)-mutable) is distinct from (to_jsonb(old)-mutable) then
+    raise exception 'campaign projection identity is immutable' using errcode='23514';
+  end if;
+  if tg_table_name='campaign_platform_variants' and to_jsonb(old)->>'workflow'='published'
+     and (to_jsonb(new)-'updated_at') is distinct from (to_jsonb(old)-'updated_at') then
+    raise exception 'published campaign variant is terminal' using errcode='23514';
+  end if;
+  return new;
+end $$;
+
+create or replace function campaign_private.validate_revision_content()
+returns trigger language plpgsql set search_path='' as $$
+declare k text; bound integer; ref jsonb; previous public.campaign_revisions%rowtype;
+begin
+  if (select count(*) from jsonb_object_keys(new.content))<>5
+     or not (new.content ?& array['title','body','caption','alt_text','asset_refs'])
+     or jsonb_typeof(new.content->'asset_refs') is distinct from 'array' then
+    raise exception 'invalid campaign revision content' using errcode='23514';
+  end if;
+  foreach k in array array['title','body','caption','alt_text'] loop
+    bound := case k when 'title' then 200 when 'body' then 32000 when 'caption' then 8000 else 2000 end;
+    if jsonb_typeof(new.content->k) not in ('null','string') or
+       (jsonb_typeof(new.content->k)='string' and length(new.content->>k) not between 1 and bound) then
+      raise exception 'invalid campaign content text' using errcode='23514';
+    end if;
+  end loop;
+  if jsonb_array_length(new.content->'asset_refs')>10 or
+     (select count(distinct r->>'asset_id') from jsonb_array_elements(new.content->'asset_refs') r)<>jsonb_array_length(new.content->'asset_refs') then
+    raise exception 'invalid campaign asset references' using errcode='23514';
+  end if;
+  for ref in select * from jsonb_array_elements(new.content->'asset_refs') loop
+    if jsonb_typeof(ref)<>'object' or (select count(*) from jsonb_object_keys(ref))<>2
+       or not (ref ?& array['asset_id','role']) or ref->>'asset_id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       or ref->>'role' not in ('primary','supporting') then
+      raise exception 'invalid campaign asset reference shape' using errcode='23514';
+    end if;
+  end loop;
+  if new.parent_revision_id is not null then
+    select * into previous from public.campaign_revisions where revision_id=new.parent_revision_id;
+    if not found or previous.revision_number+1<>new.revision_number then
+      raise exception 'invalid campaign revision sequence' using errcode='23514';
+    end if;
+  end if;
+  return new;
+end $$;
+
+create or replace function campaign_private.validate_campaign_commit()
+returns trigger language plpgsql set search_path='' as $$
+declare cid uuid; root public.campaigns%rowtype; n integer; hi integer; versions integer; first_event jsonb; latest_name text; latest_zone text;
+begin
+  cid:=new.campaign_id;
+  select * into root from public.campaigns where campaign_id=cid;
+  select count(*),max(sequence),count(distinct campaign_version) into n,hi,versions from public.campaign_events where campaign_id=cid;
+  if n<>root.last_event_sequence or hi<>n or versions<>root.version or
+     (select count(*) from public.campaign_command_receipts where campaign_id=cid)<>root.version then
+    raise exception 'campaign event receipt counters disagree' using errcode='23514';
+  end if;
+  if exists(select 1 from public.campaign_command_receipts r where r.campaign_id=cid and
+    (r.result_campaign_version<>r.expected_campaign_version+1 or
+     (select count(*) from public.campaign_events e where e.command_id=r.command_id)<>r.last_sequence-r.first_sequence+1 or
+     (select min(sequence) from public.campaign_events e where e.command_id=r.command_id)<>r.first_sequence or
+     (select max(sequence) from public.campaign_events e where e.command_id=r.command_id)<>r.last_sequence)) or
+     exists(select 1 from public.campaign_events e join public.campaign_command_receipts r using(command_id) where e.campaign_id=cid and
+       (e.campaign_version<>r.result_campaign_version or e.command_event_index<>e.sequence-r.first_sequence+1 or
+        e.actor<>jsonb_build_object('kind','customer','auth_user_id',r.auth_user_id))) then
+    raise exception 'campaign event receipt interval disagrees' using errcode='23514';
+  end if;
+  select payload->'campaign' into first_event from public.campaign_events where campaign_id=cid and sequence=1 and event_type='campaign.created';
+  select payload->>'name',payload->>'display_timezone' into latest_name,latest_zone from public.campaign_events where campaign_id=cid and event_type='campaign.details_updated' order by sequence desc limit 1;
+  if first_event is null or root.name is distinct from coalesce(latest_name,first_event->>'name') or
+     root.display_timezone is distinct from coalesce(latest_zone,first_event->>'display_timezone') or
+     root.goal is distinct from first_event->>'goal' then
+    raise exception 'campaign root does not match event history' using errcode='23514';
+  end if;
+  if exists(select 1 from public.campaign_content_items i where i.campaign_id=cid and not exists(select 1 from public.campaign_platform_variants v where v.content_item_id=i.content_item_id)) then
+    raise exception 'campaign item requires a variant' using errcode='23514';
+  end if;
+  if exists (
+    select 1 from public.campaign_platform_variants v
+    left join lateral (
+      select case e.event_type when 'revision.created' then 'draft' when 'review.submitted' then 'review'
+        when 'approval.approved' then 'approved' when 'approval.revoked' then 'review'
+        when 'approval.changes_requested' then 'draft' when 'schedule.created' then 'scheduled'
+        when 'schedule.cancelled' then 'approved' when 'publication.confirmed' then 'published'
+        when 'publication.attempt_failed' then 'approved' end stage
+      from public.campaign_events e where e.campaign_id=cid
+        and coalesce(e.payload->>'variant_id',e.payload->'record'->>'variant_id',e.payload->'publication'->>'variant_id')=v.variant_id::text
+        and e.event_type in ('revision.created','review.submitted','approval.approved','approval.revoked','approval.changes_requested','schedule.created','schedule.cancelled','publication.confirmed','publication.attempt_failed')
+      order by e.sequence desc limit 1
+    ) expected on true where v.campaign_id=cid and v.workflow is distinct from expected.stage
+  ) then raise exception 'campaign workflow does not match event history' using errcode='23514'; end if;
+  return null;
+end $$;
+
+create or replace function campaign_private.validate_publication_metadata()
+returns trigger language plpgsql set search_path='' as $$
+declare started timestamptz; recorded timestamptz; prior uuid;
+begin
+  if tg_table_name='campaign_publications' then
+    select started_at into started from public.campaign_manual_attempts where attempt_id=new.attempt_id;
+    recorded:=new.recorded_at;
+  else
+    select a.started_at into started from public.campaign_publications p join public.campaign_manual_attempts a using(attempt_id) where p.publication_id=new.publication_id;
+    recorded:=new.created_at;
+    if new.supersedes_correction_id is not null and not exists(select 1 from public.campaign_publication_corrections c where c.correction_id=new.supersedes_correction_id and c.publication_id=new.publication_id) then
+      raise exception 'invalid publication correction chain' using errcode='23514';
+    end if;
+    if exists(select 1 from public.campaign_publication_corrections c where c.publication_id=new.publication_id and c.supersedes_correction_id is not distinct from new.supersedes_correction_id and c.correction_id<>new.correction_id) then
+      raise exception 'publication correction chain cannot fork' using errcode='23514';
+    end if;
+  end if;
+  if new.published_at<started or new.published_at>recorded or
+     (new.publication_url is not null and (length(new.publication_url)>2048 or new.publication_url !~ '^https://[^/?#@[:space:]]+[^?#[:space:]]*$')) then
+    raise exception 'invalid publication metadata' using errcode='23514';
+  end if;
+  return new;
+end $$;
+
+create or replace function campaign_private.validate_event_shape()
+returns trigger language plpgsql set search_path='' as $$
+declare keys text[];
+begin
+  keys:=case new.event_type
+    when 'campaign.created' then array['campaign','brand_snapshot_id']
+    when 'campaign.details_updated' then array['name','display_timezone']
+    when 'campaign.archived' then array['reason'] when 'campaign.restored' then array['reason']
+    when 'content_item.created' then array['content_item']
+    when 'content_item.renamed' then array['content_item_id','name']
+    when 'content_item.archived' then array['content_item_id','reason']
+    when 'content_item.restored' then array['content_item_id','reason']
+    when 'variant.created' then array['variant']
+    when 'revision.created' then array['record'] when 'preview.acknowledged' then array['record']
+    when 'review.submitted' then array['variant_id','revision_id']
+    when 'approval.approved' then array['record'] when 'approval.revoked' then array['record']
+    when 'approval.changes_requested' then array['record'] when 'schedule.created' then array['record']
+    when 'schedule.cancelled' then array['variant_id','schedule_id','reason_code','reason']
+    when 'publication.attempt_started' then array['record']
+    when 'publication.attempt_failed' then array['record'] when 'publication.attempt_cancelled' then array['record']
+    when 'publication.confirmed' then array['resolution','publication']
+    when 'publication.corrected' then array['record'] else null end;
+  if keys is null or not (new.payload ?& keys) or (new.payload-keys)<>'{}'::jsonb or
+     new.actor is distinct from jsonb_build_object('kind','customer','auth_user_id',new.actor->>'auth_user_id') or
+     new.actor->>'auth_user_id' is null or
+     new.authorization_context is distinct from jsonb_build_object('policy_version','campaign-owner.v1','membership_role','owner','action','project:write','tenant_id',new.tenant_id,'project_id',new.project_id,'brand_id',new.brand_id) then
+    raise exception 'invalid campaign event shape' using errcode='23514';
+  end if;
+  if new.payload ? 'record' and jsonb_typeof(new.payload->'record') is distinct from 'object' then
+    raise exception 'invalid campaign event record' using errcode='23514';
+  end if;
+  return new;
+end $$;
+
+create or replace function campaign_private.validate_preview_binding()
+returns trigger language plpgsql set search_path='' as $$
+begin
+  if tg_table_name='campaign_preview_evidence' then
+    if not exists(select 1 from public.campaign_revisions r join public.campaign_platform_variants v using(variant_id) join public.campaign_content_items i on i.content_item_id=v.content_item_id
+      where r.revision_id=new.revision_id and r.content_hash=new.revision_content_hash and v.platform=new.platform and v.placement=new.placement and i.format=new.format)
+      or new.rendered_at>new.observed_at then
+      raise exception 'preview does not bind current content' using errcode='23514';
+    end if;
+  elsif new.decision='approved' and not exists(select 1 from public.campaign_preview_evidence p where p.preview_id=new.preview_id and p.observed_by=new.created_by) then
+    raise exception 'approval requires approver preview acknowledgement' using errcode='23514';
+  end if;
+  return new;
+end $$;
+
+do $$ declare t text; begin
+  foreach t in array array['campaigns','campaign_content_items','campaign_platform_variants'] loop
+    execute format('drop trigger if exists campaign_identity on public.%I',t);
+    execute format('create trigger campaign_identity before update on public.%I for each row execute function campaign_private.validate_projection_identity()',t);
+  end loop;
+  foreach t in array array['campaigns','campaign_content_items','campaign_platform_variants','campaign_revisions','campaign_preview_evidence','campaign_approval_events','campaign_schedule_entries','campaign_manual_attempts','campaign_attempt_resolutions','campaign_publications','campaign_publication_corrections','campaign_events','campaign_command_receipts'] loop
+    execute format('drop trigger if exists campaign_commit on public.%I',t);
+    execute format('create constraint trigger campaign_commit after insert or update on public.%I deferrable initially deferred for each row execute function campaign_private.validate_campaign_commit()',t);
+  end loop;
+  foreach t in array array['campaign_publications','campaign_publication_corrections'] loop
+    execute format('drop trigger if exists campaign_metadata on public.%I',t);
+    execute format('create trigger campaign_metadata before insert on public.%I for each row execute function campaign_private.validate_publication_metadata()',t);
+  end loop;
+end $$;
+drop trigger if exists campaign_revision_content on public.campaign_revisions;
+create trigger campaign_revision_content before insert on public.campaign_revisions for each row execute function campaign_private.validate_revision_content();
+drop trigger if exists campaign_event_shape on public.campaign_events;
+create trigger campaign_event_shape before insert on public.campaign_events for each row execute function campaign_private.validate_event_shape();
+drop trigger if exists campaign_preview_binding on public.campaign_preview_evidence;
+create trigger campaign_preview_binding before insert on public.campaign_preview_evidence for each row execute function campaign_private.validate_preview_binding();
+drop trigger if exists campaign_approval_binding on public.campaign_approval_events;
+create trigger campaign_approval_binding before insert on public.campaign_approval_events for each row execute function campaign_private.validate_preview_binding();
+revoke all on all functions in schema campaign_private from public;
+commit;

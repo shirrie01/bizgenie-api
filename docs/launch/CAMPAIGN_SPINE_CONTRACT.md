@@ -262,6 +262,10 @@ in a correction note, not silently erased. Retraction/unpublish is a later contr
 
 ## 4. Transition matrix and exception semantics
 
+The later [bizgenie-implementation-contract-amendment-v1.1](IMPLEMENTATION_CONTRACT_AMENDMENT_V1_1.md)
+is authoritative for failed publication: append failure metadata, expire the active
+schedule, return to Approved, and require explicit rescheduling before another attempt.
+
 All commands below require current aggregate version, authorized customer, unarchived
 campaign/item and same-owner references, except reads, replay and restore/archive rules
 explicitly noted. `pending_attempt_id` blocks revision, approval, schedule and archive
@@ -284,7 +288,7 @@ before any lifecycle detail is disclosed.
 | `unschedule` | Scheduled | Approved | Append cancellation; preserve approval |
 | `begin_manual_publication` | Approved, Scheduled | Same | One pending attempt; exact live approval/revision; validate availability; scheduled date may be early or overdue |
 | `confirm_manual_publication` | Approved, Scheduled | Published | Pending attempt; attest published; append resolution/publication; clear pending attempt and active schedule |
-| `fail_manual_publication` | Approved, Scheduled | Same | Pending attempt; attest nothing published; append failed resolution; schedule retained |
+| `fail_manual_publication` | Approved, Scheduled | Approved | Pending attempt; attest nothing published; append failure actor/time/reason; cancel active schedule; explicit new schedule required before another attempt (v1.1) |
 | `cancel_manual_publication` | Approved, Scheduled | Same | Pending attempt; attest nothing published; append cancelled resolution; schedule retained |
 | `correct_publication` | Published | Published | Append descriptive correction, preserve original confirmation |
 

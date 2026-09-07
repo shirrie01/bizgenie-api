@@ -6,7 +6,8 @@ const {
   CampaignValidationError,
   CampaignVersionError,
 } = require("./errors");
-const { content: contentSchema, emptyContent, hashIntent, parseCommand } = require("./schema");
+const { content: contentSchema, emptyContent, hashIntent, parseCommand, authorization, previewReceipt } = require("./schema");
+const projection = require('./projection');
 
 const clone = (value) => structuredClone(value);
 const iso = (value) => new Date(value).toISOString();
@@ -26,7 +27,7 @@ function receiptKey(context, command) {
 }
 
 function validateOwner(context, command) {
-  if (!context || context.membership_role !== "owner" || context.policy_version !== "campaign-owner.v1" ||
+  if (!authorization.safeParse(context).success || context.membership_role !== "owner" || context.policy_version !== "campaign-owner.v1" ||
       context.actor?.kind !== "customer" || context.tenant_id !== command.tenant_id ||
       context.project_id !== command.project_id) throw new CampaignResourceError();
 }
@@ -48,14 +49,6 @@ function parseContent(value) {
   const parsed = contentSchema.safeParse(value);
   if (!parsed.success) throw new CampaignValidationError();
   return parsed.data;
-}
-
-function rollup(campaign, item) {
-  const items = item ? [item] : [...campaign.items.values()].filter((candidate) => !candidate.archived_at);
-  const variants = items.flatMap((candidate) => [...candidate.variants.values()]);
-  const order = ["draft","review","approved","scheduled","published"];
-  const counts = Object.fromEntries(order.map((state) => [state, variants.filter((variant) => variant.workflow === state).length]));
-  return { status: variants.length ? order.find((state) => counts[state]) : "draft", counts };
 }
 
 function validSchedule(payload, now) {
@@ -82,6 +75,8 @@ class InMemoryCampaignRepository extends CampaignRepository {
     authorize = async () => true,
     captureBrandSnapshot,
     resolvePreviewReceipt,
+    validatePreview = async () => false,
+    resolveMedia,
     fault = async () => {},
   } = {}) {
     super();
@@ -90,6 +85,8 @@ class InMemoryCampaignRepository extends CampaignRepository {
     this.authorize = authorize;
     this.captureBrandSnapshot = captureBrandSnapshot;
     this.resolvePreviewReceipt = resolvePreviewReceipt;
+    this.validatePreview = validatePreview;
+    this.resolveMedia = resolveMedia;
     this.fault = fault;
     this.state = { campaigns: new Map(), receipts: new Map() };
     this.locks = new Map();
@@ -102,7 +99,9 @@ class InMemoryCampaignRepository extends CampaignRepository {
 
   async executeCommand(context, input, requestId = this.idFactory()) {
     const candidate = parseCommand(input);
-    const lockKey = candidate.campaign_id || receiptKey(context, candidate);
+    // The deterministic store swaps a whole snapshot; serialize that swap across
+    // aggregates as well as receipt keys to avoid losing another campaign's writes.
+    const lockKey = 'store';
     const previous = this.locks.get(lockKey) || Promise.resolve();
     let release;
     const current = new Promise((resolve) => { release = resolve; });
@@ -138,36 +137,24 @@ class InMemoryCampaignRepository extends CampaignRepository {
   }
 
   async getCampaign(context, campaignId) {
+    if(!authorization.safeParse(context).success)throw new CampaignResourceError();
     const campaign = this.state.campaigns.get(campaignId);
     if (!campaign || campaign.tenant_id !== context.tenant_id || campaign.project_id !== context.project_id ||
         !(await this.authorize(clone(context)))) throw new CampaignResourceError();
-    const result = clone(campaign);
-    Object.assign(result, rollup(result));
-    for (const item of result.items.values()) Object.assign(item, rollup(result, item));
-    return result;
+    return projection.decorate(campaign);
   }
 
   async listCampaigns(context) {
+    if(!authorization.safeParse(context).success)throw new CampaignResourceError();
     if (!(await this.authorize(clone(context)))) throw new CampaignResourceError();
     return [...this.state.campaigns.values()]
       .filter((row) => row.tenant_id === context.tenant_id && row.project_id === context.project_id && !row.archived_at)
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.campaign_id.localeCompare(b.campaign_id))
-      .map(clone);
+      .map(projection.decorate);
   }
 
   async listCalendarEntries(context, { from, to }) {
-    const campaigns = await this.listCampaigns(context);
-    const entries = [];
-    for (const campaign of campaigns) for (const item of campaign.items.values()) {
-      if (item.archived_at) continue;
-      for (const variant of item.variants.values()) {
-        const publication = variant.publication_id && campaign.publications.get(variant.publication_id);
-        const schedule = variant.active_schedule_id && campaign.schedules.get(variant.active_schedule_id);
-        const instant = publication?.published_at || schedule?.scheduled_for;
-        if (instant && instant >= iso(from) && instant < iso(to)) entries.push({ campaign_id: campaign.campaign_id, content_item_id: item.content_item_id, variant_id: variant.variant_id, workflow: variant.workflow, occurrence_at: instant });
-      }
-    }
-    return entries.sort((a, b) => a.occurrence_at.localeCompare(b.occurrence_at) || a.variant_id.localeCompare(b.variant_id));
+    return projection.calendar(await this.listCampaigns(context),{from,to});
   }
 
   async listCampaignEvents(context, campaignId) {
@@ -176,8 +163,7 @@ class InMemoryCampaignRepository extends CampaignRepository {
 
   async verifyCampaignProjection(context, campaignId) {
     const campaign = await this.getCampaign(context, campaignId);
-    const sequences = campaign.events.map((event) => event.sequence);
-    return { valid: sequences.every((value, index) => value === index + 1) && campaign.last_event_sequence === sequences.length && campaign.version === new Set(campaign.events.map((event) => event.campaign_version)).size, campaign_version: campaign.version, last_event_sequence: campaign.last_event_sequence };
+    return projection.verify(campaign);
   }
 }
 
@@ -211,6 +197,7 @@ class CampaignTransaction {
     const handler = this[this.command.command_type.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())];
     if (typeof handler !== "function") throw new CampaignValidationError();
     await handler.call(this, campaign);
+    if(campaign.version===2147483647 || campaign.last_event_sequence+this.events.length>2147483647)throw new CampaignValidationError();
     campaign.version += 1;
     campaign.updated_at = this.now;
     this.appendEvents(campaign);
@@ -241,10 +228,10 @@ class CampaignTransaction {
     const campaignId = this.id("campaign_ids");
     const campaign = { campaign_id: campaignId, tenant_id: this.context.tenant_id, project_id: this.context.project_id, brand_id: this.command.payload.brand_id, name: this.command.payload.name, goal: this.command.payload.goal, display_timezone: this.command.payload.display_timezone, initial_brand_snapshot_id: snapshot.brand_snapshot_id, brand_snapshots: new Map([[snapshot.brand_snapshot_id, clone(snapshot)]]), version: 1, last_event_sequence: 0, archived_at: null, created_at: this.now, updated_at: this.now, created_by: clone(this.context.actor), items: new Map(), approvals: new Map(), previews: new Map(), schedules: new Map(), attempts: new Map(), resolutions: new Map(), publications: new Map(), corrections: new Map(), events: [] };
     this.state.campaigns.set(campaignId, campaign);
-    this.event("campaign.created", { campaign_id: campaignId, brand_snapshot_id: snapshot.brand_snapshot_id });
+    this.event("campaign.created", { campaign: projection.pick(campaign,projection.rootFields.filter(key=>!['version','last_event_sequence'].includes(key))), brand_snapshot_id: snapshot.brand_snapshot_id });
     this.appendEvents(campaign);
   }
-  createContentItem(campaign) {
+  async createContentItem(campaign) {
     requireFields(this.command.payload, ["name","format","platform","placement","destination_label","destination_key","initial_content"], ["name","format","platform","placement","destination_label"]);
     this.ensureWritable(campaign);
     if (campaign.items.size >= 500) throw new CampaignTransitionError("CAMPAIGN_LIMIT_REACHED");
@@ -252,25 +239,25 @@ class CampaignTransaction {
     const content = parseContent(this.command.payload.initial_content || emptyContent());
     const destinationKey = this.command.payload.destination_key || this.repository.idFactory();
     for (const existing of campaign.items.values()) for (const candidate of existing.variants.values()) if (candidate.destination_key === destinationKey && (candidate.platform !== this.command.payload.platform || candidate.destination_label !== this.command.payload.destination_label)) throw new CampaignResourceError();
-    const revision = this.makeRevision(campaign, itemId, variantId, revisionId, 1, null, content, campaign.initial_brand_snapshot_id, "Initial draft");
+    const revision = await this.makeRevision(campaign, itemId, variantId, revisionId, 1, null, content, campaign.initial_brand_snapshot_id, "Initial draft",{format:this.command.payload.format,platform:this.command.payload.platform,placement:this.command.payload.placement,destination_key:destinationKey});
     const variant = { variant_id: variantId, platform: this.command.payload.platform, placement: this.command.payload.placement, destination_key: destinationKey, destination_label: this.command.payload.destination_label, workflow: "draft", current_revision_id: revisionId, active_approval_id: null, active_schedule_id: null, pending_attempt_id: null, publication_id: null, created_at: this.now, updated_at: this.now, revisions: new Map([[revisionId, revision]]) };
     const item = { content_item_id: itemId, name: this.command.payload.name, format: this.command.payload.format, archived_at: null, created_at: this.now, updated_at: this.now, created_by: clone(this.context.actor), variants: new Map([[variantId, variant]]) };
     campaign.items.set(itemId, item);
-    this.event("content_item.created", { content_item_id: itemId, name: item.name, format: item.format });
-    this.event("variant.created", { content_item_id: itemId, variant_id: variantId, platform: variant.platform, placement: variant.placement, destination_key: destinationKey, destination_label: variant.destination_label });
+    this.event("content_item.created", { content_item: projection.pick(item,projection.itemFields) });
+    this.event("variant.created", { variant:{content_item_id:itemId,...projection.pick(variant,projection.variantFields)} });
     this.event("revision.created", { record: clone(revision) });
   }
-  addVariant(campaign) {
+  async addVariant(campaign) {
     requireFields(this.command.payload, ["content_item_id","platform","placement","destination_label","destination_key","initial_content"], ["content_item_id","platform","placement","destination_label"]);
     const item = this.item(campaign, this.command.payload.content_item_id); this.ensureWritable(campaign, item);
     if (item.variants.size >= 20) throw new CampaignTransitionError("CAMPAIGN_LIMIT_REACHED");
     const destinationKey = this.command.payload.destination_key || this.repository.idFactory();
     if ([...item.variants.values()].some((v) => v.platform === this.command.payload.platform && v.placement === this.command.payload.placement && v.destination_key === destinationKey)) throw new CampaignTransitionError("VARIANT_ALREADY_EXISTS");
     const variantId = this.id("variant_ids"), revisionId = this.id("revision_ids");
-    const revision = this.makeRevision(campaign, item.content_item_id, variantId, revisionId, 1, null, parseContent(this.command.payload.initial_content || emptyContent()), campaign.initial_brand_snapshot_id, "Initial draft");
+    const revision = await this.makeRevision(campaign, item.content_item_id, variantId, revisionId, 1, null, parseContent(this.command.payload.initial_content || emptyContent()), campaign.initial_brand_snapshot_id, "Initial draft",{format:item.format,platform:this.command.payload.platform,placement:this.command.payload.placement,destination_key:destinationKey});
     const variant = { variant_id: variantId, platform: this.command.payload.platform, placement: this.command.payload.placement, destination_key: destinationKey, destination_label: this.command.payload.destination_label, workflow: "draft", current_revision_id: revisionId, active_approval_id: null, active_schedule_id: null, pending_attempt_id: null, publication_id: null, created_at: this.now, updated_at: this.now, revisions: new Map([[revisionId, revision]]) };
     item.variants.set(variantId, variant); item.updated_at = this.now;
-    this.event("variant.created", { content_item_id: item.content_item_id, variant_id: variantId, platform: variant.platform, placement: variant.placement, destination_key: destinationKey, destination_label: variant.destination_label });
+    this.event("variant.created", { variant:{content_item_id:item.content_item_id,...projection.pick(variant,projection.variantFields)} });
     this.event("revision.created", { record: clone(revision) });
   }
   updateCampaignDetails(campaign) {
@@ -296,12 +283,23 @@ class CampaignTransaction {
     item.archived_at = archive ? this.now : null; item.updated_at = this.now;
     this.event(`content_item.${archive ? "archived" : "restored"}`, { content_item_id: item.content_item_id, reason: this.command.payload.reason });
   }
-  makeRevision(campaign, itemId, variantId, revisionId, number, parentId, content, snapshotId, changeReason) {
-    return { revision_id: revisionId, tenant_id: campaign.tenant_id, project_id: campaign.project_id, brand_id: campaign.brand_id, campaign_id: campaign.campaign_id, content_item_id: itemId, variant_id: variantId, revision_number: number, parent_revision_id: parentId, content, brand_snapshot_id: snapshotId, source: "manual", generation_links: [], content_hash: hashIntent({ content, brand_snapshot_id: snapshotId }), change_reason: changeReason, created_at: this.now, created_by: clone(this.context.actor) };
+  async media(campaign,content,format) {
+    const links=[];
+    for(const ref of content.asset_refs) {
+      const evidence=await this.repository.resolveMedia?.(clone(this.context),ref.asset_id,campaign.brand_id);
+      if(!evidence || evidence.tenant_id!==campaign.tenant_id || evidence.project_id!==campaign.project_id || evidence.brand_id!==campaign.brand_id || evidence.asset_id!==ref.asset_id || evidence.status!=='active' || evidence.source_kind!=='generated' || evidence.media_kind!==format || !evidence.job_id)throw new CampaignResourceError();
+      links.push({job_id:evidence.job_id,asset_id:ref.asset_id,output_kind:evidence.media_kind,output_hash:hashIntent(evidence.manifest),provenance:'verified_import',generation_brand_snapshot_id:null});
+    }
+    return links;
+  }
+  async makeRevision(campaign, itemId, variantId, revisionId, number, parentId, content, snapshotId, changeReason,binding) {
+    const links=await this.media(campaign,content,binding.format);
+    return { revision_id: revisionId, tenant_id: campaign.tenant_id, project_id: campaign.project_id, brand_id: campaign.brand_id, campaign_id: campaign.campaign_id, content_item_id: itemId, variant_id: variantId, revision_number: number, parent_revision_id: parentId, content, brand_snapshot_id: snapshotId, source: "manual", generation_links: links, content_hash: hashIntent({ content, brand_snapshot_id: snapshotId,...binding,generation_links:links }), change_reason: changeReason, created_at: this.now, created_by: clone(this.context.actor) };
   }
   async saveRevision(campaign) {
     requireFields(this.command.payload, ["variant_id","content","change_reason","brand_snapshot_id","capture_current_brand"], ["variant_id","content","change_reason"]);
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
+    if(variant.workflow==='published')throw new CampaignTransitionError();
     const previous = variant.revisions.get(variant.current_revision_id), revisionId = this.id("revision_ids");
     if (variant.active_schedule_id) { this.event("schedule.cancelled", { variant_id: variant.variant_id, schedule_id: variant.active_schedule_id, reason_code: "revision_changed", reason: "Revision changed" }); variant.active_schedule_id = null; }
     if (variant.active_approval_id) { const approvalId = this.id("approval_ids"); const revocation = { approval_id: approvalId, variant_id: variant.variant_id, revision_id: previous.revision_id, decision: "revoked", preview_id: null, supersedes_approval_id: variant.active_approval_id, reason: "Revision changed", created_at: this.now, created_by: clone(this.context.actor) }; campaign.approvals.set(approvalId, revocation); this.event("approval.revoked", { record: revocation }); variant.active_approval_id = null; }
@@ -315,15 +313,16 @@ class CampaignTransaction {
       snapshotId = snapshot.brand_snapshot_id;
     }
     if (!campaign.brand_snapshots.has(snapshotId)) throw new CampaignResourceError();
-    const revision = this.makeRevision(campaign, item.content_item_id, variant.variant_id, revisionId, previous.revision_number + 1, previous.revision_id, parseContent(this.command.payload.content), snapshotId, this.command.payload.change_reason);
+    const revision = await this.makeRevision(campaign, item.content_item_id, variant.variant_id, revisionId, previous.revision_number + 1, previous.revision_id, parseContent(this.command.payload.content), snapshotId, this.command.payload.change_reason,{format:item.format,platform:variant.platform,placement:variant.placement,destination_key:variant.destination_key});
     variant.revisions.set(revisionId, revision); variant.current_revision_id = revisionId; variant.workflow = "draft"; variant.updated_at = this.now;
     this.event("revision.created", { record: clone(revision) });
   }
-  submitReview(campaign) {
+  async submitReview(campaign) {
     requireFields(this.command.payload, ["variant_id","revision_id"]);
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
     if (variant.workflow !== "draft" || variant.current_revision_id !== this.command.payload.revision_id) throw new CampaignTransitionError();
     const revision = variant.revisions.get(variant.current_revision_id);
+    await this.media(campaign,revision.content,item.format);
     if (!contentComplete(item.format, revision.content)) throw new CampaignTransitionError("CONTENT_INCOMPLETE");
     variant.workflow = "review"; variant.updated_at = this.now; this.event("review.submitted", { variant_id: variant.variant_id, revision_id: revision.revision_id });
   }
@@ -331,17 +330,22 @@ class CampaignTransaction {
     requireFields(this.command.payload, ["variant_id","revision_id","render_receipt_id","acknowledged"]);
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
     if (variant.workflow !== "review" || variant.current_revision_id !== this.command.payload.revision_id || this.command.payload.acknowledged !== true || !this.repository.resolvePreviewReceipt) throw new CampaignTransitionError("PREVIEW_REQUIRED");
-    const trusted = await this.repository.resolvePreviewReceipt(clone(this.context), clone(this.command.payload));
-    if (!trusted || trusted.variant_id !== variant.variant_id || trusted.revision_id !== variant.current_revision_id) throw new CampaignResourceError();
+    const revision=variant.revisions.get(variant.current_revision_id);
+    const receipt = previewReceipt.safeParse(await this.repository.resolvePreviewReceipt(clone(this.context), clone(this.command.payload),{revision:clone(revision),variant:projection.pick(variant,projection.variantFields),format:item.format}));
+    if(!receipt.success)throw new CampaignResourceError();
+    const trusted=receipt.data;
+    if (trusted.variant_id !== variant.variant_id || trusted.revision_id !== variant.current_revision_id || trusted.revision_content_hash!==revision.content_hash || trusted.platform!==variant.platform || trusted.placement!==variant.placement || trusted.format!==item.format || trusted.render_receipt_id!==this.command.payload.render_receipt_id || new Date(trusted.rendered_at)>new Date(this.now) || !await this.repository.validatePreview(clone(this.context),clone(trusted))) throw new CampaignResourceError();
     const { render_receipt_id: _trustedReceiptId, ...trustedPreview } = trusted;
     const preview = { ...clone(trustedPreview), preview_id: this.id("preview_ids"), observed_at: this.now, observed_by: clone(this.context.actor) };
     campaign.previews.set(preview.preview_id, preview); this.event("preview.acknowledged", { record: clone(preview) });
   }
-  approve(campaign) {
+  async approve(campaign) {
     requireFields(this.command.payload, ["variant_id","revision_id","preview_id","approved"]);
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
     const preview = campaign.previews.get(this.command.payload.preview_id);
     if (variant.workflow !== "review" || this.command.payload.approved !== true || variant.current_revision_id !== this.command.payload.revision_id || !preview || preview.revision_id !== variant.current_revision_id || preview.observed_by.auth_user_id !== this.context.actor.auth_user_id) throw new CampaignTransitionError("PREVIEW_REQUIRED");
+    await this.media(campaign,variant.revisions.get(variant.current_revision_id).content,item.format);
+    if(!await this.repository.validatePreview(clone(this.context),clone(preview)))throw new CampaignTransitionError('PREVIEW_REQUIRED');
     const approval = { approval_id: this.id("approval_ids"), variant_id: variant.variant_id, revision_id: variant.current_revision_id, decision: "approved", preview_id: preview.preview_id, supersedes_approval_id: null, reason: null, created_at: this.now, created_by: clone(this.context.actor) };
     campaign.approvals.set(approval.approval_id, approval); variant.active_approval_id = approval.approval_id; variant.workflow = "approved"; variant.updated_at = this.now; this.event("approval.approved", { record: clone(approval) });
   }
@@ -360,7 +364,7 @@ class CampaignTransaction {
     if (variant.active_schedule_id) { this.event("schedule.cancelled", { variant_id: variant.variant_id, schedule_id: variant.active_schedule_id, reason_code: "approval_revoked", reason: this.command.payload.reason }); variant.active_schedule_id = null; }
     const prior = campaign.approvals.get(variant.active_approval_id);
     const revocation = { approval_id: this.id("approval_ids"), variant_id: variant.variant_id, revision_id: prior.revision_id, decision: "revoked", preview_id: null, supersedes_approval_id: prior.approval_id, reason: this.command.payload.reason, created_at: this.now, created_by: clone(this.context.actor) };
-    campaign.approvals.set(revocation.approval_id, revocation); variant.active_approval_id = null; variant.workflow = "draft"; variant.updated_at = this.now;
+    campaign.approvals.set(revocation.approval_id, revocation); variant.active_approval_id = null; variant.workflow = "review"; variant.updated_at = this.now;
     this.event("approval.revoked", { record: clone(revocation) });
   }
   schedule(campaign) { this._schedule(campaign, false); }
@@ -378,9 +382,14 @@ class CampaignTransaction {
     if (variant.workflow !== "scheduled" || variant.active_schedule_id !== this.command.payload.schedule_id) throw new CampaignTransitionError();
     this.event("schedule.cancelled", { variant_id: variant.variant_id, schedule_id: variant.active_schedule_id, reason_code: "unscheduled", reason: null }); variant.active_schedule_id = null; variant.workflow = "approved"; variant.updated_at = this.now;
   }
-  beginManualPublication(campaign) {
+  async beginManualPublication(campaign) {
     requireFields(this.command.payload, ["variant_id","revision_id","approval_id"]); const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
     if (!['approved','scheduled'].includes(variant.workflow) || variant.current_revision_id !== this.command.payload.revision_id || variant.active_approval_id !== this.command.payload.approval_id) throw new CampaignTransitionError("APPROVAL_REQUIRED");
+    const lastFailure=campaign.events.filter(e=>e.event_type==='publication.attempt_failed'&&e.payload.record.variant_id===variant.variant_id).at(-1);
+    if(lastFailure && !campaign.events.some(e=>e.sequence>lastFailure.sequence&&e.event_type==='schedule.created'&&e.payload.record.schedule_id===variant.active_schedule_id))throw new CampaignTransitionError('SCHEDULE_INVALID');
+    await this.media(campaign,variant.revisions.get(variant.current_revision_id).content,item.format);
+    const preview=campaign.previews.get(campaign.approvals.get(variant.active_approval_id).preview_id);
+    if(!await this.repository.validatePreview(clone(this.context),clone(preview)))throw new CampaignTransitionError('PREVIEW_REQUIRED');
     const attempt = { attempt_id: this.id("attempt_ids"), variant_id: variant.variant_id, revision_id: variant.current_revision_id, approval_id: variant.active_approval_id, schedule_id: variant.active_schedule_id, method: "manual", started_at: this.now, started_by: clone(this.context.actor) };
     campaign.attempts.set(attempt.attempt_id, attempt); variant.pending_attempt_id = attempt.attempt_id; variant.updated_at = this.now; this.event("publication.attempt_started", { record: clone(attempt) });
   }
@@ -394,22 +403,31 @@ class CampaignTransaction {
     const attempt = campaign.attempts.get(this.command.payload.attempt_id);
     if (!attempt || variant.pending_attempt_id !== attempt.attempt_id) throw new CampaignTransitionError();
     if ((confirmed && (this.command.payload.attested_published !== true || !validPublicationUrl(this.command.payload.publication_url))) || (!confirmed && this.command.payload.not_published_attestation !== true)) throw new CampaignTransitionError("PUBLICATION_EVIDENCE_INVALID");
-    const resolution = { resolution_id: this.id("resolution_ids"), attempt_id: attempt.attempt_id, variant_id: variant.variant_id, outcome, reason: confirmed ? null : this.command.payload.reason, not_published_attestation: !confirmed, resolved_at: this.now, resolved_by: clone(this.context.actor) };
+    const resolution = { resolution_id: this.id("resolution_ids"), attempt_id: attempt.attempt_id, variant_id: variant.variant_id, revision_id:attempt.revision_id, approval_id:attempt.approval_id, outcome, reason: confirmed ? null : this.command.payload.reason, not_published_attestation: !confirmed, resolved_at: this.now, resolved_by: clone(this.context.actor) };
     campaign.resolutions.set(resolution.resolution_id, resolution); variant.pending_attempt_id = null;
     if (confirmed) {
       const publishedAt = iso(this.command.payload.published_at);
-      if (publishedAt < attempt.started_at || publishedAt > this.now) throw new CampaignTransitionError("PUBLICATION_EVIDENCE_INVALID");
+      if (new Date(publishedAt).getTime() < new Date(attempt.started_at).getTime() || publishedAt > this.now) throw new CampaignTransitionError("PUBLICATION_EVIDENCE_INVALID");
       const publication = { publication_id: this.id("publication_ids"), resolution_id: resolution.resolution_id, attempt_id: attempt.attempt_id, variant_id: variant.variant_id, revision_id: attempt.revision_id, approval_id: attempt.approval_id, method: "manual", evidence_kind: "customer_attestation", published_at: publishedAt, recorded_at: this.now, recorded_by: clone(this.context.actor), publication_url: this.command.payload.publication_url || null, external_reference: this.command.payload.external_reference || null, note: this.command.payload.note || null, attested_published: true };
       campaign.publications.set(publication.publication_id, publication); variant.publication_id = publication.publication_id; variant.active_approval_id = null; variant.active_schedule_id = null; variant.workflow = "published"; this.event("publication.confirmed", { resolution: clone(resolution), publication: clone(publication) });
-    } else this.event(`publication.attempt_${outcome}`, { record: clone(resolution) });
+    } else {
+      if(outcome==='failed') {
+        if(variant.active_schedule_id)this.event('schedule.cancelled',{variant_id:variant.variant_id,schedule_id:variant.active_schedule_id,reason_code:'publication_failed',reason:this.command.payload.reason});
+        variant.active_schedule_id=null;variant.workflow='approved';
+      }
+      this.event(`publication.attempt_${outcome}`, { record: clone(resolution) });
+    }
     variant.updated_at = this.now;
   }
   correctPublication(campaign) {
     requireFields(this.command.payload, ["variant_id","publication_id","published_at","publication_url","external_reference","note","reason"]);
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item);
     if (variant.workflow !== "published" || variant.publication_id !== this.command.payload.publication_id) throw new CampaignTransitionError();
-    const priorCorrections = [...campaign.corrections.values()].filter((row) => row.publication_id === variant.publication_id);
-    const correction = { correction_id: this.id("correction_ids"), publication_id: variant.publication_id, variant_id: variant.variant_id, supersedes_correction_id: priorCorrections.at(-1)?.correction_id || null, published_at: iso(this.command.payload.published_at), publication_url: this.command.payload.publication_url, external_reference: this.command.payload.external_reference, note: this.command.payload.note, reason: this.command.payload.reason, created_at: this.now, created_by: clone(this.context.actor) };
+    const publication=campaign.publications.get(variant.publication_id),attempt=campaign.attempts.get(publication.attempt_id);
+    const publishedAt=iso(this.command.payload.published_at);
+    if(new Date(publishedAt).getTime()<new Date(attempt.started_at).getTime() || publishedAt>this.now || !validPublicationUrl(this.command.payload.publication_url))throw new CampaignTransitionError('PUBLICATION_EVIDENCE_INVALID');
+    const prior=projection.latestCorrection(campaign,variant.publication_id);
+    const correction = { correction_id: this.id("correction_ids"), publication_id: variant.publication_id, variant_id: variant.variant_id, supersedes_correction_id: prior?.correction_id || null, published_at: publishedAt, publication_url: this.command.payload.publication_url, external_reference: this.command.payload.external_reference, note: this.command.payload.note, reason: this.command.payload.reason, created_at: this.now, created_by: clone(this.context.actor) };
     campaign.corrections.set(correction.correction_id, correction); variant.updated_at = this.now;
     this.event("publication.corrected", { record: clone(correction) });
   }

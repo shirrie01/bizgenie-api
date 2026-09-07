@@ -1,8 +1,10 @@
 const { randomUUID } = require("node:crypto");
 const { Pool } = require("pg");
-const { CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError } = require("./errors");
+const { CampaignError, CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError } = require("./errors");
 const { hashIntent, parseCommand } = require("./schema");
 const { CampaignRepository, InMemoryCampaignRepository } = require("./repository");
+const projection = require('./projection');
+const { authorization } = require('./schema');
 
 const RELATIONS = Object.freeze([
   "campaigns", "campaign_content_items", "campaign_platform_variants", "campaign_revisions",
@@ -15,7 +17,7 @@ const clone = (value) => structuredClone(value);
 const actorUuid = (value) => value?.auth_user_id || value;
 
 function databaseError(error) {
-  if (error?.code && /^[A-Z_]+$/.test(error.code)) return error;
+  if (error instanceof CampaignError) return error;
   if (error?.code === "23505" && error.constraint === "campaign_command_receipts_identity_unique") return new CampaignIdempotencyError();
   return new CampaignPersistenceError();
 }
@@ -31,26 +33,33 @@ async function insert(client, table, row, conflict = "do nothing") {
 }
 
 class PostgresCampaignRepository extends CampaignRepository {
-  constructor({ pool, now = () => new Date(), idFactory = randomUUID, resolvePreviewReceipt, fault = async () => {} }) {
+  constructor({ pool, now = () => new Date(), idFactory = randomUUID, resolvePreviewReceipt, validatePreview = async()=>false, fault = async () => {} }) {
     super();
     if (!pool || typeof pool.connect !== "function") throw new CampaignPersistenceError();
     this.pool = pool; this.now = now; this.idFactory = idFactory; this.resolvePreviewReceipt = resolvePreviewReceipt; this.fault = fault;
+    this.validatePreview = validatePreview;
   }
 
   async initialize() {
     try {
       const result = await this.pool.query(`
         select c.relname, c.relrowsecurity,
-               coalesce(has_table_privilege('anon', c.oid, 'select,insert,update,delete'), false) anon_access,
-               coalesce(has_table_privilege('authenticated', c.oid, 'select,insert,update,delete'), false) authenticated_access,
-               coalesce(has_table_privilege('service_role', c.oid, 'select,insert,update,delete'), false) service_access
+               coalesce(has_table_privilege('anon', c.oid, 'select,insert,update,delete,truncate,references,trigger'), false) anon_access,
+               coalesce(has_table_privilege('authenticated', c.oid, 'select,insert,update,delete,truncate,references,trigger'), false) authenticated_access,
+               coalesce(has_table_privilege('service_role', c.oid, 'select,insert,update,delete,truncate,references,trigger'), false) service_access
           from pg_class c join pg_namespace n on n.oid = c.relnamespace
          where n.nspname = 'public' and c.relname = any($1::text[])`, [RELATIONS]);
       if (result.rows.length !== RELATIONS.length || result.rows.some((row) => !row.relrowsecurity || row.anon_access || row.authenticated_access || row.service_access)) throw new Error("unsafe campaign persistence");
+      const guards=await this.pool.query(`select p.proname,
+        has_function_privilege('anon',p.oid,'execute') or has_function_privilege('authenticated',p.oid,'execute') or has_function_privilege('service_role',p.oid,'execute') as exposed
+        from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='campaign_private'`);
+      const required=['reject_immutable_campaign_record','reject_campaign_projection_identity_change','validate_campaign_variant_projection','validate_projection_identity','validate_revision_content','validate_campaign_commit','validate_publication_metadata','validate_event_shape','validate_preview_binding'];
+      if(required.some(name=>!guards.rows.some(row=>row.proname===name))||guards.rows.some(row=>row.exposed))throw new Error('unsafe campaign guards');
     } catch { throw new CampaignPersistenceError(); }
   }
 
   async _authorize(client, context, forWrite = false) {
+    if(!authorization.safeParse(context).success)throw new CampaignResourceError();
     const role = forWrite ? "owner" : null;
     const result = await client.query(`
       select b.brand_id
@@ -67,8 +76,9 @@ class PostgresCampaignRepository extends CampaignRepository {
 
   async executeCommand(context, input, requestId) {
     const command = parseCommand(input);
-    const client = await this.pool.connect();
+    let client;
     try {
+      client=await this.pool.connect();
       await client.query("begin");
       await this._authorize(client, context, true);
       await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["campaign-spine.v1", context.tenant_id, context.project_id, context.actor.auth_user_id, command.idempotency_key])]);
@@ -86,11 +96,14 @@ class PostgresCampaignRepository extends CampaignRepository {
         authorize: async () => true,
         captureBrandSnapshot: async (_context, brandId) => this._captureBrandSnapshot(client, context, brandId),
         resolvePreviewReceipt: this.resolvePreviewReceipt,
+        validatePreview:this.validatePreview,
+        resolveMedia:async(_context,assetId,brandId)=>this._resolveMedia(client,context,assetId,brandId),
         fault: this.fault,
       });
       if (before) memory.state.campaigns.set(before.campaign_id, clone(before));
       const result = await memory.executeCommand(context, command, requestId);
       const after = memory.state.campaigns.get(result.campaign_id);
+      if(!projection.verify(after).valid)throw new CampaignPersistenceError();
       await this._persistCampaign(client, before, after, command, context, intentHash, result);
       await client.query("set constraints all immediate");
       await client.query("select set_config('bizgenie.campaign_command','off',true)");
@@ -99,11 +112,11 @@ class PostgresCampaignRepository extends CampaignRepository {
       await this.fault("postgres_after_commit");
       return result;
     } catch (error) {
-      try { await client.query("rollback"); } catch {}
+      try { await client?.query("rollback"); } catch {}
       throw databaseError(error);
     } finally {
-      try { await client.query("select set_config('bizgenie.campaign_command','off',false)"); } catch {}
-      client.release();
+      try { await client?.query("select set_config('bizgenie.campaign_command','off',false)"); } catch {}
+      client?.release();
     }
   }
 
@@ -114,13 +127,22 @@ class PostgresCampaignRepository extends CampaignRepository {
     const snapshot = { brand_id: row.brand_id, project_id: row.project_id, name: row.name, metadata: { version: row.version, status: row.status, created_at: new Date(row.created_at).toISOString(), updated_at: new Date(row.updated_at).toISOString() } };
     for (const key of ["identity","voice","audience","commercial","competitors","visual"]) if (row[key] != null) snapshot[key] = row[key];
     const snapshotHash = hashIntent(snapshot);
+    await client.query("select pg_advisory_xact_lock(hashtextextended($1,0))",[JSON.stringify(['campaign-snapshot',context.tenant_id,context.project_id,brandId,row.version,snapshotHash])]);
     const found = await client.query(`select * from public.campaign_brand_snapshots where tenant_id=$1 and project_id=$2 and brand_id=$3 and source_version=$4 and snapshot_hash=$5`, [context.tenant_id, context.project_id, brandId, row.version, snapshotHash]);
-    return found.rows[0] || { brand_snapshot_id: this.idFactory(), tenant_id: context.tenant_id, project_id: context.project_id, brand_id: brandId, source_version: row.version, source_updated_at: new Date(row.updated_at).toISOString(), source_schema_version: "brand-brain.v1", snapshot, snapshot_hash: snapshotHash, captured_at: this.now().toISOString() };
+    return projection.normalize(found.rows[0]) || { brand_snapshot_id: this.idFactory(), tenant_id: context.tenant_id, project_id: context.project_id, brand_id: brandId, source_version: row.version, source_updated_at: new Date(row.updated_at).toISOString(), source_schema_version: "brand-brain.v1", snapshot, snapshot_hash: snapshotHash, captured_at: this.now().toISOString() };
+  }
+
+  async _resolveMedia(client,context,assetId,brandId) {
+    const result=await client.query(`select a.*,j.brand_id,j.job_id from public.media_assets a join public.generation_jobs j on j.job_id=a.generation_job_id and j.tenant_id=a.tenant_id and j.project_id=a.project_id where a.asset_id=$1 and a.tenant_id=$2 and a.project_id=$3 and j.brand_id=$4 and a.status='active' and a.source_kind='generated' and split_part(j.execution_class,'.',1)=a.media_kind for share of a,j`,[assetId,context.tenant_id,context.project_id,brandId]);
+    if(!result.rowCount)return null;
+    const a=result.rows[0];
+    return {...a,manifest:{asset_id:a.asset_id,mime_type:a.mime_type,width:a.width,height:a.height,duration_ms:a.duration_seconds===null?null:Math.round(Number(a.duration_seconds)*1000),byte_size:a.byte_size===null?null:Number(a.byte_size)}};
   }
 
   async _loadCampaign(client, context, campaignId, lock = false) {
     const root = await client.query(`select * from public.campaigns where tenant_id=$1 and project_id=$2 and campaign_id=$3 ${lock ? "for update" : ""}`, [context.tenant_id, context.project_id, campaignId]);
     if (!root.rowCount) throw new CampaignResourceError();
+    if(!lock)await this.fault('postgres_after_root_read');
     const campaign = { ...root.rows[0], created_by: { kind: "customer", auth_user_id: root.rows[0].created_by }, brand_snapshots: new Map(), items: new Map(), approvals: new Map(), previews: new Map(), schedules: new Map(), attempts: new Map(), resolutions: new Map(), publications: new Map(), corrections: new Map(), events: [] };
     const query = async (table) => (await client.query(`select * from public.${table} where tenant_id=$1 and project_id=$2 and campaign_id=$3`, [context.tenant_id, context.project_id, campaignId])).rows;
     const snapshots = (await client.query(`select s.* from public.campaign_brand_snapshots s where s.tenant_id=$1 and s.project_id=$2 and s.brand_id=$3 and (s.brand_snapshot_id=$4 or exists(select 1 from public.campaign_revisions r where r.campaign_id=$5 and r.brand_snapshot_id=s.brand_snapshot_id))`, [context.tenant_id, context.project_id, campaign.brand_id, campaign.initial_brand_snapshot_id, campaignId])).rows;
@@ -141,7 +163,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       campaign[target].set(row[key], row);
     }
     campaign.events = (await query("campaign_events")).sort((a, b) => Number(a.sequence) - Number(b.sequence));
-    return campaign;
+    return projection.normalize(campaign);
   }
 
   async _persistCampaign(client, before, campaign, command, context, intentHash, result) {
@@ -176,11 +198,18 @@ class PostgresCampaignRepository extends CampaignRepository {
 
   _findItem(campaign, variantId) { for (const item of campaign.items.values()) if (item.variants.has(variantId)) return item.content_item_id; throw new CampaignResourceError(); }
 
-  async getCampaign(context, campaignId) { const client=await this.pool.connect(); try { await this._authorize(client,context); return clone(await this._loadCampaign(client,context,campaignId)); } catch(error){ throw databaseError(error); } finally { client.release(); } }
-  async listCampaigns(context) { const client=await this.pool.connect(); try { await this._authorize(client,context); const rows=await client.query(`select * from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id]); return rows.rows; } catch(error){ throw databaseError(error); } finally { client.release(); } }
+  async _read(context,read) {
+    let client;
+    try {client=await this.pool.connect();await client.query('begin isolation level repeatable read read only');await this._authorize(client,context);const result=await read(client);await client.query('commit');return result;}
+    catch(error){if(client)try{await client.query('rollback');}catch{}throw databaseError(error);}
+    finally{client?.release();}
+  }
+  async getCampaign(context,campaignId){return this._read(context,async client=>projection.decorate(await this._loadCampaign(client,context,campaignId)));}
+  async _list(client,context){const rows=await client.query(`select campaign_id from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id]);const campaigns=[];for(const row of rows.rows)campaigns.push(projection.decorate(await this._loadCampaign(client,context,row.campaign_id)));return campaigns;}
+  async listCampaigns(context){return this._read(context,client=>this._list(client,context));}
   async listCampaignEvents(context,campaignId) { return (await this.getCampaign(context,campaignId)).events; }
-  async listCalendarEntries(context,{from,to}) { const client=await this.pool.connect(); try { await this._authorize(client,context); const rows=await client.query(`select c.campaign_id,i.content_item_id,v.variant_id,v.workflow,coalesce(p.published_at,s.scheduled_for) occurrence_at from public.campaigns c join public.campaign_content_items i on i.campaign_id=c.campaign_id and i.archived_at is null join public.campaign_platform_variants v on v.content_item_id=i.content_item_id left join public.campaign_publications p on p.publication_id=v.publication_id left join public.campaign_schedule_entries s on s.schedule_id=v.active_schedule_id where c.tenant_id=$1 and c.project_id=$2 and c.archived_at is null and coalesce(p.published_at,s.scheduled_for) >= $3 and coalesce(p.published_at,s.scheduled_for) < $4 order by occurrence_at,v.variant_id`,[context.tenant_id,context.project_id,from,to]); return rows.rows; } catch(error){ throw databaseError(error); } finally { client.release(); } }
-  async verifyCampaignProjection(context,campaignId) { const campaign=await this.getCampaign(context,campaignId); const valid=campaign.events.every((event,index)=>Number(event.sequence)===index+1)&&Number(campaign.last_event_sequence)===campaign.events.length&&Number(campaign.version)===new Set(campaign.events.map((event)=>Number(event.campaign_version))).size; return {valid,campaign_version:Number(campaign.version),last_event_sequence:Number(campaign.last_event_sequence)}; }
+  async listCalendarEntries(context,range){return this._read(context,async client=>projection.calendar(await this._list(client,context),range));}
+  async verifyCampaignProjection(context,campaignId){return projection.verify(await this.getCampaign(context,campaignId));}
   async close(){ if(typeof this.pool.end==="function") await this.pool.end(); }
 }
 

@@ -17,13 +17,16 @@ The accepted historical pack is
 | Accepted Issue #39 verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
 | Campaign/calendar customer journey | GAP; not implemented/proven by the staging-generation verdict or the I-A contract |
 | BG-LAUNCH-002I-A | Accepted and merged through PR #54; its contract remains normative |
-| BG-LAUNCH-002I-B | HOLD after independent review on 2026-09-07; draft PR #55 unmerged/undeployed; current CI green but ten additional contract probes fail; see I-B evidence |
+| BG-LAUNCH-002I-B | Review findings remediated on 2026-09-07; local 475/475 full, 55/55 focused and 10/10 original review probes PASS with disposable PostgreSQL 17.10; PR #55 remains draft/unmerged pending fresh independent review and exact-head CI reconciliation |
 | Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [I-A evidence](../launch/CAMPAIGN_SPINE_EVIDENCE.md), [I-B evidence](../launch/CAMPAIGN_SPINE_PERSISTENCE_EVIDENCE.md) |
-| Exact restart point | Resume I-B remediation of PR #55: re-fetch main/head/CI and Issue #51; resolve failure-state authority conflict; correct and prove review findings before a fresh independent review. No next phase or staging migration |
+| Exact restart point | Re-fetch PR #55/main/CI and Issue #51; independently review I-B remediation against authoritative v1.1 and regression evidence. Failure returns Approved, expires schedule and requires explicit rescheduling. PR remains draft/unmerged; no next phase or staging migration |
 
 Review baseline on 2026-09-07: canonical main remains
 `3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727`; one open PR (#55). The reviewed
 implementation head is `891a5fa512888e78e2c44e219033365bafbeca66`.
+That head is the historical review baseline; the latest remediation head/CI is
+recorded in Issue #51. The failure-policy conflict is resolved by the founder's
+[authoritative v1.1 clarification](../launch/IMPLEMENTATION_CONTRACT_AMENDMENT_V1_1.md).
 Canonical names: I-B Additive Persistence; I-C Preview Registry; I-D Customer
 Brand-context Boundary; I-E Goal Recommendation; I-F Customer Campaign APIs.
 Proposed order for founder confirmation: **I-B → I-D → I-F → I-C → I-E → launch

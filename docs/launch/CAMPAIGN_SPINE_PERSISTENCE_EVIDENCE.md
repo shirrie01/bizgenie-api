@@ -1,9 +1,57 @@
 # BG-LAUNCH-002I-B campaign-spine persistence evidence
 
-**Status:** HOLD after independent review on 2026-09-07; draft PR #55 remains
-unmerged and undeployed. Historical implementation evidence below is not acceptance.
+**Status:** I-B review findings remediated and locally verified on 2026-09-07;
+PR #55 remains draft, unmerged and undeployed pending fresh independent review.
 
-## Independent review checkpoint — 2026-09-07
+## Remediation checkpoint — 2026-09-07
+
+The founder confirmed that
+[bizgenie-implementation-contract-amendment-v1.1](IMPLEMENTATION_CONTRACT_AMENDMENT_V1_1.md)
+supersedes the earlier failed-publication wording. The policy conflict recorded in
+the historical review below is resolved: record attributed failure metadata, expire
+the active schedule, return to Approved and require explicit new scheduling before
+another attempt. Original schedules, attempts, resolutions and events remain immutable.
+
+The remediation addresses the confirmed review findings:
+
+| Finding | Implemented correction and proof |
+| --- | --- |
+| Terminal/revoke transitions | Domain rejects Published edits; revoke returns Review; both adapters run the same regression cases |
+| Media ownership and attribution | Resolve/lock active generated media and its immutable job under exact tenant/project/brand/kind; compute immutable manifest provenance; reject missing, foreign, null-brand, revoked, wrong-kind and reference-only assets |
+| Preview binding | Strict receipt shape and exact revision hash/platform/placement/format; trusted availability callback fails closed; database binds content and approver acknowledgement |
+| Projection verification | Independent typed-event replay compares root, item, variant, revision and immutable lifecycle records; corruption probe returns invalid |
+| PostgreSQL parity | Normalize database timestamps; share derived item/campaign rollups and corrected calendar projection; use repeatable-read transactions across aggregate reads; concurrent writer regression proves one snapshot |
+| Publication metadata | Enforce prospective bounds using numeric dates, strict HTTPS metadata and deterministic correction chains; fresh-instance calendar reflects corrected occurrence time |
+| Strict command boundary | Exhaustive command schemas; unknown/internal methods and invalid typed/nested metadata reject before mutation; normalize bounded text/time inputs |
+| Migration enforcement/recovery | Row-level identity/terminal guards, nested content and event-shape validation, receipt/sequence/root/workflow checks, publication guards, transactional rerun and startup privilege checks |
+
+Local verification of the remediation worktree:
+
+- **475/475 full tests PASS**, no failures/skips, on Node 22.23.2 with a disposable
+  PostgreSQL **17.10** instance bound to loopback on port 55439.
+- **55/55 focused campaign tests PASS**, including **21/21 real PostgreSQL campaign
+  cases** and all **10/10 original independent review probes**.
+- Existing tests retain their assertions. Preview fixtures now provide the actual
+  revision hash and explicit trusted availability. The original adapter probe's
+  transport stub now supports the added read transaction; its stage assertion remains.
+- Database tests cover migration rerun with evidence intact, unsafe direct grants,
+  immutable-record writes, identity/format/counter/workflow mutation, consistent reads,
+  corrected calendar reconstruction and media ownership/revocation.
+- No repository dependency or lockfile changes. The PostgreSQL binary/runtime is a
+  workspace-only test dependency outside the repository. No shared database was used.
+
+Exact resulting head and CI are recorded in the follow-up Issue #51 checkpoint;
+local PASS does not substitute for that exact-head CI or a fresh independent review.
+The historical failures below apply to `891a5fa...` and are retained as review evidence,
+not the current remediation results. All eight review threads remain available for
+independent verification; they have not been silently dismissed.
+
+**Current restart:** Re-fetch draft PR #55, main and Issue #51; review the remediation
+commit and exact-head CI, confirm v1.1 and the reproduced regression coverage, and
+perform a fresh independent review. Keep the PR unmerged; no next phase, shared
+migration, activation, connector or deployment is implied.
+
+## Historical independent review checkpoint — 2026-09-07
 
 Reviewed implementation head: `891a5fa512888e78e2c44e219033365bafbeca66`.
 Actual current base and canonical main: `3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727`

@@ -20,8 +20,9 @@ function fixture(overrides = {}) {
     now: () => new Date("2026-09-03T10:00:00.000Z"),
     idFactory: () => IDS[id++],
     authorize: async (candidate) => candidate.actor.auth_user_id === ACTOR,
+    validatePreview: async () => true,
     captureBrandSnapshot: async () => ({ brand_snapshot_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", tenant_id: "tenant_a", project_id: "project_a", brand_id: "brand_a", source_version: 1, source_updated_at: "2026-09-03T09:00:00.000Z", source_schema_version: "brand-brain.v1", snapshot: { name: "A" }, snapshot_hash: "a".repeat(64), captured_at: "2026-09-03T10:00:00.000Z" }),
-    resolvePreviewReceipt: async (_context, payload) => ({ render_receipt_id: payload.render_receipt_id, variant_id: payload.variant_id, revision_id: payload.revision_id, revision_content_hash: "b".repeat(64), profile_id: "instagram.feed", profile_version: 1, profile_hash: "c".repeat(64), platform: "instagram", placement: "feed", format: "text", renderer_version: "renderer.v1", render_input_hash: "d".repeat(64), preview_digest: "e".repeat(64), rendered_at: "2026-09-03T09:59:00.000Z" }),
+    resolvePreviewReceipt: async (_context, payload, binding) => ({ render_receipt_id: payload.render_receipt_id, variant_id: payload.variant_id, revision_id: payload.revision_id, revision_content_hash: binding.revision.content_hash, profile_id: "instagram.feed", profile_version: 1, profile_hash: "c".repeat(64), platform: "instagram", placement: "feed", format: "text", renderer_version: "renderer.v1", render_input_hash: "d".repeat(64), preview_digest: "e".repeat(64), rendered_at: "2026-09-03T09:59:00.000Z" }),
     ...overrides,
   });
 }
