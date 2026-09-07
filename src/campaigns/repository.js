@@ -283,11 +283,11 @@ class CampaignTransaction {
     item.archived_at = archive ? this.now : null; item.updated_at = this.now;
     this.event(`content_item.${archive ? "archived" : "restored"}`, { content_item_id: item.content_item_id, reason: this.command.payload.reason });
   }
-  async media(campaign,content,format) {
+  async media(campaign,content,format,requiredUse=null) {
     const links=[];
     for(const ref of content.asset_refs) {
       const evidence=await this.repository.resolveMedia?.(clone(this.context),ref.asset_id,campaign.brand_id);
-      if(!evidence || evidence.tenant_id!==campaign.tenant_id || evidence.project_id!==campaign.project_id || evidence.brand_id!==campaign.brand_id || evidence.asset_id!==ref.asset_id || evidence.status!=='active' || evidence.source_kind!=='generated' || evidence.media_kind!==format || !evidence.job_id)throw new CampaignResourceError();
+      if(!evidence || evidence.tenant_id!==campaign.tenant_id || evidence.project_id!==campaign.project_id || evidence.brand_id!==campaign.brand_id || evidence.asset_id!==ref.asset_id || evidence.status!=='active' || evidence.source_kind!=='generated' || evidence.media_kind!==format || !evidence.job_id || (requiredUse && !evidence.allowed_uses?.includes(requiredUse)))throw new CampaignResourceError();
       links.push({job_id:evidence.job_id,asset_id:ref.asset_id,output_kind:evidence.media_kind,output_hash:hashIntent(evidence.manifest),provenance:'verified_import',generation_brand_snapshot_id:null});
     }
     return links;
@@ -322,7 +322,7 @@ class CampaignTransaction {
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
     if (variant.workflow !== "draft" || variant.current_revision_id !== this.command.payload.revision_id) throw new CampaignTransitionError();
     const revision = variant.revisions.get(variant.current_revision_id);
-    await this.media(campaign,revision.content,item.format);
+    await this.media(campaign,revision.content,item.format,"campaign.preview");
     if (!contentComplete(item.format, revision.content)) throw new CampaignTransitionError("CONTENT_INCOMPLETE");
     variant.workflow = "review"; variant.updated_at = this.now; this.event("review.submitted", { variant_id: variant.variant_id, revision_id: revision.revision_id });
   }
@@ -344,7 +344,7 @@ class CampaignTransaction {
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
     const preview = campaign.previews.get(this.command.payload.preview_id);
     if (variant.workflow !== "review" || this.command.payload.approved !== true || variant.current_revision_id !== this.command.payload.revision_id || !preview || preview.revision_id !== variant.current_revision_id || preview.observed_by.auth_user_id !== this.context.actor.auth_user_id) throw new CampaignTransitionError("PREVIEW_REQUIRED");
-    await this.media(campaign,variant.revisions.get(variant.current_revision_id).content,item.format);
+    await this.media(campaign,variant.revisions.get(variant.current_revision_id).content,item.format,"campaign.preview");
     if(!await this.repository.validatePreview(clone(this.context),clone(preview)))throw new CampaignTransitionError('PREVIEW_REQUIRED');
     const approval = { approval_id: this.id("approval_ids"), variant_id: variant.variant_id, revision_id: variant.current_revision_id, decision: "approved", preview_id: preview.preview_id, supersedes_approval_id: null, reason: null, created_at: this.now, created_by: clone(this.context.actor) };
     campaign.approvals.set(approval.approval_id, approval); variant.active_approval_id = approval.approval_id; variant.workflow = "approved"; variant.updated_at = this.now; this.event("approval.approved", { record: clone(approval) });
@@ -387,7 +387,7 @@ class CampaignTransaction {
     if (!['approved','scheduled'].includes(variant.workflow) || variant.current_revision_id !== this.command.payload.revision_id || variant.active_approval_id !== this.command.payload.approval_id) throw new CampaignTransitionError("APPROVAL_REQUIRED");
     const lastFailure=campaign.events.filter(e=>e.event_type==='publication.attempt_failed'&&e.payload.record.variant_id===variant.variant_id).at(-1);
     if(lastFailure && !campaign.events.some(e=>e.sequence>lastFailure.sequence&&e.event_type==='schedule.created'&&e.payload.record.schedule_id===variant.active_schedule_id))throw new CampaignTransitionError('SCHEDULE_INVALID');
-    await this.media(campaign,variant.revisions.get(variant.current_revision_id).content,item.format);
+    await this.media(campaign,variant.revisions.get(variant.current_revision_id).content,item.format,"campaign.publish");
     const preview=campaign.previews.get(campaign.approvals.get(variant.active_approval_id).preview_id);
     if(!await this.repository.validatePreview(clone(this.context),clone(preview)))throw new CampaignTransitionError('PREVIEW_REQUIRED');
     const attempt = { attempt_id: this.id("attempt_ids"), variant_id: variant.variant_id, revision_id: variant.current_revision_id, approval_id: variant.active_approval_id, schedule_id: variant.active_schedule_id, method: "manual", started_at: this.now, started_by: clone(this.context.actor) };
