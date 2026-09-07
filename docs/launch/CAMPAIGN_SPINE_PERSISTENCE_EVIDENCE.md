@@ -226,4 +226,3 @@ forward fix; campaign evidence must not be dropped or rewritten.
 
 The historical implementation restart is superseded by the independent HOLD
 checkpoint above. No staging migration or customer activation is implied by merge.
-

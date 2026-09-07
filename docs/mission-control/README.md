@@ -118,4 +118,3 @@ New findings and validated improvements
 - Customer-facing strategic recommendations.
 
 Mission Control is internal-first. Customer-facing intelligence is considered only after the internal system has produced reliable evidence.
-
