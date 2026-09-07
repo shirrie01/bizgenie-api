@@ -153,8 +153,10 @@ Text requires body or caption and zero primary media. Image requires exactly one
 primary image; video exactly one primary video; supporting media must be images.
 Drafts may have missing required text/media (including an empty initial content object
 with all nullable fields null and `asset_refs=[]`); `submit_review` validates completeness.
-Never accept an unavailable or foreign asset even in a draft. Media count/format and
-platform limits are checked at review, preview, approval and attempt start.
+Never accept an unavailable or foreign asset even in a draft. `submit_review` and
+`approve` additionally require every linked asset to carry `campaign.preview`; starting
+manual publication requires `campaign.publish`. Media count/format and platform limits
+are checked at review, preview, approval and attempt start.
 Every save appends a complete revision; no in-place content edits or patch chains.
 A restore copies an old revision's content into a new revision with its own parent,
 timestamp, reason and explicit snapshot choice. A new revision revokes live approval,
@@ -262,6 +264,10 @@ in a correction note, not silently erased. Retraction/unpublish is a later contr
 
 ## 4. Transition matrix and exception semantics
 
+The later [bizgenie-implementation-contract-amendment-v1.1](IMPLEMENTATION_CONTRACT_AMENDMENT_V1_1.md)
+is authoritative for failed publication: append failure metadata, expire the active
+schedule, return to Approved, and require explicit rescheduling before another attempt.
+
 All commands below require current aggregate version, authorized customer, unarchived
 campaign/item and same-owner references, except reads, replay and restore/archive rules
 explicitly noted. `pending_attempt_id` blocks revision, approval, schedule and archive
@@ -284,7 +290,7 @@ before any lifecycle detail is disclosed.
 | `unschedule` | Scheduled | Approved | Append cancellation; preserve approval |
 | `begin_manual_publication` | Approved, Scheduled | Same | One pending attempt; exact live approval/revision; validate availability; scheduled date may be early or overdue |
 | `confirm_manual_publication` | Approved, Scheduled | Published | Pending attempt; attest published; append resolution/publication; clear pending attempt and active schedule |
-| `fail_manual_publication` | Approved, Scheduled | Same | Pending attempt; attest nothing published; append failed resolution; schedule retained |
+| `fail_manual_publication` | Approved, Scheduled | Approved | Pending attempt; attest nothing published; append failure actor/time/reason; cancel active schedule; explicit new schedule required before another attempt (v1.1) |
 | `cancel_manual_publication` | Approved, Scheduled | Same | Pending attempt; attest nothing published; append cancelled resolution; schedule retained |
 | `correct_publication` | Published | Published | Append descriptive correction, preserve original confirmation |
 
@@ -518,7 +524,10 @@ requires an active owned asset and its actual immutable generation job with exac
 tenant/project and the campaign's required brand. A null or different job brand cannot
 prove brand compatibility and is denied in v1. Asset/media kind must match revision
 format. A reference-only asset or arbitrary storage URL cannot become generated output.
-No upload/reference-publication rights are invented by this task.
+Only explicit server-owned rights can move media through campaign gates:
+`campaign.preview` is required before Review/Approval and `campaign.publish` is
+required before manual publication begins. No upload/reference-publication rights are
+invented by this task.
 
 Internal `generation_links[]` contains `job_id:Id`, `asset_id:Uuid|null`,
 `output_kind:"text"|"image"|"video"`, `output_hash:Hash`,

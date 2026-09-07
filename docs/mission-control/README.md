@@ -9,16 +9,30 @@ The accepted historical pack is
 
 | Control | Current state |
 | --- | --- |
-| Verified `main` at I-A task start, 2026-09-02 | `16f1ecb5102b7acaf15d1b382d6a7eb7cd1182d2` (tree `c978e15e5956a1b5f83a31cb2ab8863f193ac3ff`); 0 open PRs before this task |
+| Verified `main` at I-B task start, 2026-09-03 | `3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727` (tree `dbc7d815195f4643d4a55899d34ebb9393ec5223`); PR #54/I-A merged and 0 open PRs before I-B |
 | Complete / pass | Dedicated staging, migrations/RLS, Auth/service boundary, Billing, media, Image, Video, Stripe test lifecycle, Tenant A Golden Journey, 15 Tenant B behaviours, failure drills, restart/recovery and rollback readiness |
 | Partial | Public frontend integration; the authenticated staging API and Stripe lifecycle passed, while public launch integration remains in Issue #51 |
 | Unrecovered | Original `B-ISO-01`/`B-ISO-02` specimen labels and identifiers only; underlying isolation requirements are covered |
 | Production | Untouched, disabled and unauthorised |
 | Accepted Issue #39 verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
 | Campaign/calendar customer journey | GAP; not implemented/proven by the staging-generation verdict or the I-A contract |
-| BG-LAUNCH-002I-A | Contract pack in review; documentation only; architecture/human acceptance and merge pending |
-| Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [baseline/compatibility/verification](../launch/CAMPAIGN_SPINE_EVIDENCE.md) |
-| Exact restart point | Review the I-A PR and exact-head CI; merge only with separate explicit authority, then reverify main/Issue #51/overlaps and begin BG-LAUNCH-002I-B Additive Persistence |
+| BG-LAUNCH-002I-A | Accepted and merged through PR #54; its contract remains normative |
+| BG-LAUNCH-002I-B | Review findings remediated on 2026-09-07; local 475/475 full, 55/55 focused and 10/10 original review probes PASS with disposable PostgreSQL 17.10; PR #55 remains draft/unmerged pending fresh independent review and exact-head CI reconciliation |
+| Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [I-A evidence](../launch/CAMPAIGN_SPINE_EVIDENCE.md), [I-B evidence](../launch/CAMPAIGN_SPINE_PERSISTENCE_EVIDENCE.md) |
+| Exact restart point | Re-fetch PR #55/main/CI and Issue #51; independently review I-B remediation against authoritative v1.1 and regression evidence. Failure returns Approved, expires schedule and requires explicit rescheduling. PR remains draft/unmerged; no next phase or staging migration |
+
+Review baseline on 2026-09-07: canonical main remains
+`3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727`; one open PR (#55). The reviewed
+implementation head is `891a5fa512888e78e2c44e219033365bafbeca66`.
+That head is the historical review baseline; the latest remediation head/CI is
+recorded in Issue #51. The failure-policy conflict is resolved by the founder's
+[authoritative v1.1 clarification](../launch/IMPLEMENTATION_CONTRACT_AMENDMENT_V1_1.md).
+Canonical names: I-B Additive Persistence; I-C Preview Registry; I-D Customer
+Brand-context Boundary; I-E Goal Recommendation; I-F Customer Campaign APIs.
+Proposed order for founder confirmation: **I-B → I-D → I-F → I-C → I-E → launch
+surfaces → field-sales pilot**. I-D establishes approved customer Brand ownership
+before customer APIs consume that context. No downstream implementation is authorised
+by this checkpoint; I-F preview-dependent behavior remains gated until I-C.
 
 Issue #51 / BG-LAUNCH-002 remains a separate parallel launch-preparation
 programme. It cannot alter BG-ACT-001 technical authority or authorise

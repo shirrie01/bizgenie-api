@@ -205,8 +205,8 @@ class DurableMediaAssetStore {
         ...(input.source?.duration_seconds ? { duration_seconds: input.source.duration_seconds } : {}),
         ...(stored.byteSize ? { byte_size: stored.byteSize } : {}),
         allowed_uses: this.mediaKind === "image"
-          ? ["image.generate.reference", "video.generate.reference"]
-          : [],
+          ? ["image.generate.reference", "video.generate.reference", "campaign.preview", "campaign.publish"]
+          : ["campaign.preview", "campaign.publish"],
         status: "active",
         created_at: this.now().toISOString(),
       });

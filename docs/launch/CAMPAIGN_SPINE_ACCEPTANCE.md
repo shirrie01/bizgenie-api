@@ -52,8 +52,8 @@ explicitly the subject of replay. Snapshot row counts/hashes before and after re
 | CS-25 | Another current owner resolves pending attempt | Allowed after current authorization; attribution records starter and resolver separately | I-B/I-F |
 | CS-26 | Confirm without URL / clean permanent URL | Both valid with attestation/time; Published means customer attestation only | I-B/I-F |
 | CS-27 | URL credentials, query, fragment, unsupported scheme; forged status/evidence kind | Reject strict unsafe metadata; no URL fetch and no platform verification claim | I-B/I-F |
-| CS-28 | Fail/cancel requires not-published attestation | Terminal resolution, no publication, prior workflow/schedule retained | I-B |
-| CS-29 | Fresh attempt after failed/cancelled resolution | New identity; historical outcome retained; old attempt can never confirm later | I-B |
+| CS-28 | Fail/cancel requires not-published attestation | Terminal attributed resolution, no publication; failure cancels active schedule and returns Approved under v1.1; cancellation retains prior workflow/schedule | I-B |
+| CS-29 | Fresh attempt after failed/cancelled resolution | New identity; historical outcome retained; failed attempt requires explicit new schedule under v1.1; old attempt can never confirm later | I-B |
 | CS-30 | Confirm twice using same key, then using new key | Exact replay first; second fresh effect denied; one publication and resolution | I-B |
 | CS-31 | Edit/revoke/reschedule/archive with pending attempt | MANUAL_ATTEMPT_PENDING; no loss of reconciliation anchor | I-B |
 | CS-32 | Asset/profile revoked while external attempt pending | Deny new byte delivery; allow truthful confirm/fail/cancel of pinned attempt | I-B/I-F |
