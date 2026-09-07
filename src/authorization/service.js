@@ -63,6 +63,7 @@ class AuthorizationService {
     projectId,
     brandId,
     action,
+    requireApprovedBrand = false,
   }) {
     const projectAuthorization = await this.authorizeProject({
       actor,
@@ -75,13 +76,16 @@ class AuthorizationService {
       brandId
     );
 
-    if (!brand) {
+    const approvedBrandRequired =
+      requireApprovedBrand || action === "generation:create";
+    if (!brand || (approvedBrandRequired && brand.status !== "approved")) {
       return deny();
     }
 
     return Object.freeze({
       ...projectAuthorization,
       brand_id: brandId,
+      brand_status: brand.status,
     });
   }
 }
