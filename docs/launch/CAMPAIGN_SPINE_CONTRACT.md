@@ -153,8 +153,10 @@ Text requires body or caption and zero primary media. Image requires exactly one
 primary image; video exactly one primary video; supporting media must be images.
 Drafts may have missing required text/media (including an empty initial content object
 with all nullable fields null and `asset_refs=[]`); `submit_review` validates completeness.
-Never accept an unavailable or foreign asset even in a draft. Media count/format and
-platform limits are checked at review, preview, approval and attempt start.
+Never accept an unavailable or foreign asset even in a draft. `submit_review` and
+`approve` additionally require every linked asset to carry `campaign.preview`; starting
+manual publication requires `campaign.publish`. Media count/format and platform limits
+are checked at review, preview, approval and attempt start.
 Every save appends a complete revision; no in-place content edits or patch chains.
 A restore copies an old revision's content into a new revision with its own parent,
 timestamp, reason and explicit snapshot choice. A new revision revokes live approval,
@@ -522,7 +524,10 @@ requires an active owned asset and its actual immutable generation job with exac
 tenant/project and the campaign's required brand. A null or different job brand cannot
 prove brand compatibility and is denied in v1. Asset/media kind must match revision
 format. A reference-only asset or arbitrary storage URL cannot become generated output.
-No upload/reference-publication rights are invented by this task.
+Only explicit server-owned rights can move media through campaign gates:
+`campaign.preview` is required before Review/Approval and `campaign.publish` is
+required before manual publication begins. No upload/reference-publication rights are
+invented by this task.
 
 Internal `generation_links[]` contains `job_id:Id`, `asset_id:Uuid|null`,
 `output_kind:"text"|"image"|"video"`, `output_hash:Hash`,
