@@ -13,6 +13,19 @@ const ACTOR = "11111111-1111-4111-8111-111111111111";
 const IDS = Array.from({ length: 100 }, (_, index) => `${String(index + 1).padStart(8, "0")}-0000-4000-8000-000000000000`);
 const context = { actor: { kind: "customer", auth_user_id: ACTOR }, tenant_id: "tenant_a", project_id: "project_a", membership_role: "owner", policy_version: "campaign-owner.v1" };
 const command = (type, version, payload, campaign_id, key = `${type}_${version}`) => ({ contract_version: "campaign-spine.v1", idempotency_key: key, expected_campaign_version: version, command_type: type, tenant_id: "tenant_a", project_id: "project_a", ...(campaign_id ? { campaign_id } : {}), payload });
+const mediaContent = (assetId) => ({ title: null, body: null, caption: null, alt_text: "Product photo", asset_refs: [{ asset_id: assetId, role: "primary" }] });
+const mediaEvidence = (assetId, allowed_uses = ["campaign.preview", "campaign.publish"]) => ({
+  tenant_id: "tenant_a",
+  project_id: "project_a",
+  brand_id: "brand_a",
+  asset_id: assetId,
+  status: "active",
+  source_kind: "generated",
+  media_kind: "image",
+  job_id: "job_1",
+  allowed_uses,
+  manifest: { asset_id: assetId, mime_type: "image/png", width: 1200, height: 1200, duration_ms: null, byte_size: 1024 },
+});
 
 function fixture(overrides = {}) {
   let id = 0;
@@ -22,7 +35,7 @@ function fixture(overrides = {}) {
     authorize: async (candidate) => candidate.actor.auth_user_id === ACTOR,
     validatePreview: async () => true,
     captureBrandSnapshot: async () => ({ brand_snapshot_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", tenant_id: "tenant_a", project_id: "project_a", brand_id: "brand_a", source_version: 1, source_updated_at: "2026-09-03T09:00:00.000Z", source_schema_version: "brand-brain.v1", snapshot: { name: "A" }, snapshot_hash: "a".repeat(64), captured_at: "2026-09-03T10:00:00.000Z" }),
-    resolvePreviewReceipt: async (_context, payload, binding) => ({ render_receipt_id: payload.render_receipt_id, variant_id: payload.variant_id, revision_id: payload.revision_id, revision_content_hash: binding.revision.content_hash, profile_id: "instagram.feed", profile_version: 1, profile_hash: "c".repeat(64), platform: "instagram", placement: "feed", format: "text", renderer_version: "renderer.v1", render_input_hash: "d".repeat(64), preview_digest: "e".repeat(64), rendered_at: "2026-09-03T09:59:00.000Z" }),
+    resolvePreviewReceipt: async (_context, payload, binding) => ({ render_receipt_id: payload.render_receipt_id, variant_id: payload.variant_id, revision_id: payload.revision_id, revision_content_hash: binding.revision.content_hash, profile_id: "instagram.feed", profile_version: 1, profile_hash: "c".repeat(64), platform: "instagram", placement: "feed", format: binding.format, renderer_version: "renderer.v1", render_input_hash: "d".repeat(64), preview_digest: "e".repeat(64), rendered_at: "2026-09-03T09:59:00.000Z" }),
     ...overrides,
   });
 }
@@ -98,6 +111,38 @@ describe("campaign-spine deterministic repository", () => {
     const created = await repository.executeCommand(context, command("create_campaign", 0, { brand_id: "brand_a", name: "Launch", goal: "Launch clearly", display_timezone: "Europe/London" }));
     const item = await repository.executeCommand(context, command("create_content_item", 1, { name: "Empty", format: "image", platform: "instagram", placement: "feed", destination_label: "BizGenie" }, created.campaign_id));
     await assert.rejects(() => repository.executeCommand(context, command("submit_review", 2, { variant_id: item.created_ids.variant_ids[0], revision_id: item.created_ids.revision_ids[0] }, created.campaign_id)), (error) => error instanceof CampaignTransitionError && error.code === "CONTENT_INCOMPLETE");
+  });
+
+  it("requires campaign preview media rights before review and approval", async () => {
+    const assetId = "aaaaaaaa-0000-4000-8000-000000000001";
+    const repository = fixture({ resolveMedia: async () => mediaEvidence(assetId, ["campaign.publish"]) });
+    const created = await repository.executeCommand(context, command("create_campaign", 0, { brand_id: "brand_a", name: "Launch", goal: "Launch clearly", display_timezone: "Europe/London" }));
+    const item = await repository.executeCommand(context, command("create_content_item", 1, { name: "Photo", format: "image", platform: "instagram", placement: "feed", destination_label: "BizGenie", initial_content: mediaContent(assetId) }, created.campaign_id));
+    await assert.rejects(() => repository.executeCommand(context, command("submit_review", 2, { variant_id: item.created_ids.variant_ids[0], revision_id: item.created_ids.revision_ids[0] }, created.campaign_id)), CampaignResourceError);
+
+    repository.resolveMedia = async () => mediaEvidence(assetId, ["campaign.preview"]);
+    await repository.executeCommand(context, command("submit_review", 2, { variant_id: item.created_ids.variant_ids[0], revision_id: item.created_ids.revision_ids[0] }, created.campaign_id, "review_allowed"));
+    const preview = await repository.executeCommand(context, command("acknowledge_preview", 3, { variant_id: item.created_ids.variant_ids[0], revision_id: item.created_ids.revision_ids[0], render_receipt_id: "99999999-0000-4000-8000-000000000000", acknowledged: true }, created.campaign_id));
+
+    repository.resolveMedia = async () => mediaEvidence(assetId, []);
+    await assert.rejects(() => repository.executeCommand(context, command("approve", 4, { variant_id: item.created_ids.variant_ids[0], revision_id: item.created_ids.revision_ids[0], preview_id: preview.created_ids.preview_ids[0], approved: true }, created.campaign_id)), CampaignResourceError);
+  });
+
+  it("requires campaign publication media rights before manual publication", async () => {
+    const assetId = "aaaaaaaa-0000-4000-8000-000000000002";
+    const repository = fixture({ resolveMedia: async () => mediaEvidence(assetId, ["campaign.preview"]) });
+    const created = await repository.executeCommand(context, command("create_campaign", 0, { brand_id: "brand_a", name: "Launch", goal: "Launch clearly", display_timezone: "Europe/London" }));
+    const item = await repository.executeCommand(context, command("create_content_item", 1, { name: "Photo", format: "image", platform: "instagram", placement: "feed", destination_label: "BizGenie", initial_content: mediaContent(assetId) }, created.campaign_id));
+    const target = { variant_id: item.created_ids.variant_ids[0], revision_id: item.created_ids.revision_ids[0] };
+    await repository.executeCommand(context, command("submit_review", 2, target, created.campaign_id));
+    const preview = await repository.executeCommand(context, command("acknowledge_preview", 3, { ...target, render_receipt_id: "99999999-0000-4000-8000-000000000000", acknowledged: true }, created.campaign_id));
+    const approval = await repository.executeCommand(context, command("approve", 4, { ...target, preview_id: preview.created_ids.preview_ids[0], approved: true }, created.campaign_id));
+    const payload = { ...target, approval_id: approval.created_ids.approval_ids[0] };
+    await assert.rejects(() => repository.executeCommand(context, command("begin_manual_publication", 5, payload, created.campaign_id)), CampaignResourceError);
+
+    repository.resolveMedia = async () => mediaEvidence(assetId);
+    const attempt = await repository.executeCommand(context, command("begin_manual_publication", 5, payload, created.campaign_id, "publish_allowed"));
+    assert.equal(attempt.created_ids.attempt_ids.length, 1);
   });
 
   it("rejects malformed or oversized nested content before persistence", async () => {
