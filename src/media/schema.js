@@ -8,6 +8,8 @@ const mimeType = z.enum(["image/jpeg", "image/png", "image/webp", "video/mp4"]);
 const mediaReferenceRights = Object.freeze([
   "image.generate.reference",
   "video.generate.reference",
+  "campaign.preview",
+  "campaign.publish",
 ]);
 
 const MediaAssetSchema = z.object({
