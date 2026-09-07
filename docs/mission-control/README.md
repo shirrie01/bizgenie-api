@@ -17,9 +17,19 @@ The accepted historical pack is
 | Accepted Issue #39 verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
 | Campaign/calendar customer journey | GAP; not implemented/proven by the staging-generation verdict or the I-A contract |
 | BG-LAUNCH-002I-A | Accepted and merged through PR #54; its contract remains normative |
-| BG-LAUNCH-002I-B | Additive persistence implementation candidate in draft PR #55; unmerged, undeployed and not yet human-accepted |
+| BG-LAUNCH-002I-B | HOLD after independent review on 2026-09-07; draft PR #55 unmerged/undeployed; current CI green but ten additional contract probes fail; see I-B evidence |
 | Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [I-A evidence](../launch/CAMPAIGN_SPINE_EVIDENCE.md), [I-B evidence](../launch/CAMPAIGN_SPINE_PERSISTENCE_EVIDENCE.md) |
-| Exact restart point | Reconcile draft PR #55 and exact-head CI; complete human/architecture review and merge only with separate explicit authority. Then reverify main/Issue #51/open PRs before I-C; do not apply the migration to staging without separate authority |
+| Exact restart point | Resume I-B remediation of PR #55: re-fetch main/head/CI and Issue #51; resolve failure-state authority conflict; correct and prove review findings before a fresh independent review. No next phase or staging migration |
+
+Review baseline on 2026-09-07: canonical main remains
+`3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727`; one open PR (#55). The reviewed
+implementation head is `891a5fa512888e78e2c44e219033365bafbeca66`.
+Canonical names: I-B Additive Persistence; I-C Preview Registry; I-D Customer
+Brand-context Boundary; I-E Goal Recommendation; I-F Customer Campaign APIs.
+Proposed order for founder confirmation: **I-B → I-D → I-F → I-C → I-E → launch
+surfaces → field-sales pilot**. I-D establishes approved customer Brand ownership
+before customer APIs consume that context. No downstream implementation is authorised
+by this checkpoint; I-F preview-dependent behavior remains gated until I-C.
 
 Issue #51 / BG-LAUNCH-002 remains a separate parallel launch-preparation
 programme. It cannot alter BG-ACT-001 technical authority or authorise
@@ -108,3 +118,4 @@ New findings and validated improvements
 - Customer-facing strategic recommendations.
 
 Mission Control is internal-first. Customer-facing intelligence is considered only after the internal system has produced reliable evidence.
+
