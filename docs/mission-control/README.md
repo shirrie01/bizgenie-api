@@ -17,9 +17,10 @@ The accepted historical pack is
 | Accepted Issue #39 verdict | `STAGING GOLDEN JOURNEY PASSED — READY FOR CONTROLLED PAID-BETA DECISION` |
 | Campaign/calendar customer journey | GAP; not implemented/proven by the staging-generation verdict or the I-A contract |
 | BG-LAUNCH-002I-A | Accepted and merged through PR #54; its contract remains normative |
-| BG-LAUNCH-002I-B | Review findings remediated on 2026-09-07; local 475/475 full, 55/55 focused and 10/10 original review probes PASS with disposable PostgreSQL 17.10; PR #55 remains draft/unmerged pending fresh independent review and exact-head CI reconciliation |
+| BG-LAUNCH-002I-B | Accepted and merged through PR #55 at `8e71467ce23fb18867fbd0f0f08110a7272ad2c`; failed publication returns Approved, expires schedule, preserves approval, and requires explicit rescheduling |
+| BG-LAUNCH-002I-D | In progress from merged main; customer generation now requires an approved Brand Brain scoped to the authenticated tenant and project. Draft/archived/missing/cross-tenant brands fail closed. No staging or billing change |
 | Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [I-A evidence](../launch/CAMPAIGN_SPINE_EVIDENCE.md), [I-B evidence](../launch/CAMPAIGN_SPINE_PERSISTENCE_EVIDENCE.md) |
-| Exact restart point | Re-fetch PR #55/main/CI and Issue #51; independently review I-B remediation against authoritative v1.1 and regression evidence. Failure returns Approved, expires schedule and requires explicit rescheduling. PR remains draft/unmerged; no next phase or staging migration |
+| Exact restart point | Review and verify the I-D branch/PR, then proceed to I-F only after I-D acceptance. No shared migration or staging deployment is authorized by this checkpoint |
 
 Review baseline on 2026-09-07: canonical main remains
 `3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727`; one open PR (#55). The reviewed

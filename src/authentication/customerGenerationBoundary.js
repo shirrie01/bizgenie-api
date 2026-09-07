@@ -75,6 +75,7 @@ function createCustomerGenerationBoundary({
             projectId: body.project_id,
             brandId: body.brand_id,
             action: "generation:create",
+            requireApprovedBrand: true,
           })
         : await authorizationService.authorizeProject({
             actor,

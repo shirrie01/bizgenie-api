@@ -31,8 +31,9 @@ function fixture() {
       { project_id: "project_b", tenant_id: "tenant_b", name: "Project B" },
     ],
     brands: [
-      { brand_id: "brand_a", project_id: "project_a", name: "Brand A" },
-      { brand_id: "brand_b", project_id: "project_b", name: "Brand B" },
+      { brand_id: "brand_a", project_id: "project_a", name: "Brand A", status: "approved" },
+      { brand_id: "brand_b", project_id: "project_b", name: "Brand B", status: "approved" },
+      { brand_id: "brand_draft", project_id: "project_a", name: "Draft Brand", status: "draft" },
     ],
   });
 
@@ -101,6 +102,36 @@ describe("tenant, project, and brand authorization", () => {
     assert.equal(result.tenant_id, "tenant_a");
     assert.equal(result.project_id, "project_a");
     assert.equal(result.brand_id, "brand_a");
+    assert.equal(result.brand_status, "approved");
+  });
+
+  it("can require an approved brand context before customer execution", async () => {
+    const { service, actorA } = fixture();
+    const result = await service.authorizeProjectBrand({
+      actor: actorA,
+      tenantId: "tenant_a",
+      projectId: "project_a",
+      brandId: "brand_a",
+      action: "generation:create",
+    });
+
+    assert.equal(result.brand_id, "brand_a");
+    assert.equal(result.brand_status, "approved");
+  });
+
+  it("denies draft brands when an approved brand context is required", async () => {
+    const { service, actorA } = fixture();
+    await assert.rejects(
+      service.authorizeProjectBrand({
+        actor: actorA,
+        tenantId: "tenant_a",
+        projectId: "project_a",
+        brandId: "brand_draft",
+        action: "generation:create",
+      }),
+      (error) =>
+        error.status === 404 && error.code === "RESOURCE_NOT_AVAILABLE"
+    );
   });
 
   it("does not authorize Tenant A for Tenant B's project", async () => {

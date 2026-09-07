@@ -43,6 +43,14 @@ authority. Such request data is ignored and never appears in the bounded
 payload. Customer attempts to create or access another tenant's job remain
 denied by the existing customer authorization boundary.
 
+## I-D approved Brand requirement
+
+When a customer request includes `brand_id`, authorization must resolve that
+Brand Brain through the verified tenant and project and require `status = approved`
+before a generation job is created or a video status is read. Draft, archived,
+missing, and cross-tenant Brand Brains fail closed; request-body identity cannot
+override the server-resolved ownership chain.
+
 Unknown jobs, wrong service credentials, missing service scope, and jobs that
 do not authorize the required scope all return the same `403 Forbidden`
 response, without resource enumeration.

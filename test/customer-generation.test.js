@@ -53,8 +53,8 @@ function authorizationRepository() {
       { project_id: "project_b", tenant_id: "tenant_b", name: "Project B" },
     ],
     brands: [
-      { brand_id: "brand_a", project_id: "project_a", name: "Brand A" },
-      { brand_id: "brand_b", project_id: "project_b", name: "Brand B" },
+      { brand_id: "brand_a", project_id: "project_a", name: "Brand A", status: "approved" },
+      { brand_id: "brand_b", project_id: "project_b", name: "Brand B", status: "approved" },
     ],
   });
 }

@@ -90,3 +90,13 @@ Credit reservations and generation requests should reference both `tenant_id`
 and `project_id`; generated assets should also retain the originating
 generation request and project. Those systems are intentionally not created by
 BG-AUTH-002A.
+
+## I-D approved Brand boundary
+
+Customer generation requests that name a Brand Brain must resolve the full
+ownership chain server-side: authenticated actor, tenant membership, project
+ownership, and a Brand Brain belonging to that project with `status = approved`.
+Missing, draft, archived, or cross-tenant Brand Brains fail closed with the same
+resource-unavailable response. The generation action enforces this requirement
+centrally in `AuthorizationService`; callers cannot downgrade it by omitting an
+option. Campaigns continue to snapshot approved Brand context at creation.
