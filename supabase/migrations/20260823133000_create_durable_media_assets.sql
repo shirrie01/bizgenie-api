@@ -55,9 +55,11 @@ create table if not exists public.media_assets (
   constraint media_assets_allowed_uses_bounded check (
     allowed_uses <@ array[
       'image.generate.reference',
-      'video.generate.reference'
+      'video.generate.reference',
+      'campaign.preview',
+      'campaign.publish'
     ]::text[]
-    and cardinality(allowed_uses) <= 2
+    and cardinality(allowed_uses) <= 4
   )
 );
 
@@ -122,4 +124,4 @@ $$;
 comment on table public.media_assets is
   'Server-only durable Image/Video asset authority. Storage keys and generation ownership are immutable and never customer-selected.';
 comment on column public.media_assets.allowed_uses is
-  'Explicit server-owned rights allowlist checked before reference media is made provider-readable.';
+  'Explicit server-owned rights allowlist checked before campaign preview, campaign publication or reference media use.';
