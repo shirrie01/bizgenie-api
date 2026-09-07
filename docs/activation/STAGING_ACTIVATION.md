@@ -53,9 +53,10 @@ needed for the configured private media bucket, plus read access to the
 separately configured Veo output prefix. No bucket or provider resource is
 created by the application.
 
-Generated image assets are explicitly eligible for
-`image.generate.reference` and `video.generate.reference`. Generated videos
-receive no reference right. Revocation/deletion is represented by the durable
+Generated image assets are explicitly eligible for `image.generate.reference`,
+`video.generate.reference`, `campaign.preview` and `campaign.publish`. Generated videos
+receive `campaign.preview` and `campaign.publish`, but no reference right.
+Revocation/deletion is represented by the durable
 asset status; there is no customer delete endpoint in this activation layer.
 Bucket retention/lifecycle rules remain an operator-owned staging resource and
 must be reviewed before activation.
