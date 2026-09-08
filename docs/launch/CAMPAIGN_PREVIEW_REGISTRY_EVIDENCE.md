@@ -1,7 +1,7 @@
 # BG-LAUNCH-002I-C preview registry evidence
 
-**Status:** trusted preview registry and customer preview flow implemented
-on branch `bg-launch-002i-c-preview-registry`.
+**Status:** trusted preview registry and customer preview flow accepted and
+merged through PR #59.
 
 **Base:** merged `main` at `e112b5d0d28758579ede2fde88751d043b2c3aa0`.
 
@@ -33,8 +33,8 @@ in-memory registry with the same public contract.
 - `npm test`: 448/448 passed.
 - `npm run test:campaign:postgres`: skipped because `TEST_DATABASE_URL` is unset in this environment.
 
-Exact-head CI must be recorded after the branch is pushed. Disposable PostgreSQL
-integration requires `TEST_DATABASE_URL`.
+Exact-head CI passed on the merged PR before owner merge. Disposable PostgreSQL
+integration still requires `TEST_DATABASE_URL` for local reruns.
 
 ## Out of scope
 

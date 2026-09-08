@@ -12,6 +12,7 @@ const {
   CampaignVersionError,
 } = require("./errors");
 const { identifier, uuid } = require("./schema");
+const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
 
 const AUTHENTICATION_ERROR = Object.freeze({
   code: "AUTHENTICATION_REQUIRED",
@@ -30,6 +31,11 @@ const idempotencyKey = identifier;
 const expectedVersion = z.number().int().min(0).max(2147483647);
 const queryScope = z.object({ tenant_id: identifier, project_id: identifier }).strict();
 const bodyScope = queryScope.extend({ idempotency_key: idempotencyKey }).strict();
+const recommendationBody = bodyScope.extend({
+  brand_id: identifier,
+  goal: z.string(),
+  display_timezone: z.string().optional(),
+}).strict();
 
 const createCampaignBody = bodyScope.extend({
   brand_id: identifier,
@@ -428,7 +434,41 @@ function createCustomerCampaignRouter({
   return router;
 }
 
+function createCustomerCampaignRecommendationRouter({
+  recommendationRegistry = createDefaultGoalRecommendationRegistry(),
+  tokenVerifier,
+  authorizationService,
+  logger = console,
+}) {
+  if (!recommendationRegistry || !tokenVerifier || !authorizationService) {
+    throw new TypeError("Customer campaign recommendations require registry, token verifier and authorization service");
+  }
+  const router = express.Router();
+
+  router.post("/", async (req, res) => {
+    try {
+      const body = parse(recommendationBody, req.body);
+      const context = await authorize({
+        req,
+        tokenVerifier,
+        authorizationService,
+        tenantId: body.tenant_id,
+        projectId: body.project_id,
+        brandId: body.brand_id,
+        action: "project:read",
+      });
+      const recommendation = await recommendationRegistry.recommend(context, body);
+      return res.status(201).json({ recommendation });
+    } catch (error) {
+      return sendCampaignError(error, res, logger);
+    }
+  });
+
+  return router;
+}
+
 module.exports = {
+  createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
   safeCampaign,
 };
