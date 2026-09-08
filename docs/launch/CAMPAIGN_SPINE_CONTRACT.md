@@ -707,6 +707,19 @@ plus version; raw Brand snapshot, auth UUIDs, policy context, generation job IDs
 execution classes, hashes, provider/model fields, prompt internals, storage keys and
 financial internals stay server-side. Do not serialize repositories/events directly.
 
+I-E adds `POST /customer/campaign-recommendations` as a separate authenticated
+recommendation receipt boundary, not a campaign command and not a generation,
+billing or publishing action. The request contains tenant/project/brand scope,
+one goal, optional display timezone and an idempotency key. Authorization uses
+the same approved Brand Brain project boundary as campaign creation. Responses
+contain one safe recommendation, plain-language reasons for suggested items, an
+explicit not-enough-data fallback when no performance signal exists, and a
+bounded `create_campaign_payload` for the user's next action. Recommendation
+receipts are durable and replayable by requester/brand/idempotency key; changed
+intent under the same key is an idempotency conflict. Raw Brand snapshots, auth
+UUIDs, hashes, provider/model fields, prompt internals, lifecycle internals,
+publication details and financial internals remain server-side.
+
 ## 11. Stable error catalogue
 
 For this future customer boundary the exact failure envelope is:

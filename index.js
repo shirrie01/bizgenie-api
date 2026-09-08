@@ -78,6 +78,9 @@ const {
   PostgresCampaignRepository,
   createDefaultPreviewRegistry,
   PostgresPreviewRegistry,
+  createDefaultGoalRecommendationRegistry,
+  PostgresGoalRecommendationRegistry,
+  createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
 } = require("./src/campaigns");
 const {
@@ -247,6 +250,7 @@ function createApp({
   videoAssetStore = new UnconfiguredVideoAssetStore(),
   videoReferenceAssetLoader = new UnconfiguredVideoReferenceAssetLoader(),
   previewRegistry = createDefaultPreviewRegistry(),
+  goalRecommendationRegistry = createDefaultGoalRecommendationRegistry(),
   campaignRepository = new InMemoryCampaignRepository({
     resolvePreviewReceipt: (...args) => previewRegistry.resolvePreviewReceipt(...args),
     validatePreview: (...args) => previewRegistry.validatePreview(...args),
@@ -462,6 +466,16 @@ function createApp({
     })
   );
 
+  app.use(
+    "/customer/campaign-recommendations",
+    createCustomerCampaignRecommendationRouter({
+      recommendationRegistry: goalRecommendationRegistry,
+      tokenVerifier: customerTokenVerifier,
+      authorizationService: resolvedAuthorizationService,
+      logger,
+    })
+  );
+
   // Future bounded server-to-server execution seam. Customer generation is
   // currently executed in-process only after the mandatory job recorder
   // above succeeds; this route does not dispatch to Make or a provider.
@@ -484,6 +498,7 @@ function createApp({
         req.path.startsWith("/customer/generate-image") ||
         req.path.startsWith("/customer/generate-video") ||
         req.path.startsWith("/customer/generate-script") ||
+        req.path.startsWith("/customer/campaign-recommendations") ||
         req.path.startsWith("/customer/campaigns")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
@@ -536,7 +551,7 @@ function createApp({
         });
       }
 
-      if (req.path.startsWith("/customer/campaigns")) {
+      if (req.path.startsWith("/customer/campaigns") || req.path.startsWith("/customer/campaign-recommendations")) {
         return res.status(400).json({
           error: {
             code: "VALIDATION_ERROR",
@@ -596,6 +611,10 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     validatePreview: (...args) => previewRegistry.validatePreview(...args),
   });
   await campaignRepository.initialize();
+  const goalRecommendationRegistry = new PostgresGoalRecommendationRegistry({
+    pool: brandBrainRepository.pool,
+  });
+  await goalRecommendationRegistry.initialize();
   const billing = await createPostgresBillingProductionComposition({
     pool: brandBrainRepository.pool,
     env,
@@ -628,6 +647,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       videoGenerationRepository,
       campaignRepository,
       previewRegistry,
+      goalRecommendationRegistry,
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       paidBetaCaptureService: paidBeta.service,
@@ -644,6 +664,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     videoGenerationRepository,
     campaignRepository,
     previewRegistry,
+    goalRecommendationRegistry,
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,
     generationBillingOrchestrator: billing.generationBillingOrchestrator,
