@@ -29,7 +29,7 @@ in-memory registry with the same public contract.
 
 ## Verification
 
-- `node --test test/customer-campaigns.test.js test/campaign-preview-registry-migration.test.js test/campaign-spine-repository.test.js`: 21/21 passed.
+- `node --test test/campaign-preview-registry.test.js test/customer-campaigns.test.js test/campaign-preview-registry-migration.test.js test/campaign-spine-repository.test.js`: 22/22 passed.
 - `npm test`: 448/448 passed.
 - `npm run test:campaign:postgres`: skipped because `TEST_DATABASE_URL` is unset in this environment.
 

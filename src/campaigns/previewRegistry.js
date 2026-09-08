@@ -263,16 +263,6 @@ class PostgresPreviewRegistry {
     try {
       client = await this.pool.connect();
       await client.query("begin");
-      const existing = await client.query(`
-        select * from public.campaign_preview_render_receipts
-         where tenant_id = $1 and project_id = $2 and rendered_by = $3 and campaign_id = $4
-           and variant_id = $5 and revision_id = $6 and idempotency_key = $7
-         limit 1`,
-        [context.tenant_id, context.project_id, context.actor.auth_user_id, campaign.campaign_id, variantId, revisionId, idempotency_key]);
-      if (existing.rowCount) {
-        await client.query("commit");
-        return safeReceipt(existing.rows[0]);
-      }
       const profile = await this.activeProfile(client, {
         platform: variant.platform,
         placement: variant.placement,
@@ -320,13 +310,31 @@ class PostgresPreviewRegistry {
         idempotency_key,
       };
       const columns = Object.keys(receipt);
-      await client.query(
+      const result = await client.query(
         `insert into public.campaign_preview_render_receipts (${columns.map((key) => `"${key}"`).join(",")})
-         values (${columns.map((_, index) => `$${index + 1}`).join(",")})`,
+         values (${columns.map((_, index) => `$${index + 1}`).join(",")})
+         on conflict on constraint campaign_preview_render_receipts_identity_unique
+         do update set render_receipt_id = campaign_preview_render_receipts.render_receipt_id
+         returning *`,
         columns.map((key) => receipt[key]),
       );
+      const stored = result.rows[0];
+      if (
+        stored.revision_content_hash !== receipt.revision_content_hash ||
+        stored.profile_id !== receipt.profile_id ||
+        stored.profile_version !== receipt.profile_version ||
+        stored.profile_hash !== receipt.profile_hash ||
+        stored.platform !== receipt.platform ||
+        stored.placement !== receipt.placement ||
+        stored.format !== receipt.format ||
+        stored.renderer_version !== receipt.renderer_version ||
+        stored.render_input_hash !== receipt.render_input_hash ||
+        stored.preview_digest !== receipt.preview_digest
+      ) {
+        throw new CampaignValidationError();
+      }
       await client.query("commit");
-      return safeReceipt(receipt);
+      return safeReceipt(projectionTime(stored));
     } catch (error) {
       try { await client?.query("rollback"); } catch {}
       throw databaseError(error);
