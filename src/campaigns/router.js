@@ -133,10 +133,6 @@ function safeVariant(variant, item) {
     workflow: variant.workflow,
     current_revision_id: variant.current_revision_id,
     current_content: current?.content || null,
-    active_approval_id: variant.active_approval_id,
-    active_schedule_id: variant.active_schedule_id,
-    pending_attempt_id: variant.pending_attempt_id,
-    publication_id: variant.publication_id,
     updated_at: variant.updated_at,
   };
 }

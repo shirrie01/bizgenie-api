@@ -13,6 +13,17 @@ const { InMemoryCampaignRepository } = require("../src/campaigns");
 const ADMIN_KEY = "customer-campaign-admin-key";
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
+const FORBIDDEN_CUSTOMER_DTO_FIELDS = [
+  "active_approval_id",
+  "active_schedule_id",
+  "pending_attempt_id",
+  "publication_id",
+  "brand_snapshots",
+  "events",
+  "command_id",
+  "auth_user_id",
+  "private_positioning",
+];
 const IDS = Array.from(
   { length: 120 },
   (_, index) => `${String(index + 1).padStart(8, "0")}-0000-4000-8000-000000000000`
@@ -130,7 +141,9 @@ describe("customer campaign API", () => {
       label: "Create content item",
     });
     assert.equal(created.body.campaign.items.length, 0);
-    assert.doesNotMatch(JSON.stringify(created.body), /brand_snapshots|events|command_id|auth_user_id|private_positioning/);
+    for (const field of FORBIDDEN_CUSTOMER_DTO_FIELDS) {
+      assert.doesNotMatch(JSON.stringify(created.body), new RegExp(field));
+    }
 
     const listed = await customer(
       client.get("/customer/campaigns").query({ tenant_id: "tenant_a", project_id: "project_a" })
@@ -180,6 +193,10 @@ describe("customer campaign API", () => {
     assert.equal(item.body.campaign.items[0].variants[0].current_content.body, "A simple launch update.");
     assert.equal(item.body.campaign.items[0].variants[0].destination_label, "Instagram");
     assert.equal(item.body.campaign.items[0].variants[0].destination_key, undefined);
+    for (const field of FORBIDDEN_CUSTOMER_DTO_FIELDS) {
+      assert.equal(item.body.campaign.items[0].variants[0][field], undefined);
+      assert.doesNotMatch(JSON.stringify(item.body), new RegExp(field));
+    }
   });
 
   it("updates only customer-editable campaign details with idempotency and version protection", async () => {
@@ -212,7 +229,7 @@ describe("customer campaign API", () => {
     assert.equal(stale.body.error.code, "VERSION_CONFLICT");
   });
 
-  it("fails closed for missing auth, body identity spoofing, draft brands and cross-tenant reads", async () => {
+  it("fails closed for missing auth, body identity spoofing, draft brands and cross-tenant access", async () => {
     const client = fixture();
     const missing = await client.post("/customer/campaigns").send(createBody());
     assert.equal(missing.status, 401);
@@ -236,7 +253,36 @@ describe("customer campaign API", () => {
       }),
       "token-b"
     );
+    const foreignList = await customer(
+      client.get("/customer/campaigns").query({
+        tenant_id: "tenant_b",
+        project_id: "project_b",
+      })
+    );
+    const foreignParam = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/content-items`),
+      "token-b"
+    ).send({
+      tenant_id: "tenant_b",
+      project_id: "project_b",
+      idempotency_key: "foreign_item",
+      expected_campaign_version: 1,
+      name: "Foreign item",
+      format: "text",
+      platform: "instagram",
+      placement: "feed",
+      destination_label: "Instagram",
+      initial_content: {
+        title: null,
+        body: "Should not attach to another tenant campaign.",
+        caption: null,
+        alt_text: null,
+        asset_refs: [],
+      },
+    });
     assert.equal(foreignRead.status, 404);
+    assert.equal(foreignList.status, 404);
+    assert.equal(foreignParam.status, 404);
   });
 
   it("archives and restores without exposing an alternative lifecycle state", async () => {
