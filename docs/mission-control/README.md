@@ -18,9 +18,10 @@ The accepted historical pack is
 | Campaign/calendar customer journey | GAP; not implemented/proven by the staging-generation verdict or the I-A contract |
 | BG-LAUNCH-002I-A | Accepted and merged through PR #54; its contract remains normative |
 | BG-LAUNCH-002I-B | Accepted and merged through PR #55 at `8e71467ce23fb18867fbd0f0f08110a7272ad2c`; failed publication returns Approved, expires schedule, preserves approval, and requires explicit rescheduling |
-| BG-LAUNCH-002I-D | In progress from merged main; customer generation now requires an approved Brand Brain scoped to the authenticated tenant and project. Draft/archived/missing/cross-tenant brands fail closed. No staging or billing change |
-| Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [I-A evidence](../launch/CAMPAIGN_SPINE_EVIDENCE.md), [I-B evidence](../launch/CAMPAIGN_SPINE_PERSISTENCE_EVIDENCE.md) |
-| Exact restart point | Review and verify the I-D branch/PR, then proceed to I-F only after I-D acceptance. No shared migration or staging deployment is authorized by this checkpoint |
+| BG-LAUNCH-002I-D | Accepted and merged through PR #57 at `511933dd7b44faeb7770f1f2039721d46b6e800d`; customer generation requires an approved Brand Brain scoped to the authenticated tenant and project. Draft/archived/missing/cross-tenant brands fail closed. No staging or billing change |
+| BG-LAUNCH-002I-F | In progress on branch `bg-launch-002i-f-customer-campaign-apis`; customer campaign create/list/read/detail-update/item-create/archive/restore API surface is being added without preview registry, publishing, billing or deployment scope |
+| Contract and evidence | [Canonical campaign spine](../launch/CAMPAIGN_SPINE_CONTRACT.md), [acceptance and handoff](../launch/CAMPAIGN_SPINE_ACCEPTANCE.md), [I-A evidence](../launch/CAMPAIGN_SPINE_EVIDENCE.md), [I-B evidence](../launch/CAMPAIGN_SPINE_PERSISTENCE_EVIDENCE.md), [I-F evidence](../launch/CAMPAIGN_CUSTOMER_API_EVIDENCE.md) |
+| Exact restart point | Continue BG-LAUNCH-002I-F from merged main `511933dd7b44faeb7770f1f2039721d46b6e800d`. Verify customer campaign API coverage and exact-head CI before any review/merge decision. No shared migration or staging deployment is authorized by this checkpoint |
 
 Review baseline on 2026-09-07: canonical main remains
 `3b7ded9dc16dbeec5b9a13b27b2b8bc6814db727`; one open PR (#55). The reviewed

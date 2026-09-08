@@ -74,6 +74,11 @@ const {
   createServiceExecutionRouter,
 } = require("./src/service-execution");
 const {
+  InMemoryCampaignRepository,
+  PostgresCampaignRepository,
+  createCustomerCampaignRouter,
+} = require("./src/campaigns");
+const {
   createPaidBetaProductionComposition,
   createPaidBetaRouter,
 } = require("./src/paid-beta");
@@ -239,6 +244,7 @@ function createApp({
   videoProvider = new UnconfiguredVideoGenerationProvider(),
   videoAssetStore = new UnconfiguredVideoAssetStore(),
   videoReferenceAssetLoader = new UnconfiguredVideoReferenceAssetLoader(),
+  campaignRepository = new InMemoryCampaignRepository(),
   branding = brandingConfig,
   scriptGenerator = generateScriptWithVertex,
   authorizationRepository = new InMemoryAuthorizationRepository(),
@@ -439,6 +445,16 @@ function createApp({
     customerVideoRouter
   );
 
+  app.use(
+    "/customer/campaigns",
+    createCustomerCampaignRouter({
+      repository: campaignRepository,
+      tokenVerifier: customerTokenVerifier,
+      authorizationService: resolvedAuthorizationService,
+      logger,
+    })
+  );
+
   // Future bounded server-to-server execution seam. Customer generation is
   // currently executed in-process only after the mandatory job recorder
   // above succeeds; this route does not dispatch to Make or a provider.
@@ -460,7 +476,8 @@ function createApp({
         req.path.startsWith("/generate-video") ||
         req.path.startsWith("/customer/generate-image") ||
         req.path.startsWith("/customer/generate-video") ||
-        req.path.startsWith("/customer/generate-script")) &&
+        req.path.startsWith("/customer/generate-script") ||
+        req.path.startsWith("/customer/campaigns")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
       Object.hasOwn(error, "body")
@@ -512,6 +529,15 @@ function createApp({
         });
       }
 
+      if (req.path.startsWith("/customer/campaigns")) {
+        return res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "Malformed JSON request body",
+          },
+        });
+      }
+
       return res.status(400).json({
         error: {
           code: "VALIDATION_ERROR",
@@ -553,6 +579,10 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     pool: brandBrainRepository.pool,
   });
   await videoGenerationRepository.initialize();
+  const campaignRepository = new PostgresCampaignRepository({
+    pool: brandBrainRepository.pool,
+  });
+  await campaignRepository.initialize();
   const billing = await createPostgresBillingProductionComposition({
     pool: brandBrainRepository.pool,
     env,
@@ -583,6 +613,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
       imageProvider: media.imageProvider,
       videoGenerationRepository,
+      campaignRepository,
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       paidBetaCaptureService: paidBeta.service,
@@ -597,6 +628,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     customerTokenVerifier,
     generationJobRepository,
     videoGenerationRepository,
+    campaignRepository,
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,
     generationBillingOrchestrator: billing.generationBillingOrchestrator,
