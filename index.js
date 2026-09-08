@@ -76,6 +76,8 @@ const {
 const {
   InMemoryCampaignRepository,
   PostgresCampaignRepository,
+  createDefaultPreviewRegistry,
+  PostgresPreviewRegistry,
   createCustomerCampaignRouter,
 } = require("./src/campaigns");
 const {
@@ -244,7 +246,11 @@ function createApp({
   videoProvider = new UnconfiguredVideoGenerationProvider(),
   videoAssetStore = new UnconfiguredVideoAssetStore(),
   videoReferenceAssetLoader = new UnconfiguredVideoReferenceAssetLoader(),
-  campaignRepository = new InMemoryCampaignRepository(),
+  previewRegistry = createDefaultPreviewRegistry(),
+  campaignRepository = new InMemoryCampaignRepository({
+    resolvePreviewReceipt: (...args) => previewRegistry.resolvePreviewReceipt(...args),
+    validatePreview: (...args) => previewRegistry.validatePreview(...args),
+  }),
   branding = brandingConfig,
   scriptGenerator = generateScriptWithVertex,
   authorizationRepository = new InMemoryAuthorizationRepository(),
@@ -449,6 +455,7 @@ function createApp({
     "/customer/campaigns",
     createCustomerCampaignRouter({
       repository: campaignRepository,
+      previewRegistry,
       tokenVerifier: customerTokenVerifier,
       authorizationService: resolvedAuthorizationService,
       logger,
@@ -579,8 +586,14 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     pool: brandBrainRepository.pool,
   });
   await videoGenerationRepository.initialize();
+  const previewRegistry = new PostgresPreviewRegistry({
+    pool: brandBrainRepository.pool,
+  });
+  await previewRegistry.initialize();
   const campaignRepository = new PostgresCampaignRepository({
     pool: brandBrainRepository.pool,
+    resolvePreviewReceipt: (...args) => previewRegistry.resolvePreviewReceipt(...args),
+    validatePreview: (...args) => previewRegistry.validatePreview(...args),
   });
   await campaignRepository.initialize();
   const billing = await createPostgresBillingProductionComposition({
@@ -614,6 +627,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       imageProvider: media.imageProvider,
       videoGenerationRepository,
       campaignRepository,
+      previewRegistry,
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       paidBetaCaptureService: paidBeta.service,
@@ -629,6 +643,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     generationJobRepository,
     videoGenerationRepository,
     campaignRepository,
+    previewRegistry,
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,
     generationBillingOrchestrator: billing.generationBillingOrchestrator,

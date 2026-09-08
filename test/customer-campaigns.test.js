@@ -8,7 +8,7 @@ const {
   InMemoryAuthorizationRepository,
   createCustomerActorFromVerifiedIdentity,
 } = require("../src/authorization");
-const { InMemoryCampaignRepository } = require("../src/campaigns");
+const { InMemoryCampaignRepository, InMemoryPreviewRegistry } = require("../src/campaigns");
 
 const ADMIN_KEY = "customer-campaign-admin-key";
 const USER_A = "11111111-1111-4111-8111-111111111111";
@@ -67,12 +67,22 @@ function authorizationRepository() {
   });
 }
 
-function campaignRepository() {
+function previewRegistry() {
+  let id = 80;
+  return new InMemoryPreviewRegistry({
+    now: () => new Date("2026-09-08T12:00:00.000Z"),
+    idFactory: () => IDS[id++],
+  });
+}
+
+function campaignRepository(registry) {
   let id = 0;
   return new InMemoryCampaignRepository({
     now: () => new Date("2026-09-08T12:00:00.000Z"),
     idFactory: () => IDS[id++],
     authorize: async () => true,
+    resolvePreviewReceipt: (...args) => registry.resolvePreviewReceipt(...args),
+    validatePreview: (...args) => registry.validatePreview(...args),
     captureBrandSnapshot: async (context, brandId) => {
       if (
         context.tenant_id !== "tenant_a" ||
@@ -98,9 +108,11 @@ function campaignRepository() {
 }
 
 function fixture() {
+  const registry = previewRegistry();
   const app = createApp({
     authorizationRepository: authorizationRepository(),
-    campaignRepository: campaignRepository(),
+    campaignRepository: campaignRepository(registry),
+    previewRegistry: registry,
     customerTokenVerifier: new FixtureTokenVerifier(),
     logger: { info() {}, warn() {}, error() {} },
   });
@@ -197,6 +209,104 @@ describe("customer campaign API", () => {
       assert.equal(item.body.campaign.items[0].variants[0][field], undefined);
       assert.doesNotMatch(JSON.stringify(item.body), new RegExp(field));
     }
+  });
+
+  it("renders, acknowledges and approves through the preview registry", async () => {
+    const client = fixture();
+    const created = await customer(client.post("/customer/campaigns")).send(createBody());
+    const item = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/content-items`)
+    ).send({
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      idempotency_key: "preview_item",
+      expected_campaign_version: 1,
+      name: "Instagram post",
+      format: "text",
+      platform: "instagram",
+      placement: "feed",
+      destination_label: "Instagram",
+      initial_content: {
+        title: null,
+        body: "A simple launch update.",
+        caption: null,
+        alt_text: null,
+        asset_refs: [],
+      },
+    });
+    const variant = item.body.campaign.items[0].variants[0];
+
+    const earlyRender = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/variants/${variant.variant_id}/preview-renders`)
+    ).send({
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      idempotency_key: "render_too_early",
+      revision_id: variant.current_revision_id,
+    });
+    const review = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/variants/${variant.variant_id}/review`)
+    ).send({
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      idempotency_key: "submit_review",
+      expected_campaign_version: 2,
+      revision_id: variant.current_revision_id,
+    });
+    const render = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/variants/${variant.variant_id}/preview-renders`)
+    ).send({
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      idempotency_key: "render_preview",
+      revision_id: variant.current_revision_id,
+    });
+    const renderReplay = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/variants/${variant.variant_id}/preview-renders`)
+    ).send({
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      idempotency_key: "render_preview",
+      revision_id: variant.current_revision_id,
+    });
+    const acknowledge = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/variants/${variant.variant_id}/preview-acknowledgements`)
+    ).send({
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      idempotency_key: "ack_preview",
+      expected_campaign_version: 3,
+      revision_id: variant.current_revision_id,
+      render_receipt_id: render.body.preview.render_receipt_id,
+      acknowledged: true,
+    });
+    const previewId = acknowledge.body.result.created_ids.preview_ids[0];
+    const approve = await customer(
+      client.post(`/customer/campaigns/${created.body.campaign.campaign_id}/variants/${variant.variant_id}/approval`)
+    ).send({
+      tenant_id: "tenant_a",
+      project_id: "project_a",
+      idempotency_key: "approve_preview",
+      expected_campaign_version: 4,
+      revision_id: variant.current_revision_id,
+      preview_id: previewId,
+      approved: true,
+    });
+
+    assert.equal(earlyRender.status, 409);
+    assert.equal(review.status, 200);
+    assert.equal(review.body.campaign.items[0].variants[0].workflow, "review");
+    assert.equal(render.status, 201);
+    assert.deepEqual(renderReplay.body.preview, render.body.preview);
+    assert.equal(render.body.preview.platform, "instagram");
+    assert.equal(render.body.preview.placement, "feed");
+    assert.equal(render.body.preview.format, "text");
+    assert.equal(render.body.preview.render_input_hash, undefined);
+    assert.equal(render.body.preview.profile_hash, undefined);
+    assert.equal(acknowledge.status, 200);
+    assert.equal(approve.status, 200);
+    assert.equal(approve.body.campaign.status, "approved");
+    assert.equal(approve.body.campaign.items[0].variants[0].workflow, "approved");
   });
 
   it("updates only customer-editable campaign details with idempotency and version protection", async () => {

@@ -56,6 +56,25 @@ const archiveBody = bodyScope.extend({
   expected_campaign_version: expectedVersion,
   reason: z.string(),
 }).strict();
+const reviewBody = bodyScope.extend({
+  expected_campaign_version: expectedVersion,
+  revision_id: uuid,
+}).strict();
+const previewRenderBody = bodyScope.extend({
+  revision_id: uuid,
+}).strict();
+const acknowledgePreviewBody = bodyScope.extend({
+  expected_campaign_version: expectedVersion,
+  revision_id: uuid,
+  render_receipt_id: uuid,
+  acknowledged: z.literal(true),
+}).strict();
+const approveBody = bodyScope.extend({
+  expected_campaign_version: expectedVersion,
+  revision_id: uuid,
+  preview_id: uuid,
+  approved: z.literal(true),
+}).strict();
 
 function extractBearerToken(authorizationHeader) {
   if (typeof authorizationHeader !== "string") throw new AuthenticationRequiredError();
@@ -204,6 +223,7 @@ function sendCampaignError(error, res, logger) {
 
 function createCustomerCampaignRouter({
   repository,
+  previewRegistry,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -295,6 +315,91 @@ function createCustomerCampaignRouter({
         },
       }));
       return res.status(201).json({ result: safeResult(result), campaign: safeCampaign(await repository.getCampaign(context, campaignId), { detail: true }) });
+    } catch (error) {
+      return sendCampaignError(error, res, logger);
+    }
+  });
+
+  router.post("/:campaignId/variants/:variantId/review", async (req, res) => {
+    try {
+      const body = parse(reviewBody, req.body);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+      const result = await repository.executeCommand(context, command({
+        body,
+        campaignId,
+        commandType: "submit_review",
+        expectedVersion: body.expected_campaign_version,
+        payload: { variant_id: variantId, revision_id: body.revision_id },
+      }));
+      return res.json({ result: safeResult(result), campaign: safeCampaign(await repository.getCampaign(context, campaignId), { detail: true }) });
+    } catch (error) {
+      return sendCampaignError(error, res, logger);
+    }
+  });
+
+  router.post("/:campaignId/variants/:variantId/preview-renders", async (req, res) => {
+    try {
+      if (!previewRegistry) throw new CampaignPersistenceError();
+      const body = parse(previewRenderBody, req.body);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+      const receipt = await previewRegistry.renderPreview(context, await repository.getCampaign(context, campaignId), {
+        variant_id: variantId,
+        revision_id: body.revision_id,
+        idempotency_key: body.idempotency_key,
+      });
+      return res.status(201).json({ preview: receipt });
+    } catch (error) {
+      return sendCampaignError(error, res, logger);
+    }
+  });
+
+  router.post("/:campaignId/variants/:variantId/preview-acknowledgements", async (req, res) => {
+    try {
+      const body = parse(acknowledgePreviewBody, req.body);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+      const result = await repository.executeCommand(context, command({
+        body,
+        campaignId,
+        commandType: "acknowledge_preview",
+        expectedVersion: body.expected_campaign_version,
+        payload: {
+          variant_id: variantId,
+          revision_id: body.revision_id,
+          render_receipt_id: body.render_receipt_id,
+          acknowledged: true,
+        },
+      }));
+      return res.json({ result: safeResult(result), campaign: safeCampaign(await repository.getCampaign(context, campaignId), { detail: true }) });
+    } catch (error) {
+      return sendCampaignError(error, res, logger);
+    }
+  });
+
+  router.post("/:campaignId/variants/:variantId/approval", async (req, res) => {
+    try {
+      const body = parse(approveBody, req.body);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+      const result = await repository.executeCommand(context, command({
+        body,
+        campaignId,
+        commandType: "approve",
+        expectedVersion: body.expected_campaign_version,
+        payload: {
+          variant_id: variantId,
+          revision_id: body.revision_id,
+          preview_id: body.preview_id,
+          approved: true,
+        },
+      }));
+      return res.json({ result: safeResult(result), campaign: safeCampaign(await repository.getCampaign(context, campaignId), { detail: true }) });
     } catch (error) {
       return sendCampaignError(error, res, logger);
     }
