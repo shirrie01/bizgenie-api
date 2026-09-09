@@ -1,6 +1,7 @@
 const { createClient } = require("@supabase/supabase-js");
 const {
   AuthenticationRequiredError,
+  CustomerTrustedScopeSchema,
   createCustomerActorFromVerifiedIdentity,
 } = require("../authorization");
 
@@ -51,6 +52,17 @@ function validAudience(value, expectedAudience) {
   return value === expectedAudience;
 }
 
+function trustedScopeFromClaims(claims) {
+  const appMetadata = claims?.app_metadata || {};
+  const parsed = CustomerTrustedScopeSchema.safeParse({
+    tenant_id: appMetadata.tenant_id,
+    project_id: appMetadata.project_id,
+    brand_id: appMetadata.brand_id,
+  });
+  if (!parsed.success) throw authenticationRequired();
+  return parsed.data;
+}
+
 class SupabaseCustomerTokenVerifier extends CustomerTokenVerifier {
   constructor({
     supabaseClient,
@@ -97,6 +109,7 @@ class SupabaseCustomerTokenVerifier extends CustomerTokenVerifier {
 
     return createCustomerActorFromVerifiedIdentity({
       verifiedAuthUserId: claims.sub,
+      verifiedScope: trustedScopeFromClaims(claims),
     });
   }
 }
@@ -148,4 +161,5 @@ module.exports = {
   UnconfiguredCustomerTokenVerifier,
   createSupabaseCustomerTokenVerifierFromEnv,
   normalizedProjectUrl,
+  trustedScopeFromClaims,
 };

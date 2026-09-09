@@ -9,10 +9,19 @@ const identifier = z
   .max(IDENTIFIER_MAX_LENGTH)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, "Invalid identifier");
 
+const CustomerTrustedScopeSchema = z
+  .object({
+    tenant_id: identifier,
+    project_id: identifier,
+    brand_id: identifier,
+  })
+  .strict();
+
 const CustomerActorSchema = z
   .object({
     kind: z.literal("customer"),
     auth_user_id: z.uuid(),
+    trusted_scope: CustomerTrustedScopeSchema.optional(),
   })
   .strict();
 
@@ -36,11 +45,17 @@ const ActorSchema = z.discriminatedUnion("kind", [
   AdministratorActorSchema,
 ]);
 
-function createCustomerActorFromVerifiedIdentity({ verifiedAuthUserId } = {}) {
-  const parsed = CustomerActorSchema.safeParse({
+function createCustomerActorFromVerifiedIdentity({
+  verifiedAuthUserId,
+  verifiedScope,
+} = {}) {
+  const candidate = {
     kind: "customer",
     auth_user_id: verifiedAuthUserId,
-  });
+  };
+  if (verifiedScope) candidate.trusted_scope = verifiedScope;
+
+  const parsed = CustomerActorSchema.safeParse(candidate);
 
   if (!parsed.success) {
     throw new AuthenticationRequiredError();
@@ -53,6 +68,7 @@ module.exports = {
   ActorSchema,
   AdministratorActorSchema,
   CustomerActorSchema,
+  CustomerTrustedScopeSchema,
   IDENTIFIER_MAX_LENGTH,
   ServiceActorSchema,
   createCustomerActorFromVerifiedIdentity,

@@ -11,6 +11,11 @@ const {
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
+const TRUSTED_SCOPE_A = Object.freeze({
+  tenant_id: "tenant_a",
+  project_id: "project_a",
+  brand_id: "brand_a",
+});
 
 function fixture() {
   const repository = new InMemoryAuthorizationRepository({
@@ -46,6 +51,10 @@ function fixture() {
     actorB: createCustomerActorFromVerifiedIdentity({
       verifiedAuthUserId: USER_B,
     }),
+    scopedActorA: createCustomerActorFromVerifiedIdentity({
+      verifiedAuthUserId: USER_A,
+      verifiedScope: TRUSTED_SCOPE_A,
+    }),
   };
 }
 
@@ -55,6 +64,19 @@ describe("customer identity contract", () => {
       verifiedAuthUserId: USER_A,
     });
     assert.deepEqual(actor, { kind: "customer", auth_user_id: USER_A });
+    assert.equal(Object.isFrozen(actor), true);
+  });
+
+  it("can carry trusted Supabase app_metadata scope when token verification supplies it", () => {
+    const actor = createCustomerActorFromVerifiedIdentity({
+      verifiedAuthUserId: USER_A,
+      verifiedScope: TRUSTED_SCOPE_A,
+    });
+    assert.deepEqual(actor, {
+      kind: "customer",
+      auth_user_id: USER_A,
+      trusted_scope: TRUSTED_SCOPE_A,
+    });
     assert.equal(Object.isFrozen(actor), true);
   });
 
@@ -132,6 +154,49 @@ describe("tenant, project, and brand authorization", () => {
       (error) =>
         error.status === 404 && error.code === "RESOURCE_NOT_AVAILABLE"
     );
+  });
+
+  it("denies requests whose tenant, project, or brand do not match trusted token scope", async () => {
+    const { service, scopedActorA } = fixture();
+
+    await service.authorizeProjectBrand({
+      actor: scopedActorA,
+      tenantId: "tenant_a",
+      projectId: "project_a",
+      brandId: "brand_a",
+      action: "brand:read",
+    });
+
+    for (const request of [
+      {
+        actor: scopedActorA,
+        tenantId: "tenant_b",
+        projectId: "project_b",
+        action: "project:read",
+      },
+      {
+        actor: scopedActorA,
+        tenantId: "tenant_a",
+        projectId: "project_b",
+        action: "project:read",
+      },
+      {
+        actor: scopedActorA,
+        tenantId: "tenant_a",
+        projectId: "project_a",
+        brandId: "brand_b",
+        action: "brand:read",
+      },
+    ]) {
+      await assert.rejects(
+        request.brandId
+          ? service.authorizeProjectBrand(request)
+          : service.authorizeProject(request),
+        (error) =>
+          error instanceof AuthorizationDeniedError &&
+          error.code === "RESOURCE_NOT_AVAILABLE"
+      );
+    }
   });
 
   it("does not authorize Tenant A for Tenant B's project", async () => {

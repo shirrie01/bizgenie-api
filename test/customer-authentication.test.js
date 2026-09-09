@@ -15,6 +15,11 @@ const {
 const PROJECT_URL = "https://bizgenie-test.supabase.co";
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const NOW = new Date("2026-08-19T12:00:00.000Z");
+const TRUSTED_SCOPE = Object.freeze({
+  tenant_id: "tenant_a",
+  project_id: "project_a",
+  brand_id: "brand_a",
+});
 
 function verifiedClaims(overrides = {}) {
   return {
@@ -24,6 +29,7 @@ function verifiedClaims(overrides = {}) {
     exp: Math.floor(NOW.getTime() / 1000) + 300,
     iat: Math.floor(NOW.getTime() / 1000) - 60,
     role: "authenticated",
+    app_metadata: { ...TRUSTED_SCOPE },
     ...overrides,
   };
 }
@@ -50,6 +56,7 @@ describe("Supabase customer token verification", () => {
     assert.deepEqual(actor, {
       kind: "customer",
       auth_user_id: USER_A,
+      trusted_scope: TRUSTED_SCOPE,
     });
     assert.equal(Object.isFrozen(actor), true);
   });
@@ -106,6 +113,45 @@ describe("Supabase customer token verification", () => {
         AuthenticationRequiredError
       );
     }
+  });
+
+  it("rejects tokens without complete service-role-assigned app_metadata scope", async () => {
+    for (const overrides of [
+      { app_metadata: undefined },
+      { app_metadata: {} },
+      { app_metadata: { tenant_id: "tenant_a", project_id: "project_a" } },
+      { app_metadata: { tenant_id: "tenant a", project_id: "project_a", brand_id: "brand_a" } },
+    ]) {
+      const verifier = verifierWith(async () => ({
+        data: { claims: verifiedClaims(overrides) },
+        error: null,
+      }));
+      await assert.rejects(
+        verifier.verifyAccessToken("missing-scope-token"),
+        AuthenticationRequiredError
+      );
+    }
+  });
+
+  it("ignores user-editable user_metadata even when it contains plausible scope fields", async () => {
+    const verifier = verifierWith(async () => ({
+      data: {
+        claims: verifiedClaims({
+          app_metadata: {},
+          user_metadata: {
+            tenant_id: "tenant_a",
+            project_id: "project_a",
+            brand_id: "brand_a",
+          },
+        }),
+      },
+      error: null,
+    }));
+
+    await assert.rejects(
+      verifier.verifyAccessToken("user-metadata-only-token"),
+      AuthenticationRequiredError
+    );
   });
 
   it("strictly extracts a single Bearer token", () => {
