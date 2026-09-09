@@ -48,6 +48,36 @@ Both variables must be configured together. With neither configured, customer
 authentication remains fail-closed while existing administration continues to
 start. A partial or insecure configuration fails startup.
 
+## Trusted scope provisioning boundary
+
+BG-LAUNCH-002K adds a server-only provisioning helper for the backend/operator
+process that assigns the verified tenant/project/brand scope to a Supabase Auth
+user. The helper is not mounted as a public route and does not read credentials
+from browser-visible environment variables. A caller must inject a Supabase Auth
+admin client that is allowed to call `auth.admin.getUserById` and
+`auth.admin.updateUserById` from a trusted server context.
+
+The provisioner accepts only:
+
+- `auth_user_id`
+- `trusted_scope.tenant_id`
+- `trusted_scope.project_id`
+- `trusted_scope.brand_id`
+
+The request schema is strict. `user_metadata`, request-body identity fields,
+admin keys, provider credentials, billing state, publication state, and campaign
+payload fields are rejected by construction and never forwarded to Supabase. The
+helper fetches the existing Auth user, preserves existing object-shaped
+`app_metadata`, overlays the three BizGenie trusted-scope fields, and writes the
+result back as `app_metadata` only. Supabase/provider failures are converted to a
+single sanitized provisioning error.
+
+This proof does not create customers, apply migrations, mutate staging or
+production Supabase Auth, activate W4A billable generation, or decide the final
+account onboarding UX. A later operator-gated account setup flow must call the
+helper only after durable BizGenie tenant, project, membership, and approved
+Brand Brain records have been established.
+
 ## Principal separation
 
 - Customer: verified Supabase Auth UUID plus trusted `app_metadata` scope.
