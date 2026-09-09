@@ -61,6 +61,7 @@ describe("customer trusted scope provisioning", () => {
     assert.deepEqual(result, {
       auth_user_id: USER_A,
       trusted_scope: TRUSTED_SCOPE,
+      requires_session_refresh: true,
     });
     assert.deepEqual(calls, [
       ["getUserById", USER_A],
@@ -78,6 +79,18 @@ describe("customer trusted scope provisioning", () => {
         },
       ],
     ]);
+  });
+
+  it("signals that existing customer JWTs must be refreshed before API use", async () => {
+    const { client } = adminClient();
+    const provisioner = createCustomerScopeProvisioner({ supabaseAdminClient: client });
+
+    const result = await provisioner.provisionTrustedScope({
+      auth_user_id: USER_A,
+      trusted_scope: TRUSTED_SCOPE,
+    });
+
+    assert.equal(result.requires_session_refresh, true);
   });
 
   it("does not write user_metadata or accept client-supplied extra fields", async () => {
