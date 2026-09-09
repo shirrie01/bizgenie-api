@@ -72,11 +72,21 @@ helper fetches the existing Auth user, preserves existing object-shaped
 result back as `app_metadata` only. Supabase/provider failures are converted to a
 single sanitized provisioning error.
 
+After a successful write, existing customer access tokens must be treated as
+stale because their JWT claims may not yet contain the new `app_metadata` scope.
+The provisioner therefore returns `requires_session_refresh: true`. The
+operator/account-setup flow must refresh or reissue the Supabase customer
+session, or require the customer to sign in again, before attempting any
+BizGenie customer API request. Until the refreshed token carries the trusted
+scope, the web client remains `scope-missing` and the API continues to fail
+closed with `AUTHENTICATION_REQUIRED`.
+
 This proof does not create customers, apply migrations, mutate staging or
 production Supabase Auth, activate W4A billable generation, or decide the final
 account onboarding UX. A later operator-gated account setup flow must call the
 helper only after durable BizGenie tenant, project, membership, and approved
-Brand Brain records have been established.
+Brand Brain records have been established, then complete the session-refresh
+step before handing control back to the launch surface.
 
 ## Principal separation
 
