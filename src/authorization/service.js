@@ -6,6 +6,14 @@ function deny() {
   throw new AuthorizationDeniedError();
 }
 
+function scopeMismatch(actor, expected = {}) {
+  const scope = actor.trusted_scope;
+  if (!scope) return false;
+  return Object.entries(expected).some(
+    ([key, value]) => value !== undefined && scope[key] !== value
+  );
+}
+
 class AuthorizationService {
   constructor({ repository }) {
     if (!repository) {
@@ -17,6 +25,10 @@ class AuthorizationService {
   async authorizeTenant({ actor, tenantId, action }) {
     const parsedActor = ActorSchema.safeParse(actor);
     if (!parsedActor.success || parsedActor.data.kind !== "customer") {
+      return deny();
+    }
+
+    if (scopeMismatch(parsedActor.data, { tenant_id: tenantId })) {
       return deny();
     }
 
@@ -47,7 +59,11 @@ class AuthorizationService {
     });
     const project = await this.repository.getProjectById(projectId);
 
-    if (!project || project.tenant_id !== tenantId) {
+    if (
+      !project ||
+      project.tenant_id !== tenantId ||
+      scopeMismatch(tenantAuthorization.actor, { project_id: projectId })
+    ) {
       return deny();
     }
 
@@ -78,7 +94,11 @@ class AuthorizationService {
 
     const approvedBrandRequired =
       requireApprovedBrand || action === "generation:create";
-    if (!brand || (approvedBrandRequired && brand.status !== "approved")) {
+    if (
+      !brand ||
+      (approvedBrandRequired && brand.status !== "approved") ||
+      scopeMismatch(projectAuthorization.actor, { brand_id: brandId })
+    ) {
       return deny();
     }
 
