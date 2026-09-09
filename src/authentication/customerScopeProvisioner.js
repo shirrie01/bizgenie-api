@@ -97,6 +97,7 @@ class CustomerScopeProvisioner {
     return Object.freeze({
       auth_user_id,
       trusted_scope,
+      requires_session_refresh: true,
     });
   }
 }
