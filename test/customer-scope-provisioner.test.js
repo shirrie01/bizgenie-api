@@ -5,7 +5,9 @@ const {
   CustomerScopeProvisioningConfigurationError,
   CustomerScopeProvisioningError,
   createCustomerScopeProvisioner,
+  createCustomerScopeProvisionerFromEnv,
   trustedAppMetadata,
+  UnconfiguredCustomerScopeProvisioner,
 } = require("../src/authentication");
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
@@ -148,6 +150,45 @@ describe("customer trusted scope provisioning", () => {
         CustomerScopeProvisioningConfigurationError
       );
     }
+  });
+
+  it("builds an admin client from server-only Supabase configuration", () => {
+    let clientArguments;
+    const provisioner = createCustomerScopeProvisionerFromEnv({
+      env: {
+        SUPABASE_URL: "https://bizgenie-test.supabase.co/",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      },
+      createClientImpl(...args) {
+        clientArguments = args;
+        return adminClient().client;
+      },
+    });
+
+    assert.deepEqual(clientArguments, [
+      "https://bizgenie-test.supabase.co",
+      "service-role-key",
+      {
+        auth: {
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+          persistSession: false,
+        },
+      },
+    ]);
+    assert.equal(typeof provisioner.provisionTrustedScope, "function");
+  });
+
+  it("fails closed when trusted scope provisioning is unconfigured", async () => {
+    const provisioner = createCustomerScopeProvisionerFromEnv({ env: {} });
+    assert.ok(provisioner instanceof UnconfiguredCustomerScopeProvisioner);
+    await assert.rejects(
+      provisioner.provisionTrustedScope({
+        auth_user_id: USER_A,
+        trusted_scope: TRUSTED_SCOPE,
+      }),
+      CustomerScopeProvisioningError
+    );
   });
 
   it("returns sanitized failures without leaking provider diagnostics", async () => {
