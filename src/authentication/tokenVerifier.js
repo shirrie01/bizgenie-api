@@ -19,6 +19,10 @@ class CustomerTokenVerifier {
   verifyAccessToken(_accessToken) {
     throw new Error("CustomerTokenVerifier.verifyAccessToken is not implemented");
   }
+
+  verifyIdentityAccessToken(accessToken) {
+    return this.verifyAccessToken(accessToken);
+  }
 }
 
 function authenticationRequired() {
@@ -80,7 +84,7 @@ class SupabaseCustomerTokenVerifier extends CustomerTokenVerifier {
     this.now = now;
   }
 
-  async verifyAccessToken(accessToken) {
+  async verifyClaims(accessToken) {
     if (typeof accessToken !== "string" || !accessToken.trim()) {
       throw authenticationRequired();
     }
@@ -107,6 +111,18 @@ class SupabaseCustomerTokenVerifier extends CustomerTokenVerifier {
       throw authenticationRequired();
     }
 
+    return claims;
+  }
+
+  async verifyIdentityAccessToken(accessToken) {
+    const claims = await this.verifyClaims(accessToken);
+    return createCustomerActorFromVerifiedIdentity({
+      verifiedAuthUserId: claims.sub,
+    });
+  }
+
+  async verifyAccessToken(accessToken) {
+    const claims = await this.verifyClaims(accessToken);
     return createCustomerActorFromVerifiedIdentity({
       verifiedAuthUserId: claims.sub,
       verifiedScope: trustedScopeFromClaims(claims),
