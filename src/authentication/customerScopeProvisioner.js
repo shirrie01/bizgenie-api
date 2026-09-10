@@ -1,5 +1,7 @@
 const { z } = require("zod");
+const { createClient } = require("@supabase/supabase-js");
 const { CustomerTrustedScopeSchema } = require("../authorization");
+const { normalizedProjectUrl } = require("./tokenVerifier");
 
 class CustomerScopeProvisioningConfigurationError extends Error {
   constructor(message) {
@@ -102,8 +104,41 @@ class CustomerScopeProvisioner {
   }
 }
 
+class UnconfiguredCustomerScopeProvisioner {
+  async provisionTrustedScope() {
+    throw new CustomerScopeProvisioningError();
+  }
+}
+
 function createCustomerScopeProvisioner({ supabaseAdminClient } = {}) {
   return new CustomerScopeProvisioner({ supabaseAdminClient });
+}
+
+function createCustomerScopeProvisionerFromEnv({
+  env = process.env,
+  createClientImpl = createClient,
+} = {}) {
+  const projectUrl = env.SUPABASE_URL;
+  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!projectUrl && !serviceRoleKey) {
+    return new UnconfiguredCustomerScopeProvisioner();
+  }
+  if (!projectUrl || !serviceRoleKey) {
+    throw new CustomerScopeProvisioningConfigurationError(
+      "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured together for scope provisioning"
+    );
+  }
+
+  const client = createClientImpl(normalizedProjectUrl(projectUrl), serviceRoleKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+    },
+  });
+
+  return createCustomerScopeProvisioner({ supabaseAdminClient: client });
 }
 
 module.exports = {
@@ -111,6 +146,8 @@ module.exports = {
   CustomerScopeProvisioningError,
   CustomerScopeProvisioningRequestSchema,
   CustomerScopeProvisioner,
+  UnconfiguredCustomerScopeProvisioner,
   createCustomerScopeProvisioner,
+  createCustomerScopeProvisionerFromEnv,
   trustedAppMetadata,
 };
