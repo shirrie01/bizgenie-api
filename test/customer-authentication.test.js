@@ -133,6 +133,26 @@ describe("Supabase customer token verification", () => {
     }
   });
 
+  it("can verify bare customer identity for server-side workspace provisioning only", async () => {
+    const verifier = verifierWith(async () => ({
+      data: {
+        claims: verifiedClaims({
+          app_metadata: undefined,
+        }),
+      },
+      error: null,
+    }));
+
+    assert.deepEqual(await verifier.verifyIdentityAccessToken("bootstrap-token"), {
+      kind: "customer",
+      auth_user_id: USER_A,
+    });
+    await assert.rejects(
+      verifier.verifyAccessToken("bootstrap-token"),
+      AuthenticationRequiredError
+    );
+  });
+
   it("ignores user-editable user_metadata even when it contains plausible scope fields", async () => {
     const verifier = verifierWith(async () => ({
       data: {
