@@ -14,6 +14,7 @@ const {
 const {
   UnconfiguredCustomerTokenVerifier,
   createCustomerBillingTenantResolver,
+  createCustomerScopeProvisionerFromEnv,
   createCustomerGenerationBoundary,
   createCustomerVideoStatusBoundary,
   createSupabaseCustomerTokenVerifierFromEnv,
@@ -87,6 +88,12 @@ const {
   createPaidBetaProductionComposition,
   createPaidBetaRouter,
 } = require("./src/paid-beta");
+const {
+  CustomerWorkspaceService,
+  InMemoryCustomerWorkspaceRepository,
+  PostgresCustomerWorkspaceRepository,
+  createCustomerWorkspaceRouter,
+} = require("./src/customer-workspace");
 
 // The single scope this task defines. A future task may add narrower,
 // per-execution-class scopes; for now every generation job authorizes
@@ -259,6 +266,9 @@ function createApp({
   scriptGenerator = generateScriptWithVertex,
   authorizationRepository = new InMemoryAuthorizationRepository(),
   authorizationService,
+  customerWorkspaceRepository = new InMemoryCustomerWorkspaceRepository(),
+  customerWorkspaceService,
+  customerScopeProvisioner,
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
   generationJobService,
@@ -273,6 +283,12 @@ function createApp({
   const resolvedAuthorizationService =
     authorizationService || new AuthorizationService({
       repository: authorizationRepository,
+    });
+  const resolvedCustomerWorkspaceService =
+    customerWorkspaceService ||
+    new CustomerWorkspaceService({
+      repository: customerWorkspaceRepository,
+      scopeProvisioner: customerScopeProvisioner,
     });
   const resolvedGenerationJobService =
     generationJobService ||
@@ -476,6 +492,15 @@ function createApp({
     })
   );
 
+  app.use(
+    "/customer/workspace",
+    createCustomerWorkspaceRouter({
+      service: resolvedCustomerWorkspaceService,
+      tokenVerifier: customerTokenVerifier,
+      logger,
+    })
+  );
+
   // Future bounded server-to-server execution seam. Customer generation is
   // currently executed in-process only after the mandatory job recorder
   // above succeeds; this route does not dispatch to Make or a provider.
@@ -499,7 +524,8 @@ function createApp({
         req.path.startsWith("/customer/generate-video") ||
         req.path.startsWith("/customer/generate-script") ||
         req.path.startsWith("/customer/campaign-recommendations") ||
-        req.path.startsWith("/customer/campaigns")) &&
+        req.path.startsWith("/customer/campaigns") ||
+        req.path.startsWith("/customer/workspace")) &&
       error instanceof SyntaxError &&
       error.status === 400 &&
       Object.hasOwn(error, "body")
@@ -560,6 +586,16 @@ function createApp({
         });
       }
 
+      if (req.path.startsWith("/customer/workspace")) {
+        return res.status(400).json({
+          status: "failed",
+          error: {
+            code: "WORKSPACE_VALIDATION_ERROR",
+            message: "Malformed JSON request body",
+          },
+        });
+      }
+
       return res.status(400).json({
         error: {
           code: "VALIDATION_ERROR",
@@ -590,6 +626,12 @@ async function createProductionApp({ env = process.env, logger = console } = {})
   await brandBrainRepository.initialize();
   const authorizationRepository = new PostgresAuthorizationRepository({
     pool: brandBrainRepository.pool,
+  });
+  const customerWorkspaceRepository = new PostgresCustomerWorkspaceRepository({
+    pool: brandBrainRepository.pool,
+  });
+  const customerScopeProvisioner = createCustomerScopeProvisionerFromEnv({
+    env,
   });
   const customerTokenVerifier = createSupabaseCustomerTokenVerifierFromEnv({
     env,
@@ -640,6 +682,8 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     app: createApp({
       authorizationRepository,
       brandBrainRepository,
+      customerWorkspaceRepository,
+      customerScopeProvisioner,
       customerTokenVerifier,
       generationJobRepository,
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
@@ -659,6 +703,8 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     }),
     authorizationRepository,
     brandBrainRepository,
+    customerWorkspaceRepository,
+    customerScopeProvisioner,
     customerTokenVerifier,
     generationJobRepository,
     videoGenerationRepository,
