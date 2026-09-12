@@ -735,12 +735,26 @@ async function startServer({ env = process.env, logger = console } = {}) {
 
 const app = require.main === module ? null : createApp();
 
+function describeStartupError(error) {
+  return {
+    name: error?.name || "Error",
+    code: error?.code || "STARTUP_ERROR",
+    message: error?.message || null,
+    stack: error?.stack || null,
+    cause: error?.cause
+      ? {
+          name: error.cause?.name || "Error",
+          code: error.cause?.code || null,
+          message: error.cause?.message || null,
+          stack: error.cause?.stack || null,
+        }
+      : null,
+  };
+}
+
 if (require.main === module) {
   startServer().catch((error) => {
-    console.error("Startup failed", {
-      name: error?.name || "Error",
-      code: error?.code || "STARTUP_ERROR",
-    });
+    console.error("Startup failed", describeStartupError(error));
     process.exitCode = 1;
   });
 }
