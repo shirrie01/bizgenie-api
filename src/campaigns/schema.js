@@ -16,7 +16,16 @@ const time = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})
   const [y,m,d] = value.slice(0,10).split('-').map(Number);
   return d >= 1 && d <= new Date(Date.UTC(y,m,0)).getUTCDate() && m >= 1 && m <= 12;
 }).transform(value => new Date(value).toISOString());
-const actor = z.object({ kind: z.literal("customer"), auth_user_id: uuid }).strict();
+const trustedScope = z.object({
+  tenant_id: identifier,
+  project_id: identifier,
+  brand_id: identifier,
+}).strict();
+const actor = z.object({
+  kind: z.literal("customer"),
+  auth_user_id: uuid,
+  trusted_scope: trustedScope.optional(),
+}).strict();
 const authorization = z.object({
   actor,
   tenant_id: identifier,
