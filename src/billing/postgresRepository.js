@@ -779,6 +779,17 @@ class PostgresBillingRepository extends BillingRepository {
     });
   }
 
+  async provisionPaidBetaStandardV1({ tenant_id, entitlement_id, account_id, reference_period_start, reference_period_end }) {
+    return this.withTransaction(async (client) => {
+      const result = await client.query(
+        "select * from billing_private.provision_paid_beta_standard_v1($1,$2,$3,$4,$5)",
+        [tenant_id, entitlement_id, account_id, reference_period_start, reference_period_end]
+      );
+      if (result.rowCount !== 1) throw new FinancialResourceUnavailableError();
+      return { account_id: result.rows[0].account_id, entitlement_id: result.rows[0].entitlement_id };
+    });
+  }
+
   async createReservation({ execution_class: _executionClass, ...input }) {
     return this.withTransaction(async (client) => {
       const account = await this.requireLockedAccount(client, input.tenant_id);
