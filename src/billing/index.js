@@ -10,6 +10,7 @@ const refundPolicy = require("./refundPolicy");
 const { BillingService } = require("./service");
 const postgres = require("./postgresRepository");
 const composition = require("./productionComposition");
+const paidBetaProvisioning = require("./paidBetaProvisioning");
 
 module.exports = {
   ...errors,
@@ -18,6 +19,7 @@ module.exports = {
   ...refundPolicy,
   ...postgres,
   ...composition,
+  ...paidBetaProvisioning,
   BillingRepository,
   BillingService,
   InMemoryBillingRepository,

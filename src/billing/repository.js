@@ -78,6 +78,9 @@ function logicalKeyFor(input) {
 }
 
 class BillingRepository {
+  async provisionPaidBetaStandardV1(_input) {
+    throw new Error("BillingRepository.provisionPaidBetaStandardV1 is not implemented");
+  }
   getActiveEntitlement(_tenantId, _at) {
     throw new Error("BillingRepository.getActiveEntitlement is not implemented");
   }
@@ -237,6 +240,23 @@ class InMemoryBillingRepository extends BillingRepository {
       );
     }
     return copy(candidates[0] || null);
+  }
+
+  async provisionPaidBetaStandardV1({ tenant_id, entitlement_id, account_id, reference_period_start, reference_period_end }) {
+    const existing = this.accountsByTenant.get(tenant_id);
+    if (existing && existing.account_id !== account_id) throw new InvalidFinancialOperationError("Credit account identity mismatch for tenant");
+    if (!existing) {
+      const account = CreditAccountSchema.parse({ account_id, tenant_id, status: "active", created_at: this.now().toISOString() });
+      this.accountsByTenant.set(tenant_id, copy(account));
+      this.accountsById.set(account_id, copy(account));
+    }
+    const prior = this.entitlements.find((value) => value.entitlement_id === entitlement_id);
+    if (prior) {
+      if (prior.tenant_id !== tenant_id || prior.policy_id !== "paid-beta-standard-v1" || prior.plan_code !== "standard" || prior.included_monthly_credit_grant !== 60 || prior.reference_period_start !== reference_period_start || prior.reference_period_end !== reference_period_end) throw new InvalidFinancialOperationError("Paid-Beta entitlement identity mismatch");
+    } else {
+      this.entitlements.push(TenantEntitlementSchema.parse({ entitlement_id, tenant_id, policy_id: "paid-beta-standard-v1", plan_code: "standard", status: "active", starts_at: reference_period_start, reference_period_start, reference_period_end, included_monthly_credit_grant: 60 }));
+    }
+    return { account_id: existing?.account_id || account_id, entitlement_id };
   }
 
   getCommercialPolicy(policyId, at) {

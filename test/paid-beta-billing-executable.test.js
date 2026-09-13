@@ -4,6 +4,8 @@ const {
   BillingService,
   InMemoryBillingRepository,
   IdempotencyConflictError,
+  activatePaidBetaStandardV1,
+  monthlyGrantIdempotencyKey,
 } = require("../src/billing");
 const { hashIntent } = require("../src/billing/repository");
 
@@ -35,6 +37,15 @@ function setup(accounts = []) {
 const account = { account_id: "account-fonzo", tenant_id: tenant, status: "active", created_at: periodStart };
 
 describe("Paid-Beta v1 executable billing contract", () => {
+  it("provisions through the repository then creates the grant through BillingService", async () => {
+    const { repository, service } = setup([]);
+    const result = await activatePaidBetaStandardV1({ repository, billingService: service, tenantId: tenant, entitlementId: "entitlement-fonzo", accountId: "account-fonzo", periodStart, periodEnd });
+    const replay = await activatePaidBetaStandardV1({ repository, billingService: service, tenantId: tenant, entitlementId: "entitlement-fonzo", accountId: "account-fonzo", periodStart, periodEnd });
+    assert.equal(result.ledger_entry_id, replay.ledger_entry_id);
+    assert.match(monthlyGrantIdempotencyKey("entitlement-fonzo", periodStart), /^[A-Za-z0-9._:-]+$/);
+    assert.equal(repository.readBalance(tenant).ledger_balance, 60);
+    assert.equal(repository.listLedger(tenant).filter((entry) => entry.entry_type === "monthly_grant").length, 1);
+  });
   it("proves monthly grant replay is one exact 60-credit financial effect", async () => {
     const { repository, service } = setup([account]);
     const first = await service.grantMonthlyCredits({ tenantId: tenant, idempotencyKey: "monthly-fonzo-2026-09" });
