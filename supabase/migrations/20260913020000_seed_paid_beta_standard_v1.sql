@@ -1,6 +1,26 @@
 -- BG-COM-002: founder-approved, provisional Paid-Beta v1 activation data.
 -- This migration is versioned authority; it is not a production application
 -- instruction. It deliberately seeds text.standard only.
+do $$
+begin
+  if exists (
+    select 1 from public.commercial_policies
+    where policy_id = 'paid-beta-standard-v1'
+      and (plan_code <> 'standard' or policy_version <> 1
+        or included_monthly_credits <> 60 or bolt_on_eligible is distinct from true)
+  ) then
+    raise exception 'paid-beta-standard-v1 identity collision';
+  end if;
+  if exists (
+    select 1 from public.commercial_execution_prices
+    where policy_id = 'paid-beta-standard-v1'
+      and (execution_class <> 'text.standard' or credit_cost <> 1)
+  ) then
+    raise exception 'paid-beta-standard-v1 execution price collision';
+  end if;
+end;
+$$;
+
 insert into public.commercial_policies (
   policy_id, plan_code, policy_version, status,
   included_monthly_credits, bolt_on_eligible, effective_from
@@ -36,10 +56,35 @@ set search_path = ''
 as $$
 declare
   v_grant_id text := 'monthly:' || p_entitlement_id || ':' || p_period_start::text;
+  v_account_id text;
+  v_existing_entitlement public.tenant_entitlements;
 begin
+  select account_id into v_account_id
+    from public.credit_accounts
+   where tenant_id = p_tenant_id;
+  if v_account_id is not null and v_account_id <> p_account_id then
+    raise exception 'credit account identity mismatch for tenant'
+      using errcode = '23505';
+  end if;
   insert into public.credit_accounts (account_id, tenant_id)
   values (p_account_id, p_tenant_id)
-  on conflict (tenant_id) do nothing;
+  on conflict (tenant_id) do nothing
+  returning account_id into v_account_id;
+  v_account_id := coalesce(v_account_id, p_account_id);
+
+  select * into v_existing_entitlement
+    from public.tenant_entitlements
+   where entitlement_id = p_entitlement_id;
+  if found and (
+    v_existing_entitlement.tenant_id <> p_tenant_id
+    or v_existing_entitlement.policy_id <> 'paid-beta-standard-v1'
+    or v_existing_entitlement.plan_code <> 'standard'
+    or v_existing_entitlement.included_monthly_credit_grant <> 60
+    or v_existing_entitlement.reference_period_start <> p_period_start
+    or v_existing_entitlement.reference_period_end <> p_period_end
+  ) then
+    raise exception 'paid-beta entitlement identity collision' using errcode = '23505';
+  end if;
 
   insert into public.tenant_entitlements (
     entitlement_id, tenant_id, policy_id, plan_code, status, starts_at,
@@ -54,12 +99,19 @@ begin
     balance_delta, reserved_delta, idempotency_key, intent_hash,
     entitlement_id, reference_period_start, reference_period_end, occurred_at
   ) values (
-    'grant:' || md5(v_grant_id), p_account_id, p_tenant_id, 'monthly_grant', 60,
-    60, 0, v_grant_id, repeat(md5(v_grant_id), 2),
+    'grant:' || md5(v_grant_id), v_account_id, p_tenant_id, 'monthly_grant', 60,
+    60, 0, v_grant_id,
+    encode(digest(convert_to(jsonb_build_object(
+      'account_id', v_account_id, 'amount', 60, 'balance_delta', 60,
+      'entitlement_id', p_entitlement_id, 'entry_type', 'monthly_grant',
+      'idempotency_key', v_grant_id, 'reference_period_end', p_period_end,
+      'reference_period_start', p_period_start, 'reserved_delta', 0,
+      'tenant_id', p_tenant_id
+    )::text, 'UTF8'), 'sha256'), 'hex'),
     p_entitlement_id, p_period_start, p_period_end, current_timestamp
   ) on conflict (account_id, idempotency_key) do nothing;
 
-  return query select p_entitlement_id, p_account_id, 'grant:' || md5(v_grant_id);
+  return query select p_entitlement_id, v_account_id, 'grant:' || md5(v_grant_id);
 end;
 $$;
 

@@ -19,7 +19,7 @@ describe("Paid-Beta v1 billing activation migration", () => {
     assert.match(migration, /on conflict \(entitlement_id\) do nothing/);
     assert.match(migration, /on conflict \(account_id, idempotency_key\) do nothing/);
     assert.match(migration, /included_monthly_credit_grant[\s\S]*p_period_start, p_period_start, p_period_end, 60/);
-    assert.match(migration, /repeat\(md5\(v_grant_id\), 2\)/);
+    assert.match(migration, /digest\(convert_to\(jsonb_build_object[\s\S]*'sha256'/);
     assert.match(migration, /revoke all on function billing_private\.provision_paid_beta_standard_v1/);
   });
 });
