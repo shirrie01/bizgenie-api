@@ -22,6 +22,27 @@ function databaseError(error) {
   return new CampaignPersistenceError();
 }
 
+function safeDiagnosticText(value, maxLength = 256) {
+  if (typeof value !== "string" || !value) return null;
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/=:-]+/gi, "Bearer [REDACTED]")
+    .replace(/\b(service[_-]?role(?:[_-]?key)?|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .slice(0, maxLength);
+}
+
+function persistenceDiagnostic(error, stage, command) {
+  return {
+    stage,
+    command_type: command?.command_type || null,
+    pg_code: safeDiagnosticText(error?.code, 64),
+    constraint: safeDiagnosticText(error?.constraint, 128),
+    schema: safeDiagnosticText(error?.schema, 128),
+    table: safeDiagnosticText(error?.table, 128),
+    routine: safeDiagnosticText(error?.routine, 128),
+    message: safeDiagnosticText(error?.message, 500),
+  };
+}
+
 async function insert(client, table, row, conflict = "do nothing") {
   const entries = Object.entries(row).filter(([, value]) => value !== undefined);
   const columns = entries.map(([key]) => `"${key}"`).join(",");
@@ -33,11 +54,11 @@ async function insert(client, table, row, conflict = "do nothing") {
 }
 
 class PostgresCampaignRepository extends CampaignRepository {
-  constructor({ pool, now = () => new Date(), idFactory = randomUUID, resolvePreviewReceipt, validatePreview = async()=>false, fault = async () => {} }) {
+  constructor({ pool, now = () => new Date(), idFactory = randomUUID, resolvePreviewReceipt, validatePreview = async()=>false, fault = async () => {}, logger = console }) {
     super();
     if (!pool || typeof pool.connect !== "function") throw new CampaignPersistenceError();
     this.pool = pool; this.now = now; this.idFactory = idFactory; this.resolvePreviewReceipt = resolvePreviewReceipt; this.fault = fault;
-    this.validatePreview = validatePreview;
+    this.validatePreview = validatePreview; this.logger = logger;
   }
 
   async initialize() {
@@ -77,20 +98,27 @@ class PostgresCampaignRepository extends CampaignRepository {
   async executeCommand(context, input, requestId) {
     const command = parseCommand(input);
     let client;
+    let stage = "connect";
     try {
       client=await this.pool.connect();
+      stage = "begin";
       await client.query("begin");
+      stage = "authorize";
       await this._authorize(client, context, true);
+      stage = "idempotency";
       await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [JSON.stringify(["campaign-spine.v1", context.tenant_id, context.project_id, context.actor.auth_user_id, command.idempotency_key])]);
       const existing = await client.query(`select intent_hash, result from public.campaign_command_receipts where namespace='campaign-spine.v1' and tenant_id=$1 and project_id=$2 and auth_user_id=$3 and idempotency_key=$4`, [context.tenant_id, context.project_id, context.actor.auth_user_id, command.idempotency_key]);
       const intentHash = hashIntent({ ...command, actor: context.actor });
       if (existing.rowCount) {
         if (existing.rows[0].intent_hash !== intentHash) throw new CampaignIdempotencyError();
+        stage = "commit_replay";
         await client.query("commit");
         return clone(existing.rows[0].result);
       }
 
+      stage = "load_campaign";
       const before = command.campaign_id ? await this._loadCampaign(client, context, command.campaign_id, true) : null;
+      stage = "command";
       const memory = new InMemoryCampaignRepository({
         now: this.now, idFactory: this.idFactory,
         authorize: async () => true,
@@ -103,15 +131,22 @@ class PostgresCampaignRepository extends CampaignRepository {
       if (before) memory.state.campaigns.set(before.campaign_id, clone(before));
       const result = await memory.executeCommand(context, command, requestId);
       const after = memory.state.campaigns.get(result.campaign_id);
+      stage = "projection_verify";
       if(!projection.verify(after).valid)throw new CampaignPersistenceError();
+      stage = "persist";
       await this._persistCampaign(client, before, after, command, context, intentHash, result);
+      stage = "constraints_immediate";
       await client.query("set constraints all immediate");
       await client.query("select set_config('bizgenie.campaign_command','off',true)");
       await this.fault("postgres_before_commit");
+      stage = "commit";
       await client.query("commit");
       await this.fault("postgres_after_commit");
       return result;
     } catch (error) {
+      if (!(error instanceof CampaignError)) {
+        try { this.logger?.error?.("campaign persistence failed", persistenceDiagnostic(error, stage, command)); } catch {}
+      }
       try { await client?.query("rollback"); } catch {}
       throw databaseError(error);
     } finally {
