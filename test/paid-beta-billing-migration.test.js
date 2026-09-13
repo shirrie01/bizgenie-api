@@ -20,6 +20,9 @@ describe("Paid-Beta v1 billing activation migration", () => {
     assert.match(migration, /on conflict \(account_id, idempotency_key\) do nothing/);
     assert.match(migration, /included_monthly_credit_grant[\s\S]*p_period_start, p_period_start, p_period_end, 60/);
     assert.match(migration, /digest\(convert_to\(jsonb_build_object[\s\S]*'sha256'/);
+    assert.match(migration, /v_period_token text := to_char\(p_period_start at time zone 'UTC'/i);
+    assert.match(migration, /monthly:' \|\| p_entitlement_id \|\| ':' \|\| v_period_token/);
+    assert.doesNotMatch(migration, /p_period_start::text/);
     assert.match(migration, /revoke all on function billing_private\.provision_paid_beta_standard_v1/);
   });
 });

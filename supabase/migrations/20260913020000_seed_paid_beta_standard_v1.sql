@@ -55,7 +55,8 @@ security invoker
 set search_path = ''
 as $$
 declare
-  v_grant_id text := 'monthly:' || p_entitlement_id || ':' || p_period_start::text;
+  v_period_token text := to_char(p_period_start at time zone 'UTC', 'YYYYMMDD"T"HH24MISSMS"Z"');
+  v_grant_id text := 'monthly:' || p_entitlement_id || ':' || v_period_token;
   v_account_id text;
   v_existing_entitlement public.tenant_entitlements;
 begin
@@ -104,8 +105,8 @@ begin
     encode(digest(convert_to(jsonb_build_object(
       'account_id', v_account_id, 'amount', 60, 'balance_delta', 60,
       'entitlement_id', p_entitlement_id, 'entry_type', 'monthly_grant',
-      'idempotency_key', v_grant_id, 'reference_period_end', p_period_end,
-      'reference_period_start', p_period_start, 'reserved_delta', 0,
+      'idempotency_key', v_grant_id, 'reference_period_end', to_char(p_period_end at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'reference_period_start', to_char(p_period_start at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), 'reserved_delta', 0,
       'tenant_id', p_tenant_id
     )::text, 'UTF8'), 'sha256'), 'hex'),
     p_entitlement_id, p_period_start, p_period_end, current_timestamp
