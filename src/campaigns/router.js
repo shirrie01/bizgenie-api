@@ -247,9 +247,17 @@ function createCustomerCampaignRouter({
       const body = parse(generationBody, req.body);
       const campaignId = parse(uuid, req.params.campaignId);
       const variantId = parse(uuid, req.params.variantId);
-      const projectAuthorization = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:read" });
-      const campaign = await repository.getCampaign(projectAuthorization, campaignId);
-      const generationAuthorization = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, brandId: campaign.brand_id, action: "generation:create" });
+      const actor = await tokenVerifier.verifyAccessToken(extractBearerToken(req.header("authorization")));
+      const projectAuthorization = await authorizationService.authorizeProject({ actor, tenantId: body.tenant_id, projectId: body.project_id, action: "project:read" });
+      const campaign = await repository.getCampaign(contextFromAuthorization(projectAuthorization), campaignId);
+      const generationAuthorization = await authorizationService.authorizeProjectBrand({
+        actor,
+        tenantId: body.tenant_id,
+        projectId: body.project_id,
+        brandId: campaign.brand_id,
+        action: "generation:create",
+        requireApprovedBrand: true,
+      });
       const result = await campaignGenerationService.generate({ authorization: generationAuthorization, campaignId, variantId, expectedCampaignVersion: body.expected_campaign_version, idempotencyKey: body.idempotency_key });
       return res.status(201).json({ generation_id: result.generation_id, campaign: safeCampaign(result.campaign, { detail: true }) });
     } catch (error) { return sendCampaignError(error, res, logger); }
