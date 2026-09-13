@@ -5,5 +5,6 @@ const postgres = require("./postgresRepository");
 const previewRegistry = require("./previewRegistry");
 const goalRecommendation = require("./goalRecommendation");
 const router = require("./router");
+const generation = require("./generation");
 
-module.exports = { ...errors, ...schema, ...repository, ...postgres, ...previewRegistry, ...goalRecommendation, ...router };
+module.exports = { ...errors, ...schema, ...repository, ...postgres, ...previewRegistry, ...goalRecommendation, ...router, ...generation };
