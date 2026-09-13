@@ -11,6 +11,7 @@ const { BillingService } = require("./service");
 const postgres = require("./postgresRepository");
 const composition = require("./productionComposition");
 const paidBetaProvisioning = require("./paidBetaProvisioning");
+const paidBetaLaunchProof = require("./paidBetaLaunchProofRouter");
 
 module.exports = {
   ...errors,
@@ -20,6 +21,7 @@ module.exports = {
   ...postgres,
   ...composition,
   ...paidBetaProvisioning,
+  ...paidBetaLaunchProof,
   BillingRepository,
   BillingService,
   InMemoryBillingRepository,

@@ -104,6 +104,7 @@ const {
   createPostgresBillingProductionComposition,
   createStripeBillingRouter,
   createStripeProductionComposition,
+  createPaidBetaLaunchProofRouter,
 } = require("./src/billing");
 
 function requireAdmin(req, res, next) {
@@ -278,6 +279,8 @@ function createApp({
   servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
   stripeSubscriptionService,
   paidBetaCaptureService,
+  billing,
+  env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
 } = {}) {
@@ -345,6 +348,7 @@ function createApp({
   }
 
   app.use(express.json());
+  if (billing) app.use("/internal/launch-proof/paid-beta", createPaidBetaLaunchProofRouter({ billing, env, logger }));
   const scriptHandler = createGenerateScriptHandler({
     brandBrainRepository,
     branding: resolvedBranding,
@@ -706,6 +710,8 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       paidBetaCaptureService: paidBeta.service,
+      billing,
+      env,
       videoProvider: media.videoProvider,
       videoAssetStore: media.videoAssetStore,
       videoReferenceAssetLoader: media.videoReferenceAssetLoader,
