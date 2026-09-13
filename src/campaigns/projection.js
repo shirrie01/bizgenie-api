@@ -13,6 +13,18 @@ function normalize(value) {
   if(value && typeof value==='object') return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,normalize(v)]));
   return value;
 }
+function projectionValue(value) {
+  if(value instanceof Date) return value.toISOString();
+  if(Array.isArray(value)) return value.map(projectionValue);
+  if(value instanceof Map) return new Map([...value].map(([k,v])=>[k,projectionValue(v)]));
+  if(value && typeof value==='object') {
+    if(value.kind==='customer' && typeof value.auth_user_id==='string') {
+      return {kind:'customer',auth_user_id:value.auth_user_id};
+    }
+    return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,projectionValue(v)]));
+  }
+  return value;
+}
 function ordered(map,fn=value=>value) {return [...map].sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,fn(v)]);}
 function record(row) {
   // SQL repeats ownership columns on immutable descendants; the enclosing aggregate
@@ -23,7 +35,7 @@ function view(campaign) {
   const result=pick(campaign,rootFields);
   result.items=ordered(campaign.items,item=>({...pick(item,itemFields),variants:ordered(item.variants,variant=>({...pick(variant,variantFields),revisions:ordered(variant.revisions,record)}))}));
   for(const key of Object.keys(maps)) result[key]=ordered(campaign[key],record);
-  return normalize(result);
+  return projectionValue(result);
 }
 function replay(campaign) {
   let rebuilt;

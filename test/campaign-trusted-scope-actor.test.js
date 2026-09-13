@@ -5,6 +5,7 @@ const {
   CampaignResourceError,
   InMemoryCampaignRepository,
 } = require("../src/campaigns");
+const projection = require("../src/campaigns/projection");
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const SCOPE = Object.freeze({
@@ -41,6 +42,25 @@ function command() {
       name: "Trusted scope campaign",
       goal: "Prove trusted scoped owners can create campaigns",
       display_timezone: "Europe/London",
+    },
+  };
+}
+
+function contentItemCommand(campaignId) {
+  return {
+    contract_version: "campaign-spine.v1",
+    idempotency_key: "trusted_scope_content_item_create",
+    expected_campaign_version: 1,
+    command_type: "create_content_item",
+    tenant_id: SCOPE.tenant_id,
+    project_id: SCOPE.project_id,
+    campaign_id: campaignId,
+    payload: {
+      name: "Launch announcement",
+      format: "text",
+      platform: "instagram",
+      placement: "feed",
+      destination_label: "BizGenie",
     },
   };
 }
@@ -87,5 +107,24 @@ describe("campaign trusted-scope actor compatibility", () => {
       trusted_scope: { tenant_id: SCOPE.tenant_id, project_id: SCOPE.project_id },
     };
     await assert.rejects(repository().executeCommand(malformed, command()), CampaignResourceError);
+  });
+
+  it("treats a minimal database-loaded actor and scoped event actor as the same projection identity", async () => {
+    const repo = repository();
+    const created = await repo.executeCommand(context(), command());
+    const campaign = repo.state.campaigns.get(created.campaign_id);
+
+    assert.deepEqual(campaign.events[0].actor.trusted_scope, SCOPE);
+    campaign.created_by = { kind: "customer", auth_user_id: USER_ID };
+    assert.equal(projection.verify(campaign).valid, true);
+
+    await repo.executeCommand(context(), contentItemCommand(created.campaign_id));
+    const after = repo.state.campaigns.get(created.campaign_id);
+
+    assert.equal(after.version, 2);
+    assert.equal(after.events.length, 4);
+    assert.equal(projection.verify(after).valid, true);
+    assert.deepEqual(after.events[0].actor.trusted_scope, SCOPE);
+    assert.deepEqual(after.events.at(-1).actor.trusted_scope, SCOPE);
   });
 });
