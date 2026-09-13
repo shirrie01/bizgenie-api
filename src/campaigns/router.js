@@ -13,6 +13,7 @@ const {
 } = require("./errors");
 const { identifier, uuid } = require("./schema");
 const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
+const { CampaignVariantGenerationService } = require("./generation");
 
 const AUTHENTICATION_ERROR = Object.freeze({
   code: "AUTHENTICATION_REQUIRED",
@@ -81,6 +82,7 @@ const approveBody = bodyScope.extend({
   preview_id: uuid,
   approved: z.literal(true),
 }).strict();
+const generationBody = bodyScope.extend({ expected_campaign_version: expectedVersion }).strict();
 
 function extractBearerToken(authorizationHeader) {
   if (typeof authorizationHeader !== "string") throw new AuthenticationRequiredError();
@@ -230,14 +232,28 @@ function sendCampaignError(error, res, logger) {
 function createCustomerCampaignRouter({
   repository,
   previewRegistry,
+  campaignGenerationService,
   tokenVerifier,
   authorizationService,
   logger = console,
 }) {
-  if (!repository || !tokenVerifier || !authorizationService) {
+  if (!repository || !tokenVerifier || !authorizationService || !campaignGenerationService) {
     throw new TypeError("Customer campaigns require repository, token verifier and authorization service");
   }
   const router = express.Router();
+
+  router.post("/:campaignId/variants/:variantId/generate", async (req, res) => {
+    try {
+      const body = parse(generationBody, req.body);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const projectAuthorization = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:read" });
+      const campaign = await repository.getCampaign(projectAuthorization, campaignId);
+      const generationAuthorization = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, brandId: campaign.brand_id, action: "generation:create" });
+      const result = await campaignGenerationService.generate({ authorization: generationAuthorization, campaignId, variantId, expectedCampaignVersion: body.expected_campaign_version, idempotencyKey: body.idempotency_key });
+      return res.status(201).json({ generation_id: result.generation_id, campaign: safeCampaign(result.campaign, { detail: true }) });
+    } catch (error) { return sendCampaignError(error, res, logger); }
+  });
 
   router.get("/", async (req, res) => {
     try {

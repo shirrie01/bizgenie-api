@@ -83,6 +83,7 @@ const {
   PostgresGoalRecommendationRegistry,
   createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
+  CampaignVariantGenerationService,
 } = require("./src/campaigns");
 const {
   createPaidBetaProductionComposition,
@@ -273,6 +274,7 @@ function createApp({
   generationJobRepository = new InMemoryGenerationJobRepository(),
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
+  campaignGenerationService,
   servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
   stripeSubscriptionService,
   paidBetaCaptureService,
@@ -293,6 +295,14 @@ function createApp({
   const resolvedGenerationJobService =
     generationJobService ||
     new GenerationJobService({ repository: generationJobRepository });
+  const resolvedCampaignGenerationService = campaignGenerationService || new CampaignVariantGenerationService({
+    repository: campaignRepository,
+    brandBrainRepository,
+    generationJobService: resolvedGenerationJobService,
+    generationBillingOrchestrator,
+    scriptGenerator,
+    branding: resolvedBranding,
+  });
   const imageGenerationService = new ImageGenerationService({
     repository: imageGenerationRepository,
     provider: imageProvider,
@@ -478,6 +488,7 @@ function createApp({
       previewRegistry,
       tokenVerifier: customerTokenVerifier,
       authorizationService: resolvedAuthorizationService,
+      campaignGenerationService: resolvedCampaignGenerationService,
       logger,
     })
   );
