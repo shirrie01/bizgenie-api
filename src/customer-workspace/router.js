@@ -62,6 +62,34 @@ function createCustomerWorkspaceRouter({ service, tokenVerifier, logger = consol
     }
   });
 
+  router.post("/brands", async (req, res) => {
+    try {
+      const actor = await actorForRequest(req);
+      return res.status(201).json(
+        await service.createAdditionalWorkspace({
+          actor,
+          request: req.body && typeof req.body === "object" ? req.body : {},
+        })
+      );
+    } catch (error) {
+      return sendWorkspaceError({ error, res, logger, path: req.path });
+    }
+  });
+
+  router.post("/select", async (req, res) => {
+    try {
+      const actor = await actorForRequest(req);
+      return res.json(
+        await service.selectWorkspace({
+          actor,
+          request: req.body && typeof req.body === "object" ? req.body : {},
+        })
+      );
+    } catch (error) {
+      return sendWorkspaceError({ error, res, logger, path: req.path });
+    }
+  });
+
   return router;
 }
 

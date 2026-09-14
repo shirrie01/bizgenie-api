@@ -10,6 +10,18 @@ const BootstrapWorkspaceSchema = z
   })
   .strict();
 
+const CreateAdditionalWorkspaceSchema = BootstrapWorkspaceSchema.extend({
+  tenant_id: z.string().trim().min(1).max(200),
+}).strict();
+
+const SelectWorkspaceSchema = z
+  .object({
+    tenant_id: z.string().trim().min(1).max(200),
+    project_id: z.string().trim().min(1).max(200),
+    brand_id: z.string().trim().min(1).max(200),
+  })
+  .strict();
+
 function validationDetails(error) {
   return error.issues.map((issue) => ({
     path: issue.path.join("."),
@@ -18,12 +30,24 @@ function validationDetails(error) {
   }));
 }
 
-function parseBootstrapWorkspaceRequest(value) {
-  const parsed = BootstrapWorkspaceSchema.safeParse(value || {});
+function parseWith(schema, value) {
+  const parsed = schema.safeParse(value || {});
   if (!parsed.success) {
     throw new CustomerWorkspaceValidationError(validationDetails(parsed.error));
   }
   return parsed.data;
+}
+
+function parseBootstrapWorkspaceRequest(value) {
+  return parseWith(BootstrapWorkspaceSchema, value);
+}
+
+function parseCreateAdditionalWorkspaceRequest(value) {
+  return parseWith(CreateAdditionalWorkspaceSchema, value);
+}
+
+function parseSelectWorkspaceRequest(value) {
+  return parseWith(SelectWorkspaceSchema, value);
 }
 
 function parseCustomerActor(actor) {
@@ -36,6 +60,10 @@ function parseCustomerActor(actor) {
 
 module.exports = {
   BootstrapWorkspaceSchema,
+  CreateAdditionalWorkspaceSchema,
+  SelectWorkspaceSchema,
   parseBootstrapWorkspaceRequest,
+  parseCreateAdditionalWorkspaceRequest,
+  parseSelectWorkspaceRequest,
   parseCustomerActor,
 };
