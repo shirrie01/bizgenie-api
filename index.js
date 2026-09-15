@@ -293,6 +293,7 @@ function createApp({
     customerWorkspaceService ||
     new CustomerWorkspaceService({
       repository: customerWorkspaceRepository,
+      brandBrainRepository,
       scopeProvisioner: customerScopeProvisioner,
     });
   const resolvedGenerationJobService =

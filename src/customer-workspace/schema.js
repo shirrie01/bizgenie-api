@@ -1,5 +1,6 @@
 const { z } = require("zod");
 const { CustomerActorSchema } = require("../authorization");
+const { UpsertBrandBrainSchema } = require("../brand-brain/schema");
 const { CustomerWorkspaceValidationError } = require("./errors");
 
 const BootstrapWorkspaceSchema = z
@@ -21,6 +22,10 @@ const SelectWorkspaceSchema = z
     brand_id: z.string().trim().min(1).max(200),
   })
   .strict();
+
+const CustomerBrandBrainCorrectionSchema = UpsertBrandBrainSchema
+  .omit({ project_id: true })
+  .extend({ project_id: z.string().optional() });
 
 function validationDetails(error) {
   return error.issues.map((issue) => ({
@@ -58,6 +63,10 @@ function parseCustomerActor(actor) {
   return parsed.data;
 }
 
+function parseCustomerBrandBrainCorrectionRequest(value) {
+  return parseWith(CustomerBrandBrainCorrectionSchema, value);
+}
+
 module.exports = {
   BootstrapWorkspaceSchema,
   CreateAdditionalWorkspaceSchema,
@@ -66,4 +75,5 @@ module.exports = {
   parseCreateAdditionalWorkspaceRequest,
   parseSelectWorkspaceRequest,
   parseCustomerActor,
+  parseCustomerBrandBrainCorrectionRequest,
 };
