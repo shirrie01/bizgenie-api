@@ -3,19 +3,27 @@ const {
   parseCreateAdditionalWorkspaceRequest,
   parseSelectWorkspaceRequest,
   parseCustomerActor,
+  parseCustomerBrandBrainCorrectionRequest,
 } = require("./schema");
+const { BrandBrainSchema, UpsertBrandBrainSchema } = require("../brand-brain/schema");
+const { BrandBrainPersistenceError, BrandBrainValidationError } = require("../brand-brain/errors");
 const {
   CustomerWorkspacePersistenceError,
   CustomerWorkspaceValidationError,
 } = require("./errors");
 
 class CustomerWorkspaceService {
-  constructor({ repository, scopeProvisioner } = {}) {
+  constructor({ repository, brandBrainRepository, scopeProvisioner, now = () => new Date() } = {}) {
     if (!repository) {
       throw new TypeError("Customer workspace repository is required");
     }
     this.repository = repository;
+    if (!brandBrainRepository) {
+      throw new TypeError("Customer workspace Brand Brain repository is required");
+    }
+    this.brandBrainRepository = brandBrainRepository;
     this.scopeProvisioner = scopeProvisioner;
+    this.now = now;
   }
 
   async getWorkspace({ actor }) {
@@ -75,6 +83,65 @@ class CustomerWorkspaceService {
       ]);
     }
     return this.#provision(customer.auth_user_id, workspace);
+  }
+
+  async correctSelectedBrandBrain({ actor, request }) {
+    const customer = parseCustomerActor(actor);
+    const scope = customer.trusted_scope;
+    if (!scope) {
+      throw new CustomerWorkspaceValidationError([
+        { path: "trusted_scope", code: "unauthorized", message: "A trusted selected workspace is required" },
+      ]);
+    }
+
+    const selected = await this.repository.getAuthorizedWorkspaceSelection({
+      auth_user_id: customer.auth_user_id,
+      ...scope,
+    });
+    if (!selected) {
+      throw new CustomerWorkspaceValidationError([
+        { path: "trusted_scope", code: "unauthorized", message: "Workspace selection is not authorized" },
+      ]);
+    }
+
+    const existing = await this.brandBrainRepository.getByProjectAndBrand(
+      scope.project_id,
+      scope.brand_id
+    );
+    if (!existing) {
+      throw new CustomerWorkspaceValidationError([
+        { path: "trusted_scope", code: "unauthorized", message: "Selected Brand Brain is not owned by this customer" },
+      ]);
+    }
+
+    const input = parseCustomerBrandBrainCorrectionRequest(request);
+    const timestamp = this.now().toISOString();
+    const candidate = {
+      ...input,
+      brand_id: scope.brand_id,
+      project_id: scope.project_id,
+      metadata: {
+        version: existing.metadata.version + 1,
+        status: existing.metadata.status,
+        created_at: existing.metadata.created_at,
+        updated_at: timestamp,
+      },
+    };
+    let record;
+    try {
+      record = UpsertBrandBrainSchema.parse(candidate);
+      record = BrandBrainSchema.parse(record);
+      return { status: "ready", brand_brain: await this.brandBrainRepository.upsert(record) };
+    } catch (error) {
+      if (error instanceof BrandBrainValidationError) throw error;
+      if (error?.issues) {
+        throw new CustomerWorkspaceValidationError(error.issues.map((issue) => ({
+          path: issue.path.join("."), code: issue.code, message: issue.message,
+        })));
+      }
+      if (error instanceof BrandBrainPersistenceError) throw error;
+      throw error;
+    }
   }
 
   async #provision(authUserId, workspace) {

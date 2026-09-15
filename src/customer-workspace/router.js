@@ -90,6 +90,18 @@ function createCustomerWorkspaceRouter({ service, tokenVerifier, logger = consol
     }
   });
 
+  router.put("/brand-brain", async (req, res) => {
+    try {
+      const actor = await actorForRequest(req);
+      return res.json(await service.correctSelectedBrandBrain({
+        actor,
+        request: req.body && typeof req.body === "object" ? req.body : {},
+      }));
+    } catch (error) {
+      return sendWorkspaceError({ error, res, logger, path: req.path });
+    }
+  });
+
   return router;
 }
 
