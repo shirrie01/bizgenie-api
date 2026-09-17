@@ -63,6 +63,8 @@ function compilePrompt({
   scriptType,
   audience,
   intent,
+  campaignObjective,
+  campaignInstructions,
   voice,
   brandContext = "",
   userContext = "",
@@ -76,6 +78,12 @@ function compilePrompt({
     selectedSection("AUDIENCE RULES", AUDIENCE_RULES, audience),
     selectedSection("INTENT RULES", INTENT_RULES, intent),
     selectedSection("VOICE RULES", VOICE_RULES, voice),
+    typeof campaignObjective === "string" && campaignObjective.trim()
+      ? section("CAMPAIGN OBJECTIVE", [campaignObjective.trim()])
+      : null,
+    typeof campaignInstructions === "string" && campaignInstructions.trim()
+      ? section("CAMPAIGN CREATIVE BRIEF", [campaignInstructions.trim()])
+      : null,
     typeof brandContext === "string" && brandContext
       ? brandContext
       : section("BRAND CONTEXT", BRAND_CONTEXT_PLACEHOLDER),

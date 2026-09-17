@@ -2,6 +2,15 @@ const { randomUUID } = require("node:crypto");
 const { resolveBrandBrainContext } = require("../brand-brain");
 const { emptyContent } = require("./schema");
 
+const CAMPAIGN_CREATIVE_BRIEF = [
+  "Lead with a specific product truth or customer reason to care, not a stock launch cliché.",
+  "Use the approved differentiators, claims, and CTA in the Brand Brain when present; never expand them into unsupported claims.",
+  "Avoid generic filler such as ‘Big news’, ‘get ready’, or ‘perfect refreshment’ unless the supplied campaign objective and Brand Brain genuinely justify it.",
+  "Make the creative direction native to the selected platform and placement; do not default to a generic product shot or pour template.",
+  "Use audience and voice details only when they are present in the approved Brand Brain. Do not invent a script type, audience, or voice.",
+  "Produce a reviewable draft only. Do not imply approval, scheduling, or publication.",
+].join(" ");
+
 function findVariant(campaign, variantId) {
   for (const item of campaign.items.values()) {
     const variant = item.variants.get(variantId);
@@ -12,13 +21,14 @@ function findVariant(campaign, variantId) {
 
 function compileCampaignPrompt({ campaign, item, variant, brandContext }) {
   return [
-    "Create reviewable campaign copy for the following existing draft.",
-    `Campaign goal: ${campaign.goal}`,
+    "Create reviewable campaign copy for the following existing draft. The approved Brand Brain is supplied separately in the compiled brand-context section; use only that selected context.",
+    `Campaign objective: ${campaign.goal}`,
     `Content item: ${item.name}`,
     `Platform: ${variant.platform}`,
     `Placement: ${variant.placement}`,
     "Use only facts supported by the campaign goal and Brand Brain. Do not invent product, health, commercial, availability, customer-result, or distribution claims.",
-    brandContext || "Brand Brain contains no approved context; do not add unsupported brand facts.",
+    CAMPAIGN_CREATIVE_BRIEF,
+    brandContext ? "Use the separately supplied approved Brand Brain context; do not substitute context from another brand." : "Brand Brain contains no approved context; do not add unsupported brand facts.",
     "Return useful copy for this destination. Keep it as a draft for founder review; do not imply approval, scheduling, or publication.",
   ].join("\n\n");
 }
@@ -67,7 +77,12 @@ class CampaignVariantGenerationService {
       expectedExecutionClass: "text.standard",
       operation: () => this.scriptGenerator(compiledPrompt, {
         branding: this.branding,
-        promptOptions: { platform: target.variant.platform, brandContext, intent: campaign.goal },
+        promptOptions: {
+          platform: target.variant.platform,
+          brandContext,
+          campaignObjective: campaign.goal,
+          campaignInstructions: CAMPAIGN_CREATIVE_BRIEF,
+        },
       }),
     });
     const content = { ...emptyContent(), body: generation.text };
@@ -86,4 +101,4 @@ class CampaignVariantGenerationService {
   }
 }
 
-module.exports = { CampaignVariantGenerationService, compileCampaignPrompt, findVariant };
+module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignVariantGenerationService, compileCampaignPrompt, findVariant };

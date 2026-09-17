@@ -11,6 +11,8 @@ const ALL_OPTIONS = Object.freeze({
   scriptType: "problemSolution",
   audience: "b2b",
   intent: "cold",
+  campaignObjective: "A natural-language campaign objective",
+  campaignInstructions: "Use approved claims only.",
   voice: "professional",
   userContext: "Explain how a planning workflow saves time.",
 });
@@ -31,6 +33,8 @@ describe("prompt compiler", () => {
       "AUDIENCE RULES",
       "INTENT RULES",
       "VOICE RULES",
+      "CAMPAIGN OBJECTIVE",
+      "CAMPAIGN CREATIVE BRIEF",
       "BRAND CONTEXT",
       "USER CONTEXT",
       "QUALITY RULES",
@@ -100,6 +104,26 @@ describe("prompt compiler", () => {
     assert.doesNotMatch(prompt, /\[INTENT RULES\]/);
     assert.doesNotMatch(prompt, /\[VOICE RULES\]/);
     assert.doesNotMatch(prompt, /unknown-/);
+  });
+
+  it("keeps a natural-language campaign objective separate from enum intent", () => {
+    const prompt = compilePrompt({
+      platform: "instagram",
+      intent: "Launch a new seasonal flavour for first-time customers",
+      campaignObjective: "Launch a new seasonal flavour for first-time customers",
+      campaignInstructions: "Lead with an approved differentiator.",
+    });
+
+    assert.doesNotMatch(prompt, /\[INTENT RULES\]/);
+    assert.match(
+      prompt,
+      /\[CAMPAIGN OBJECTIVE\]\nLaunch a new seasonal flavour for first-time customers/
+    );
+    assert.match(
+      prompt,
+      /\[CAMPAIGN CREATIVE BRIEF\]\nLead with an approved differentiator\./
+    );
+    assert.match(prompt, /Instagram Reels/);
   });
 
   it("keeps Brand Brain as a documented placeholder only", () => {
