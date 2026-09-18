@@ -30,7 +30,7 @@ function approvedBrain(overrides = {}) {
     commercial: {
       differentiators: ["Botanical flavour with a crisp finish"],
       primary_cta: "Find a stockist nearby.",
-      approved_claims: ["Lightly sparkling botanical drink"],
+      approved_claims: ["Lightly sparkling botanical drink", "sugar-free"],
       prohibited_claims: ["Clinically proven to improve health"],
     },
     metadata: {
@@ -66,7 +66,7 @@ function campaignFixture() {
 
 function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
   const campaign = campaignFixture();
-  const calls = { jobs: 0, saves: 0, billed: 0, brandLookups: [] };
+  const calls = { jobs: 0, saves: 0, billed: 0, generations: 0, brandLookups: [] };
   const service = new CampaignVariantGenerationService({
     repository: {
       async getCampaign() { return structuredClone(campaign); },
@@ -129,10 +129,13 @@ describe("campaign generation prompt contract", () => {
         onJob(args) {
           assert.match(args.executionInput.compiled_prompt, /Campaign objective:/);
           assert.match(args.executionInput.compiled_prompt, /native to the selected platform/);
+          assert.match(args.executionInput.compiled_prompt, /at least three materially different strategic angles/);
+          assert.match(args.executionInput.compiled_prompt, /Preserve approved wording verbatim/);
           assert.match(args.executionInput.additional_context, /Brand:\nNorthstar Beverage/);
         },
       },
       scriptGenerator: async (userContext, { promptOptions }) => {
+        calls.generations++;
         finalPrompt = compilePrompt({ ...promptOptions, userContext });
         return { text: "Reviewable campaign draft", metadata: {} };
       },
@@ -156,8 +159,18 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /Direct, optimistic, and grounded/);
     assert.match(finalPrompt, /Botanical flavour with a crisp finish/);
     assert.match(finalPrompt, /Approved claims:[\s\S]*Lightly sparkling botanical drink/);
+    assert.match(finalPrompt, /Approved claims:[\s\S]*sugar-free/);
     assert.match(finalPrompt, /Prohibited claims:[\s\S]*Clinically proven to improve health/);
     assert.match(finalPrompt, /CTA preference:[\s\S]*Find a stockist nearby/);
+    assert.match(finalPrompt, /at least three materially different strategic angles/);
+    assert.match(finalPrompt, /Reject stock hooks and category-default concepts/);
+    assert.match(finalPrompt, /grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour/);
+    assert.match(finalPrompt, /complete allowlist for factual\/product claims/);
+    assert.match(finalPrompt, /Preserve approved wording verbatim/);
+    assert.match(finalPrompt, /do not strengthen, qualify, quantify, broaden, or replace it with a synonym/);
+    assert.match(finalPrompt, /Keep prohibited and unsupported claims out/);
+    assert.doesNotMatch(finalPrompt, /completely sugar-free|zero sugar/);
+    assert.match(finalPrompt, /Do not reveal or persist internal analysis or rejected angles/);
     assert.doesNotMatch(finalPrompt, /\[INTENT RULES\]/);
     assert.equal(result.result.campaign_version, 4);
     assert.equal(result.campaign.version, 3);
@@ -165,6 +178,7 @@ describe("campaign generation prompt contract", () => {
     assert.deepEqual(calls.brandLookups, [["project_fonzo", "brand_fonzo"]]);
     assert.equal(calls.jobs, 1);
     assert.equal(calls.billed, 1);
+    assert.equal(calls.generations, 1);
     assert.equal(calls.saves, 1);
   });
 
@@ -197,7 +211,11 @@ describe("campaign generation prompt contract", () => {
   });
 
   it("does not invent audience, voice, script type, or finite intent selectors", async () => {
-    const sparseBrain = approvedBrain({ audience: undefined, voice: undefined });
+    const sparseBrain = approvedBrain({
+      audience: undefined,
+      voice: undefined,
+      commercial: { ...approvedBrain().commercial, differentiators: undefined },
+    });
     const { service } = makeService({
       brandBrain: sparseBrain,
       scriptGenerator: async (userContext, { promptOptions }) => {
@@ -205,6 +223,8 @@ describe("campaign generation prompt contract", () => {
         assert.doesNotMatch(prompt, /\[AUDIENCE RULES\]|\[VOICE RULES\]|\[SCRIPT TYPE RULES\]|\[INTENT RULES\]/);
         assert.match(prompt, /\[CAMPAIGN OBJECTIVE\]/);
         assert.match(prompt, /Use audience and voice details only when they are present/);
+        assert.match(prompt, /never invent missing intelligence/);
+        assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
         return { text: "Draft", metadata: {} };
       },
     });
@@ -231,5 +251,51 @@ describe("campaign generation prompt contract", () => {
     assert.match(prompt, /Lead with a specific product truth or customer reason/);
     assert.match(prompt, /reviewable draft only/);
     assert.doesNotMatch(CAMPAIGN_CREATIVE_BRIEF, /Fonzo|Northstar Beverage/);
+  });
+
+  it("applies the same distinctiveness and claim-fidelity contract to a non-drinks category", () => {
+    const objective = "Help scent-curious shoppers compare fragrance families at home";
+    const brain = approvedBrain({
+      name: "Morrow Atelier",
+      identity: {
+        description: "A fragrance discovery set with four ceramic scent strips.",
+        positioning: "A considered way to compare scent families at home.",
+      },
+      audience: {
+        summary: "Shoppers who want to compare fragrances before choosing one.",
+        goals: ["Understand which scent family suits their routine"],
+      },
+      commercial: {
+        differentiators: ["Four reusable ceramic scent strips"],
+        primary_cta: "Explore the discovery set.",
+        approved_claims: ["Includes four ceramic scent strips"],
+        prohibited_claims: ["Guaranteed all-day wear"],
+      },
+    });
+    const brandContext = compileBrandContext(brain, {
+      generationContext: { platform: "tiktok", mediaType: "text" },
+    });
+    const prompt = compilePrompt({
+      platform: "tiktok",
+      campaignObjective: objective,
+      campaignInstructions: CAMPAIGN_CREATIVE_BRIEF,
+      brandContext,
+      userContext: compileCampaignPrompt({
+        campaign: { goal: objective },
+        item: { name: "Discovery set introduction" },
+        variant: { platform: "tiktok", placement: "video" },
+        brandContext,
+      }),
+    });
+
+    assert.match(prompt, /fragrance discovery set with four ceramic scent strips/);
+    assert.match(prompt, /compare fragrances before choosing one/);
+    assert.match(prompt, /Four reusable ceramic scent strips/);
+    assert.match(prompt, /Includes four ceramic scent strips/);
+    assert.match(prompt, /never invent missing intelligence/);
+    assert.match(prompt, /Preserve approved wording verbatim/);
+    assert.match(prompt, /TikTok/);
+    assert.match(prompt, /category-default concepts when the supplied intelligence supports a more specific angle/);
+    assert.doesNotMatch(CAMPAIGN_CREATIVE_BRIEF, /Morrow Atelier|fragrance|drinks|Fonzo/);
   });
 });

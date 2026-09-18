@@ -4,10 +4,15 @@ const { emptyContent } = require("./schema");
 
 const CAMPAIGN_CREATIVE_BRIEF = [
   "Lead with a specific product truth or customer reason to care, not a stock launch cliché.",
-  "Use the approved differentiators, claims, and CTA in the Brand Brain when present; never expand them into unsupported claims.",
+  "Use supplied audience goals or tensions, brand/product truth, differentiators, approved claims, and CTA when present; never invent missing intelligence.",
   "Avoid generic filler such as ‘Big news’, ‘get ready’, or ‘perfect refreshment’ unless the supplied campaign objective and Brand Brain genuinely justify it.",
-  "Make the creative direction native to the selected platform and placement; do not default to a generic product shot or pour template.",
+  "Make the creative direction native to the selected platform and placement; do not default to a generic product shot or routine product demonstration.",
   "Use audience and voice details only when they are present in the approved Brand Brain. Do not invent a script type, audience, or voice.",
+  "Before drafting, privately compare at least three materially different strategic angles, not alternate phrasings of one hook; select the strongest defensible angle grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour.",
+  "Reject stock hooks and category-default concepts when the supplied intelligence supports a more specific angle; keep a generic execution only when it is genuinely the strongest supported choice.",
+  "Use the Concept section to name only the selected angle and its concise evidence anchor. Do not reveal or persist internal analysis or rejected angles.",
+  "Treat approved claims as the complete allowlist for factual/product claims. Preserve approved wording verbatim; do not strengthen, qualify, quantify, broaden, or replace it with a synonym unless that alternative wording is separately approved. Omit a claim rather than paraphrase it when exact fidelity is not possible.",
+  "Keep prohibited and unsupported claims out, including invented superlatives, guarantees, product properties, outcomes, health or performance claims, availability, pricing, awards, endorsements, and comparisons. Expressive creative language must not imply an unsupported fact.",
   "Produce a reviewable draft only. Do not imply approval, scheduling, or publication.",
 ].join(" ");
 
