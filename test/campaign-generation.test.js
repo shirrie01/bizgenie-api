@@ -207,7 +207,11 @@ describe("campaign generation prompt contract", () => {
   });
 
   it("does not invent audience, voice, script type, or finite intent selectors", async () => {
-    const sparseBrain = approvedBrain({ audience: undefined, voice: undefined });
+    const sparseBrain = approvedBrain({
+      audience: undefined,
+      voice: undefined,
+      commercial: { ...approvedBrain().commercial, differentiators: undefined },
+    });
     const { service } = makeService({
       brandBrain: sparseBrain,
       scriptGenerator: async (userContext, { promptOptions }) => {
@@ -216,7 +220,7 @@ describe("campaign generation prompt contract", () => {
         assert.match(prompt, /\[CAMPAIGN OBJECTIVE\]/);
         assert.match(prompt, /Use audience and voice details only when they are present/);
         assert.match(prompt, /never invent missing intelligence/);
-        assert.doesNotMatch(prompt, /[A-Za-z]+-only differentiator/);
+        assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
         return { text: "Draft", metadata: {} };
       },
     });
