@@ -66,7 +66,7 @@ function campaignFixture() {
 
 function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
   const campaign = campaignFixture();
-  const calls = { jobs: 0, saves: 0, billed: 0, brandLookups: [] };
+  const calls = { jobs: 0, saves: 0, billed: 0, generations: 0, brandLookups: [] };
   const service = new CampaignVariantGenerationService({
     repository: {
       async getCampaign() { return structuredClone(campaign); },
@@ -129,10 +129,13 @@ describe("campaign generation prompt contract", () => {
         onJob(args) {
           assert.match(args.executionInput.compiled_prompt, /Campaign objective:/);
           assert.match(args.executionInput.compiled_prompt, /native to the selected platform/);
+          assert.match(args.executionInput.compiled_prompt, /at least three materially different strategic angles/);
+          assert.match(args.executionInput.compiled_prompt, /Preserve approved wording verbatim/);
           assert.match(args.executionInput.additional_context, /Brand:\nNorthstar Beverage/);
         },
       },
       scriptGenerator: async (userContext, { promptOptions }) => {
+        calls.generations++;
         finalPrompt = compilePrompt({ ...promptOptions, userContext });
         return { text: "Reviewable campaign draft", metadata: {} };
       },
@@ -175,6 +178,7 @@ describe("campaign generation prompt contract", () => {
     assert.deepEqual(calls.brandLookups, [["project_fonzo", "brand_fonzo"]]);
     assert.equal(calls.jobs, 1);
     assert.equal(calls.billed, 1);
+    assert.equal(calls.generations, 1);
     assert.equal(calls.saves, 1);
   });
 
