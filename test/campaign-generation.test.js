@@ -6,6 +6,7 @@ const {
   CAMPAIGN_CREATIVE_BRIEF,
   CampaignVariantGenerationService,
   compileCampaignPrompt,
+  validateSelectedStrategy,
 } = require("../src/campaigns/generation");
 
 const objective = "Introduce the new seasonal drink to people choosing a low-sugar option";
@@ -106,7 +107,7 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
         return operation();
       },
     },
-    scriptGenerator: scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: {} })),
+    scriptGenerator: scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses the supplied audience need", platform_execution: "Native short-form comparison" } } })),
     branding: { appName: "BizGenie" },
   });
   return { service, calls };
@@ -122,6 +123,13 @@ const authorization = {
 };
 
 describe("campaign generation prompt contract", () => {
+  it("accepts only a bounded evidence-backed selected-strategy artefact", () => {
+    const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
+    const base = { campaign: { goal: objective }, variant: { platform: "instagram" }, brandContext: context };
+    assert.equal(validateSelectedStrategy({ angle: "Audience-led low-sugar choice", evidence_anchors: ["low-sugar option"], specificity: "Specific", platform_execution: "Reels comparison" }, base).ok, true);
+    assert.equal(validateSelectedStrategy({ angle: "Product shot and pour", evidence_anchors: ["invented audience fact"], specificity: "Distinctive", platform_execution: "Reels" }, base).ok, false);
+  });
+
   it("passes objective and approved Brand Brain intelligence into the compiled Instagram prompt", async () => {
     let finalPrompt;
     const { service, calls } = makeService({
@@ -137,7 +145,7 @@ describe("campaign generation prompt contract", () => {
       scriptGenerator: async (userContext, { promptOptions }) => {
         calls.generations++;
         finalPrompt = compilePrompt({ ...promptOptions, userContext });
-        return { text: "Reviewable campaign draft", metadata: {} };
+        return { text: "Reviewable campaign draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses the supplied audience need", platform_execution: "Native short-form comparison" } } };
       },
     });
 
@@ -195,7 +203,7 @@ describe("campaign generation prompt contract", () => {
         const prompt = compilePrompt({ ...promptOptions, userContext });
         assert.match(prompt, /Fonzo-only differentiator/);
         assert.doesNotMatch(prompt, /Lease Expert|Audi A3|Leasexpert|another brand secret/);
-        return { text: "Draft", metadata: {} };
+        return { text: "Draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses supplied context", platform_execution: "Native execution" } } };
       },
     });
 
@@ -225,7 +233,7 @@ describe("campaign generation prompt contract", () => {
         assert.match(prompt, /Use audience and voice details only when they are present/);
         assert.match(prompt, /never invent missing intelligence/);
         assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
-        return { text: "Draft", metadata: {} };
+        return { text: "Draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses supplied context", platform_execution: "Native execution" } } };
       },
     });
 
