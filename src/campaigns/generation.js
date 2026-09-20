@@ -2,6 +2,29 @@ const { randomUUID } = require("node:crypto");
 const { resolveBrandBrainContext } = require("../brand-brain");
 const { emptyContent } = require("./schema");
 
+class CampaignStrategyValidationError extends Error {
+  constructor(reasons) { super("Generated strategy failed validation"); this.name = "CampaignStrategyValidationError"; this.reasons = reasons; }
+}
+
+function validateSelectedStrategy(strategy, { campaign, variant, brandContext }) {
+  const reasons = [];
+  if (!strategy || typeof strategy !== "object") return { ok: false, reasons: ["selected_strategy is required"] };
+  for (const field of ["angle", "evidence_anchors", "specificity", "platform_execution"]) {
+    if (!strategy[field] || (Array.isArray(strategy[field]) && strategy[field].length === 0)) reasons.push(`${field} is required`);
+  }
+  const source = `${campaign.goal}\n${brandContext || ""}`.toLowerCase();
+  const anchors = Array.isArray(strategy.evidence_anchors) ? strategy.evidence_anchors : [];
+  if (anchors.some((anchor) => typeof anchor !== "string" || !anchor.trim() || !source.includes(anchor.toLowerCase().trim()))) reasons.push("evidence anchors must match supplied approved context");
+  const angle = typeof strategy.angle === "string" ? strategy.angle.toLowerCase() : "";
+  const generic = /product shot|pack shot|pour|sip|routine demo|generic|category default|launch announcement/.test(angle);
+  const hasSpecificAnchor = anchors.some((anchor) => typeof anchor === "string" && anchor.trim().length >= 8);
+  if (generic && hasSpecificAnchor) reasons.push("category-default strategy is not acceptable when richer evidence is supplied");
+  if (!hasSpecificAnchor) reasons.push("strategy must be specific to supplied evidence");
+  if (strategy.platform_execution && typeof strategy.platform_execution !== "string") reasons.push("platform_execution must be reviewable text");
+  if (strategy.approved_claims && (!Array.isArray(strategy.approved_claims) || strategy.approved_claims.some((claim) => !source.includes(String(claim).toLowerCase())))) reasons.push("approved claims must remain bounded to supplied wording");
+  return { ok: reasons.length === 0, reasons };
+}
+
 const CAMPAIGN_CREATIVE_BRIEF = [
   "Lead with a specific product truth or customer reason to care, not a stock launch cliché.",
   "Use supplied audience goals or tensions, brand/product truth, differentiators, approved claims, and CTA when present; never invent missing intelligence.",
@@ -80,7 +103,7 @@ class CampaignVariantGenerationService {
     const generation = await this.generationBillingOrchestrator.execute({
       job,
       expectedExecutionClass: "text.standard",
-      operation: () => this.scriptGenerator(compiledPrompt, {
+      operation: async () => this.scriptGenerator(compiledPrompt, {
         branding: this.branding,
         promptOptions: {
           platform: target.variant.platform,
@@ -90,6 +113,8 @@ class CampaignVariantGenerationService {
         },
       }),
     });
+    const strategyCheck = validateSelectedStrategy(generation.metadata?.selected_strategy, { campaign, variant: target.variant, brandContext });
+    if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons);
     const content = { ...emptyContent(), body: generation.text };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",
@@ -106,4 +131,4 @@ class CampaignVariantGenerationService {
   }
 }
 
-module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignVariantGenerationService, compileCampaignPrompt, findVariant };
+module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, findVariant, validateSelectedStrategy };

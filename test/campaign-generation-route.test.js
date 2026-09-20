@@ -45,7 +45,7 @@ describe("campaign generation composed authorization", () => {
       }),
       campaignRepository: { async getCampaign() { return stored; }, async executeCommand(_context, command) { assert.equal(command.command_type, "save_revision"); return { campaign_id: CAMPAIGN, campaign_version: 4, created_ids: {} }; } },
       generationBillingOrchestrator: { async execute({ job, operation }) { assert.equal(job.action, undefined); return operation(); } },
-      scriptGenerator: async () => ({ text: "Fonzo launch copy", metadata: {} }),
+      scriptGenerator: async () => ({ text: "Fonzo launch copy", metadata: { selected_strategy: { angle: "Audience-led launch", evidence_anchors: ["Launch Fonzo in the UK"], specificity: "Uses the campaign goal", platform_execution: "Native post" } } }),
     });
     const response = await request(app).post(`/customer/campaigns/${CAMPAIGN}/variants/${VARIANT}/generate`).set("authorization", "Bearer customer-token").send({ tenant_id: "tenant_a", project_id: "project_a", expected_campaign_version: 3, idempotency_key: "campaign_generate_001" });
     assert.equal(response.status, 201);
