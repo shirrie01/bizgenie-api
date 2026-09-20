@@ -9,6 +9,7 @@ const {
   GenerationIncompleteError,
   REQUIRED_SECTIONS,
   STRATEGY_RESPONSE_SCHEMA,
+  STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS,
   generateScriptWithVertex,
   validateGenerationResponse,
 } = require("../src/generation");
@@ -287,6 +288,7 @@ describe("Vertex generation configuration", () => {
     assert.deepEqual(result.metadata.selected_strategy, strategyEnvelope().selected_strategy);
     assert.deepEqual(result.metadata.selection_evidence, strategyEnvelope().selection_evidence);
     assert.equal(result.metadata.prompt_token_count, 800);
+    assert.equal(modelOptions.generationConfig.maxOutputTokens, STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS);
     assert.equal(modelOptions.generationConfig.responseMimeType, "application/json");
     assert.deepEqual(modelOptions.generationConfig.responseSchema, STRATEGY_RESPONSE_SCHEMA);
     assert.match(requestBody.contents[0].parts[0].text, /Return one JSON object matching the provider response schema/);

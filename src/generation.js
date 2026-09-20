@@ -15,6 +15,8 @@ const GENERATION_CONFIG = Object.freeze({
   candidateCount: 1,
 });
 
+const STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS = 8192;
+
 const STRATEGY_RESPONSE_SCHEMA = Object.freeze({
   type: "OBJECT",
   properties: {
@@ -287,7 +289,7 @@ async function generateScriptWithVertex(
       parts: [{ text: buildSystemInstruction(branding) }],
     },
     generationConfig: structuredStrategy
-      ? { ...GENERATION_CONFIG, responseMimeType: "application/json", responseSchema: STRATEGY_RESPONSE_SCHEMA }
+      ? { ...GENERATION_CONFIG, maxOutputTokens: STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS, responseMimeType: "application/json", responseSchema: STRATEGY_RESPONSE_SCHEMA }
       : GENERATION_CONFIG,
   });
 
@@ -312,6 +314,7 @@ module.exports = {
   GenerationIncompleteError,
   REQUIRED_SECTIONS,
   STRATEGY_RESPONSE_SCHEMA,
+  STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS,
   assembleCandidateText,
   buildSystemInstruction,
   findMissingSections,
