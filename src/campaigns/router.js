@@ -14,6 +14,7 @@ const {
 const { identifier, uuid } = require("./schema");
 const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
 const { CampaignVariantGenerationService } = require("./generation");
+const { safeMeasurement } = require("./measurementRegistry");
 
 const AUTHENTICATION_ERROR = Object.freeze({
   code: "AUTHENTICATION_REQUIRED",
@@ -104,6 +105,14 @@ const manualResolutionBody = bodyScope.extend({
 const calendarQuery = queryScope.extend({
   from: z.string().datetime({ offset: true }),
   to: z.string().datetime({ offset: true }),
+}).strict();
+const measurementBody = bodyScope.extend({
+  idempotency_key: identifier,
+  metric: z.enum(["reach","views","impressions","clicks","enquiries","leads","conversions","sales","revenue","value"]),
+  value: z.number().finite().min(0).max(1e15),
+  unit: z.enum(["count","gbp","usd","eur","percent","other"]).optional(),
+  observed_at: z.string().datetime({ offset: true }),
+  note: z.string().trim().min(1).max(1000).nullable().optional(),
 }).strict();
 
 function extractBearerToken(authorizationHeader) {
@@ -263,11 +272,12 @@ function createCustomerCampaignRouter({
   repository,
   previewRegistry,
   campaignGenerationService,
+  measurementRegistry,
   tokenVerifier,
   authorizationService,
   logger = console,
 }) {
-  if (!repository || !tokenVerifier || !authorizationService || !campaignGenerationService) {
+  if (!repository || !tokenVerifier || !authorizationService || !campaignGenerationService || !measurementRegistry) {
     throw new TypeError("Customer campaigns require repository, token verifier and authorization service");
   }
   const router = express.Router();
@@ -491,6 +501,40 @@ function createCustomerCampaignRouter({
       const campaign = await repository.getCampaign(context, campaignId);
       const entries = await repository.listCalendarEntries(context, { from: query.from, to: query.to });
       return res.json({ entries: entries.filter((entry) => entry.campaign_id === campaign.campaign_id) });
+    } catch (error) { return sendCampaignError(error, res, logger); }
+  });
+
+  router.get("/:campaignId/measurements", async (req, res) => {
+    try {
+      const query = parse(queryScope.extend({ variant_id: uuid.optional() }).strict(), req.query);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: query.tenant_id, projectId: query.project_id, action: "project:read" });
+      await repository.getCampaign(context, campaignId);
+      const rows = await measurementRegistry.list(context, campaignId, query.variant_id);
+      return res.json({ measurements: rows.map(safeMeasurement) });
+    } catch (error) { return sendCampaignError(error, res, logger); }
+  });
+
+  router.post("/:campaignId/variants/:variantId/measurements", async (req, res) => {
+    try {
+      const body = parse(measurementBody, req.body);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+      const campaign = await repository.getCampaign(context, campaignId);
+      const variant = campaignVariant(campaign, variantId);
+      if (variant.workflow !== "published" || !variant.publication_id) throw new CampaignValidationError();
+      let contentItemId = null;
+      for (const item of campaign.items.values()) if (item.variants.has(variantId)) contentItemId = item.content_item_id;
+      const publication = campaign.publications.get(variant.publication_id);
+      const effective = publication ? (require("./projection").latestCorrection(campaign, publication.publication_id) || publication) : null;
+      if (!publication || !effective) throw new CampaignValidationError();
+      const row = await measurementRegistry.record(context, {
+        tenant_id: campaign.tenant_id, project_id: campaign.project_id, brand_id: campaign.brand_id,
+        campaign_id: campaign.campaign_id, content_item_id: contentItemId, variant_id: variantId,
+        publication_id: publication.publication_id, workflow: variant.workflow, published_at: effective.published_at,
+      }, body);
+      return res.status(201).json({ measurement: safeMeasurement(row) });
     } catch (error) { return sendCampaignError(error, res, logger); }
   });
 
