@@ -110,7 +110,7 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
         return operation();
       },
     },
-    scriptGenerator: scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: strategyMetadata() })),
+    scriptGenerator: scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: strategyIdMetadata() })),
     branding: { appName: "BizGenie" },
   });
   return { service, calls };
@@ -124,6 +124,17 @@ function strategyMetadata(selected = 0, anchors = [objective, "Botanical flavour
     { angle: "Customer-context decision story", evidence_anchors: [anchors[2] || anchors[0]], specificity: "Uses supplied evidence", platform_execution: "Contextual Reels story" },
   ];
   return { selected_strategy: strategy_candidates[selected], strategy_candidates, selection_evidence: { selected_candidate_index: selected, criteria: ["audience_relevance", "differentiator", "platform_fit"], rationale: "Selected for the strongest supported audience and platform connection." } };
+}
+
+function strategyIdMetadata(selected = 0, brain = approvedBrain()) {
+  const context = compileBrandContext(brain, { generationContext: { platform: "instagram", mediaType: "text" } });
+  const anchors = deriveAllowableEvidenceAnchors(objective, context);
+  const idFor = (exact) => anchors.find((anchor) => anchor.exact_text === exact)?.id || "EA001";
+  return strategyMetadata(selected, [
+    "EA001",
+    idFor("Botanical flavour with a crisp finish"),
+    idFor("Find a refreshing option for weekday lunches"),
+  ]);
 }
 
 const authorization = {
@@ -218,7 +229,7 @@ describe("campaign generation prompt contract", () => {
       scriptGenerator: async (userContext, { promptOptions }) => {
         calls.generations++;
         finalPrompt = compilePrompt({ ...promptOptions, userContext });
-        return { text: "Reviewable campaign draft", metadata: strategyMetadata() };
+        return { text: "Reviewable campaign draft", metadata: strategyIdMetadata() };
       },
     });
 
@@ -276,7 +287,9 @@ describe("campaign generation prompt contract", () => {
         const prompt = compilePrompt({ ...promptOptions, userContext });
         assert.match(prompt, /Fonzo-only differentiator/);
         assert.doesNotMatch(prompt, /Lease Expert|Audi A3|Leasexpert|another brand secret/);
-        return { text: "Draft", metadata: strategyMetadata(0, ["Fonzo-only differentiator", "Fonzo-only differentiator", "Fonzo-only differentiator"]) };
+        const anchors = deriveAllowableEvidenceAnchors(objective, promptOptions.brandContext);
+        const fonzoId = anchors.find((anchor) => anchor.exact_text === "Fonzo-only differentiator")?.id;
+        return { text: "Draft", metadata: strategyMetadata(0, [fonzoId, fonzoId, fonzoId]) };
       },
     });
 
@@ -306,7 +319,7 @@ describe("campaign generation prompt contract", () => {
         assert.match(prompt, /Use audience and voice details only when they are present/);
         assert.match(prompt, /never invent missing intelligence/);
         assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
-        return { text: "Draft", metadata: strategyMetadata(0, [objective, objective, objective]) };
+        return { text: "Draft", metadata: strategyMetadata(0, ["EA001", "EA001", "EA001"]) };
       },
     });
 
@@ -317,6 +330,37 @@ describe("campaign generation prompt contract", () => {
       expectedCampaignVersion: 3,
       idempotencyKey: "campaign-generation-1",
     });
+  });
+
+
+  it("wires stable evidence IDs into the real campaign prompt and rejects free-text references before save", async () => {
+    let promptSeen;
+    const { service, calls } = makeService({
+      assertions: { onJob(args) { promptSeen = args.executionInput.compiled_prompt; } },
+      scriptGenerator: async () => ({ text: "Draft", metadata: strategyIdMetadata() }),
+    });
+    await service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" });
+    assert.match(promptSeen, /\[APPROVED EVIDENCE ANCHORS\]/);
+    assert.match(promptSeen, /EA001 \| Introduce the new seasonal drink/);
+    assert.equal(calls.saves, 1);
+
+    const bad = makeService({ scriptGenerator: async () => ({ text: "Draft", metadata: strategyMetadata() }) });
+    await assert.rejects(
+      bad.service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }),
+      /Generated strategy failed validation/
+    );
+    assert.equal(bad.calls.saves, 0);
+  });
+
+  it("detects category-default execution outside the angle label", () => {
+    const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
+    const base = { campaign: { goal: objective }, variant: { platform: "instagram" }, brandContext: context };
+    const rich = strategyMetadata();
+    const disguised = { angle: "Bold sensory interruption", evidence_anchors: [objective], specificity: "Uses supplied evidence", platform_execution: "Close-up product shot, condensation, pour over ice, fizz and sip" };
+    const candidates = [disguised, rich.strategy_candidates[1], rich.strategy_candidates[2]];
+    const result = validateSelectedStrategy(disguised, { ...base, candidates, selection_evidence: { selected_candidate_index: 0, criteria: ["platform_fit"], rationale: "Selected as a native short-form execution." } });
+    assert.equal(result.ok, false);
+    assert.match(result.reasons.join(" "), /category-default selected strategy/);
   });
 
   it("preserves the reviewable draft campaign brief contract without brand-specific shared copy", () => {
