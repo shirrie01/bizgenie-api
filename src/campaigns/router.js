@@ -592,11 +592,12 @@ function createCustomerCampaignRouter({
 
 function createCustomerCampaignRecommendationRouter({
   recommendationRegistry = createDefaultGoalRecommendationRegistry(),
+  measurementRegistry,
   tokenVerifier,
   authorizationService,
   logger = console,
 }) {
-  if (!recommendationRegistry || !tokenVerifier || !authorizationService) {
+  if (!recommendationRegistry || !measurementRegistry || !tokenVerifier || !authorizationService) {
     throw new TypeError("Customer campaign recommendations require registry, token verifier and authorization service");
   }
   const router = express.Router();
@@ -613,7 +614,8 @@ function createCustomerCampaignRecommendationRouter({
         brandId: body.brand_id,
         action: "project:read",
       });
-      const recommendation = await recommendationRegistry.recommend(context, body);
+      const evidence = await measurementRegistry.listBrand(context, body.brand_id);
+      const recommendation = await recommendationRegistry.recommend(context, body, { evidence });
       return res.status(201).json({ recommendation });
     } catch (error) {
       return sendCampaignError(error, res, logger);

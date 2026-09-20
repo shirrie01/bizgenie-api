@@ -11,6 +11,7 @@ const {
 const {
   FORBIDDEN_RECOMMENDATION_FIELDS,
   InMemoryGoalRecommendationRegistry,
+  InMemoryCampaignMeasurementRegistry,
 } = require("../src/campaigns");
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
@@ -55,6 +56,7 @@ function fixture() {
   let id = 0;
   const app = createApp({
     authorizationRepository: authorizationRepository(),
+    campaignMeasurementRegistry: new InMemoryCampaignMeasurementRegistry(),
     goalRecommendationRegistry: new InMemoryGoalRecommendationRegistry({
       now: () => new Date("2026-09-08T13:00:00.000Z"),
       idFactory: () => id++ === 0 ? RECOMMENDATION_ID : "44444444-4444-4444-8444-444444444444",
@@ -112,6 +114,28 @@ describe("customer goal recommendation API", () => {
     );
     assert.equal(campaigns.status, 200);
     assert.deepEqual(campaigns.body.campaigns, []);
+  });
+
+  it("uses only sufficient scoped verified evidence and remains explicit about causality", async () => {
+    const measurementRegistry = new InMemoryCampaignMeasurementRegistry();
+    measurementRegistry.rows = [
+      { tenant_id:"tenant_a", project_id:"project_a", brand_id:"brand_a", campaign_id:"campaign_1", metric:"views", value:100, evidence_kind:"customer_attestation", observed_at:"2026-09-07T10:00:00.000Z", measurement_id:"m1" },
+      { tenant_id:"tenant_a", project_id:"project_a", brand_id:"brand_a", campaign_id:"campaign_2", metric:"views", value:150, evidence_kind:"customer_attestation", observed_at:"2026-09-08T10:00:00.000Z", measurement_id:"m2" },
+      { tenant_id:"tenant_b", project_id:"project_b", brand_id:"brand_b", campaign_id:"campaign_x", metric:"sales", value:999, evidence_kind:"customer_attestation", observed_at:"2026-09-08T10:00:00.000Z", measurement_id:"mx" },
+    ];
+    const app = createApp({
+      authorizationRepository: authorizationRepository(),
+      campaignMeasurementRegistry: measurementRegistry,
+      goalRecommendationRegistry: new InMemoryGoalRecommendationRegistry({ now:()=>new Date("2026-09-08T13:00:00.000Z"), idFactory:()=>RECOMMENDATION_ID }),
+      customerTokenVerifier: new FixtureTokenVerifier(),
+      logger: { info() {}, warn() {}, error() {} },
+    });
+    const response = await customer(request(app).post("/customer/campaign-recommendations")).send(body({ idempotency_key:"evidence_learning" }));
+    assert.equal(response.status,201);
+    assert.equal(response.body.recommendation.not_enough_data_yet,false);
+    assert.match(response.body.recommendation.evidence_summary,/2 verified customer-attested observations across 2 published campaigns/);
+    assert.match(response.body.recommendation.explanation,/not claiming causality/i);
+    assert.doesNotMatch(response.body.recommendation.evidence_summary,/999/);
   });
 
   it("replays identical recommendation keys and rejects changed intent", async () => {

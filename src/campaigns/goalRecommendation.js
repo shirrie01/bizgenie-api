@@ -84,11 +84,22 @@ function itemSet(kind) {
   ];
 }
 
-function buildRecommendation({ context, request, now, idFactory }) {
+function buildRecommendation({ context, request, now, idFactory, evidence = [] }) {
   const kind = goalKind(request.goal);
   const generatedAt = iso(now());
   const campaignName = `${titleCase(request.goal)} Campaign`;
   const suggestedItems = itemSet(kind);
+  const usableEvidence = Array.isArray(evidence) ? evidence.filter((row) =>
+    row && row.tenant_id === context.tenant_id && row.project_id === context.project_id &&
+    row.brand_id === request.brand_id && typeof row.metric === "string" &&
+    Number.isFinite(Number(row.value)) && row.evidence_kind === "customer_attestation"
+  ) : [];
+  const evidenceCampaigns = new Set(usableEvidence.map((row) => row.campaign_id)).size;
+  const evidenceObservations = usableEvidence.length;
+  const hasLearningSignal = evidenceCampaigns >= 2 && evidenceObservations >= 2;
+  const evidenceSummary = hasLearningSignal
+    ? `${evidenceObservations} verified customer-attested observations across ${evidenceCampaigns} published campaigns are available for this brand.`
+    : "BizGenie does not yet have enough comparable verified outcome history to adapt this recommendation.";
   const record = {
     recommendation_id: idFactory(),
     tenant_id: context.tenant_id,
@@ -99,8 +110,11 @@ function buildRecommendation({ context, request, now, idFactory }) {
     campaign_name: campaignName,
     recommendation_kind: kind,
     summary: "Start with one clear campaign and three reviewable items. You can edit everything before anything is scheduled or published.",
-    not_enough_data_yet: true,
-    explanation: "Recommended because this is the first safe campaign shape for the stated goal; BizGenie does not have enough performance history yet to claim a stronger signal.",
+    not_enough_data_yet: !hasLearningSignal,
+    evidence_summary: evidenceSummary,
+    explanation: hasLearningSignal
+      ? "Recommended with awareness of verified historical outcome evidence. BizGenie is not claiming causality or that one campaign caused the observed result."
+      : "Recommended because this is the first safe campaign shape for the stated goal; BizGenie does not have enough comparable verified performance history yet to claim a stronger signal.",
     next_action: { code: "create_campaign", label: "Create campaign" },
     create_campaign_payload: {
       tenant_id: context.tenant_id,
@@ -139,6 +153,7 @@ function safeRecommendation(record) {
     recommendation_kind: record.recommendation_kind,
     summary: record.summary,
     not_enough_data_yet: record.not_enough_data_yet,
+    evidence_summary: record.evidence_summary || null,
     explanation: record.explanation,
     next_action: clone(record.next_action),
     create_campaign_payload: clone(record.create_campaign_payload),
@@ -165,10 +180,10 @@ class InMemoryGoalRecommendationRegistry {
     this.keys = new Map();
   }
 
-  async recommend(context, request) {
+  async recommend(context, request, { evidence = [] } = {}) {
     const parsed = parseRecommendationRequest(request);
     validateScope(context, parsed);
-    const next = buildRecommendation({ context, request: parsed, now: this.now, idFactory: this.idFactory });
+    const next = buildRecommendation({ context, request: parsed, now: this.now, idFactory: this.idFactory, evidence });
     const existingId = this.keys.get(keyFor(context, parsed));
     const existing = existingId ? this.records.get(existingId) : null;
     if (existing) {
@@ -229,11 +244,11 @@ class PostgresGoalRecommendationRegistry {
     }
   }
 
-  async recommend(context, request) {
+  async recommend(context, request, { evidence = [] } = {}) {
     const parsed = parseRecommendationRequest(request);
     validateScope(context, parsed);
     const record = {
-      ...buildRecommendation({ context, request: parsed, now: this.now, idFactory: this.idFactory }),
+      ...buildRecommendation({ context, request: parsed, now: this.now, idFactory: this.idFactory, evidence }),
       requested_by: context.actor.auth_user_id,
       idempotency_key: parsed.idempotency_key,
     };
