@@ -84,6 +84,8 @@ const {
   createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
   CampaignVariantGenerationService,
+  InMemoryCampaignMeasurementRegistry,
+  PostgresCampaignMeasurementRegistry,
 } = require("./src/campaigns");
 const {
   createPaidBetaProductionComposition,
@@ -260,6 +262,7 @@ function createApp({
   videoReferenceAssetLoader = new UnconfiguredVideoReferenceAssetLoader(),
   previewRegistry = createDefaultPreviewRegistry(),
   goalRecommendationRegistry = createDefaultGoalRecommendationRegistry(),
+  campaignMeasurementRegistry = new InMemoryCampaignMeasurementRegistry(),
   campaignRepository = new InMemoryCampaignRepository({
     resolvePreviewReceipt: (...args) => previewRegistry.resolvePreviewReceipt(...args),
     validatePreview: (...args) => previewRegistry.validatePreview(...args),
@@ -494,6 +497,7 @@ function createApp({
       tokenVerifier: customerTokenVerifier,
       authorizationService: resolvedAuthorizationService,
       campaignGenerationService: resolvedCampaignGenerationService,
+      measurementRegistry: campaignMeasurementRegistry,
       logger,
     })
   );
@@ -673,6 +677,10 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     pool: brandBrainRepository.pool,
   });
   await goalRecommendationRegistry.initialize();
+  const campaignMeasurementRegistry = new PostgresCampaignMeasurementRegistry({
+    pool: brandBrainRepository.pool,
+  });
+  await campaignMeasurementRegistry.initialize();
   const billing = await createPostgresBillingProductionComposition({
     pool: brandBrainRepository.pool,
     env,
@@ -708,6 +716,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       campaignRepository,
       previewRegistry,
       goalRecommendationRegistry,
+      campaignMeasurementRegistry,
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       paidBetaCaptureService: paidBeta.service,
@@ -729,6 +738,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     campaignRepository,
     previewRegistry,
     goalRecommendationRegistry,
+    campaignMeasurementRegistry,
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,
     generationBillingOrchestrator: billing.generationBillingOrchestrator,
