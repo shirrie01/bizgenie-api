@@ -114,11 +114,11 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
 }
 
 
-function strategyMetadata(selected = 0) {
+function strategyMetadata(selected = 0, anchors = ["low-sugar option", "Botanical flavour with a crisp finish", "refreshing option for weekday lunches"]) {
   const strategy_candidates = [
-    { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses the supplied audience need", platform_execution: "Native short-form comparison" },
-    { angle: "Botanical crisp finish sensory contrast", evidence_anchors: ["Botanical flavour with a crisp finish"], specificity: "Uses the approved differentiator", platform_execution: "Reels sensory sequence" },
-    { angle: "Weekday lunch refreshment decision", evidence_anchors: ["refreshing option for weekday lunches"], specificity: "Uses the supplied audience goal", platform_execution: "Lunch-context Reels story" },
+    { angle: "Audience-led low-sugar weekday choice", evidence_anchors: [anchors[0]], specificity: "Uses supplied evidence", platform_execution: "Native short-form comparison" },
+    { angle: "Evidence-specific sensory contrast", evidence_anchors: [anchors[1] || anchors[0]], specificity: "Uses supplied evidence", platform_execution: "Reels sensory sequence" },
+    { angle: "Customer-context decision story", evidence_anchors: [anchors[2] || anchors[0]], specificity: "Uses supplied evidence", platform_execution: "Contextual Reels story" },
   ];
   return { selected_strategy: strategy_candidates[selected], strategy_candidates, selection_evidence: { selected_candidate_index: selected, criteria: ["audience_relevance", "differentiator", "platform_fit"], rationale: "Selected for the strongest supported audience and platform connection." } };
 }
@@ -175,7 +175,7 @@ describe("campaign generation prompt contract", () => {
         onJob(args) {
           assert.match(args.executionInput.compiled_prompt, /Campaign objective:/);
           assert.match(args.executionInput.compiled_prompt, /native to the selected platform/);
-          assert.match(args.executionInput.compiled_prompt, /at least three materially different strategic angles/);
+          assert.match(args.executionInput.compiled_prompt, /three to five materially different strategic angles/);
           assert.match(args.executionInput.compiled_prompt, /Preserve approved wording verbatim/);
           assert.match(args.executionInput.additional_context, /Brand:\nNorthstar Beverage/);
         },
@@ -208,7 +208,7 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /Approved claims:[\s\S]*sugar-free/);
     assert.match(finalPrompt, /Prohibited claims:[\s\S]*Clinically proven to improve health/);
     assert.match(finalPrompt, /CTA preference:[\s\S]*Find a stockist nearby/);
-    assert.match(finalPrompt, /at least three materially different strategic angles/);
+    assert.match(finalPrompt, /three to five materially different strategic angles/);
     assert.match(finalPrompt, /Reject stock hooks and category-default concepts/);
     assert.match(finalPrompt, /grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour/);
     assert.match(finalPrompt, /complete allowlist for factual\/product claims/);
@@ -241,7 +241,7 @@ describe("campaign generation prompt contract", () => {
         const prompt = compilePrompt({ ...promptOptions, userContext });
         assert.match(prompt, /Fonzo-only differentiator/);
         assert.doesNotMatch(prompt, /Lease Expert|Audi A3|Leasexpert|another brand secret/);
-        return { text: "Draft", metadata: strategyMetadata() };
+        return { text: "Draft", metadata: strategyMetadata(0, ["Fonzo-only differentiator", "Fonzo-only differentiator", "Fonzo-only differentiator"]) };
       },
     });
 
@@ -271,7 +271,7 @@ describe("campaign generation prompt contract", () => {
         assert.match(prompt, /Use audience and voice details only when they are present/);
         assert.match(prompt, /never invent missing intelligence/);
         assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
-        return { text: "Draft", metadata: strategyMetadata() };
+        return { text: "Draft", metadata: strategyMetadata(0, ["low-sugar option", "low-sugar option", "low-sugar option"]) };
       },
     });
 
