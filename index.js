@@ -506,6 +506,7 @@ function createApp({
     "/customer/campaign-recommendations",
     createCustomerCampaignRecommendationRouter({
       recommendationRegistry: goalRecommendationRegistry,
+      measurementRegistry: campaignMeasurementRegistry,
       tokenVerifier: customerTokenVerifier,
       authorizationService: resolvedAuthorizationService,
       logger,
