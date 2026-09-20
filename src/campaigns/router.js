@@ -15,6 +15,7 @@ const { identifier, uuid } = require("./schema");
 const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
 const { CampaignStrategyValidationError, CampaignVariantGenerationService } = require("./generation");
 const { safeMeasurement } = require("./measurementRegistry");
+const { GenerationIncompleteError } = require("../generation");
 
 const AUTHENTICATION_ERROR = Object.freeze({
   code: "AUTHENTICATION_REQUIRED",
@@ -31,6 +32,10 @@ const AUTHORIZATION_UNAVAILABLE_ERROR = Object.freeze({
 const STRATEGY_VALIDATION_ERROR = Object.freeze({
   code: "CAMPAIGN_STRATEGY_REJECTED",
   message: "Generated campaign strategy did not pass quality validation",
+});
+const GENERATION_INCOMPLETE_ERROR = Object.freeze({
+  code: "GENERATION_INCOMPLETE",
+  message: "Generated campaign content was incomplete and was not saved",
 });
 
 const idempotencyKey = identifier;
@@ -250,6 +255,21 @@ function safeResult(result) {
 }
 
 function sendCampaignError(error, res, logger) {
+  if (error instanceof GenerationIncompleteError) {
+    const details = error.details && typeof error.details === "object" ? error.details : {};
+    logger.warn?.("campaign generation incomplete", {
+      name: error.name,
+      code: error.code,
+      finish_reason: typeof details.finish_reason === "string" ? details.finish_reason : null,
+      missing_sections: Array.isArray(details.missing_sections) ? details.missing_sections : [],
+      retryable: typeof details.retryable === "boolean" ? details.retryable : null,
+      incomplete_reason: typeof error.metadata?.incomplete_reason === "string" ? error.metadata.incomplete_reason : null,
+      prompt_token_count: Number.isFinite(error.metadata?.prompt_token_count) ? error.metadata.prompt_token_count : null,
+      output_token_count: Number.isFinite(error.metadata?.output_token_count) ? error.metadata.output_token_count : null,
+      total_token_count: Number.isFinite(error.metadata?.total_token_count) ? error.metadata.total_token_count : null,
+    });
+    return res.status(422).json({ error: GENERATION_INCOMPLETE_ERROR });
+  }
   if (error instanceof CampaignStrategyValidationError) {
     logger.warn?.("campaign strategy validation rejected generation", {
       name: error.name,
