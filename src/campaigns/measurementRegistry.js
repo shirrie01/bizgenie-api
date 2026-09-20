@@ -50,6 +50,10 @@ class InMemoryCampaignMeasurementRegistry {
   async list(context, campaignId, variantId) {
     return this.rows.filter(r=>r.tenant_id===context.tenant_id&&r.project_id===context.project_id&&r.campaign_id===campaignId&&(!variantId||r.variant_id===variantId)).sort((a,b)=>a.observed_at.localeCompare(b.observed_at)||a.measurement_id.localeCompare(b.measurement_id)).map(clone);
   }
+  async listBrand(context, brandId) {
+    return this.rows.filter(r=>r.tenant_id===context.tenant_id&&r.project_id===context.project_id&&r.brand_id===brandId)
+      .sort((a,b)=>a.observed_at.localeCompare(b.observed_at)||a.measurement_id.localeCompare(b.measurement_id)).map(clone);
+  }
 }
 
 class PostgresCampaignMeasurementRegistry {
@@ -90,6 +94,12 @@ class PostgresCampaignMeasurementRegistry {
       const q=await this.pool.query(`select * from public.campaign_measurements where tenant_id=$1 and project_id=$2 and campaign_id=$3${suffix} order by observed_at,measurement_id`,values);
       return q.rows;
     } catch(e){throw e instanceof CampaignResourceError?e:new CampaignPersistenceError();}
+  }
+  async listBrand(context,brandId) {
+    try {
+      const q=await this.pool.query("select * from public.campaign_measurements where tenant_id=$1 and project_id=$2 and brand_id=$3 order by observed_at,measurement_id",[context.tenant_id,context.project_id,brandId]);
+      return q.rows;
+    } catch(e){throw new CampaignPersistenceError();}
   }
 }
 
