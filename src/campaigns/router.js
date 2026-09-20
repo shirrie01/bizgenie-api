@@ -83,6 +83,28 @@ const approveBody = bodyScope.extend({
   approved: z.literal(true),
 }).strict();
 const generationBody = bodyScope.extend({ expected_campaign_version: expectedVersion }).strict();
+const scheduleBody = bodyScope.extend({
+  expected_campaign_version: expectedVersion,
+  revision_id: uuid,
+  scheduled_for: z.string().datetime({ offset: true }),
+  timezone: z.string(),
+  local_datetime: z.string(),
+  utc_offset_minutes: z.number().int().min(-840).max(840),
+}).strict();
+const manualStartBody = bodyScope.extend({ expected_campaign_version: expectedVersion, revision_id: uuid }).strict();
+const manualResolutionBody = bodyScope.extend({
+  expected_campaign_version: expectedVersion,
+  attempt_id: uuid,
+  published_at: z.string().datetime({ offset: true }).optional(),
+  publication_url: z.string().url().nullable().optional(),
+  external_reference: identifier.nullable().optional(),
+  note: z.string().nullable().optional(),
+  reason: z.string().optional(),
+}).strict();
+const calendarQuery = queryScope.extend({
+  from: z.string().datetime({ offset: true }),
+  to: z.string().datetime({ offset: true }),
+}).strict();
 
 function extractBearerToken(authorizationHeader) {
   if (typeof authorizationHeader !== "string") throw new AuthenticationRequiredError();
@@ -162,6 +184,14 @@ function safeVariant(variant, item) {
     current_content: current?.content || null,
     updated_at: variant.updated_at,
   };
+}
+
+function campaignVariant(campaign, variantId) {
+  for (const item of campaign.items.values()) {
+    const variant = item.variants.get(variantId);
+    if (variant) return variant;
+  }
+  throw new CampaignResourceError();
 }
 
 function safeCampaign(campaign, { detail = false } = {}) {
@@ -434,6 +464,64 @@ function createCustomerCampaignRouter({
       return sendCampaignError(error, res, logger);
     }
   });
+
+  for (const [path, commandType] of [["schedule", "schedule"], ["reschedule", "reschedule"]]) {
+    router.post(`/:campaignId/variants/:variantId/${path}`, async (req, res) => {
+      try {
+        const body = parse(scheduleBody, req.body);
+        const campaignId = parse(uuid, req.params.campaignId);
+        const variantId = parse(uuid, req.params.variantId);
+        const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+        const currentCampaign = await repository.getCampaign(context, campaignId);
+        const variant = campaignVariant(currentCampaign, variantId);
+        const result = await repository.executeCommand(context, command({ body, campaignId, commandType, expectedVersion: body.expected_campaign_version, payload: {
+          variant_id: variantId, revision_id: body.revision_id, approval_id: variant.active_approval_id,
+          scheduled_for: body.scheduled_for, timezone: body.timezone, local_datetime: body.local_datetime, utc_offset_minutes: body.utc_offset_minutes,
+        }}));
+        return res.json({ result: safeResult(result), campaign: safeCampaign(await repository.getCampaign(context, campaignId), { detail: true }) });
+      } catch (error) { return sendCampaignError(error, res, logger); }
+    });
+  }
+
+  router.get("/:campaignId/calendar", async (req, res) => {
+    try {
+      const query = parse(calendarQuery, req.query);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: query.tenant_id, projectId: query.project_id, action: "project:read" });
+      const campaign = await repository.getCampaign(context, campaignId);
+      const entries = await repository.listCalendarEntries(context, { from: query.from, to: query.to });
+      return res.json({ entries: entries.filter((entry) => entry.campaign_id === campaign.campaign_id) });
+    } catch (error) { return sendCampaignError(error, res, logger); }
+  });
+
+  router.post("/:campaignId/variants/:variantId/manual-publication", async (req, res) => {
+    try {
+      const body = parse(manualStartBody, req.body);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+      const currentCampaign = await repository.getCampaign(context, campaignId);
+      const variant = campaignVariant(currentCampaign, variantId);
+      const result = await repository.executeCommand(context, command({ body, campaignId, commandType: "begin_manual_publication", expectedVersion: body.expected_campaign_version, payload: { variant_id: variantId, revision_id: body.revision_id, approval_id: variant.active_approval_id } }));
+      return res.json({ result: safeResult(result), campaign: safeCampaign(await repository.getCampaign(context, campaignId), { detail: true }) });
+    } catch (error) { return sendCampaignError(error, res, logger); }
+  });
+
+  for (const [path, commandType] of [["confirm", "confirm_manual_publication"], ["fail", "fail_manual_publication"], ["cancel", "cancel_manual_publication"]]) {
+    router.post(`/:campaignId/variants/:variantId/manual-publication/${path}`, async (req, res) => {
+      try {
+        const body = parse(manualResolutionBody, req.body);
+        const campaignId = parse(uuid, req.params.campaignId);
+        const variantId = parse(uuid, req.params.variantId);
+        const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: body.tenant_id, projectId: body.project_id, action: "project:write" });
+        const payload = commandType === "confirm_manual_publication"
+          ? { variant_id: variantId, attempt_id: body.attempt_id, published_at: body.published_at, publication_url: body.publication_url ?? null, external_reference: body.external_reference ?? null, note: body.note ?? null, attested_published: true }
+          : { variant_id: variantId, attempt_id: body.attempt_id, reason: body.reason, not_published_attestation: true };
+        const result = await repository.executeCommand(context, command({ body, campaignId, commandType, expectedVersion: body.expected_campaign_version, payload }));
+        return res.json({ result: safeResult(result), campaign: safeCampaign(await repository.getCampaign(context, campaignId), { detail: true }) });
+      } catch (error) { return sendCampaignError(error, res, logger); }
+    });
+  }
 
   for (const [path, commandType] of [["archive", "archive_campaign"], ["restore", "restore_campaign"]]) {
     router.post(`/:campaignId/${path}`, async (req, res) => {
