@@ -188,7 +188,8 @@ class CampaignVariantGenerationService {
       brandId: authorization.brand_id,
       generationContext: { platform: target.variant.platform, mediaType: "text" },
     });
-    const evidenceAnchors = deriveAllowableEvidenceAnchors(campaign.goal, brandContext);\n    const compiledPrompt = compileCampaignPrompt({ campaign, item: target.item, variant: target.variant, brandContext, evidenceAnchors });
+    const evidenceAnchors = deriveAllowableEvidenceAnchors(campaign.goal, brandContext);
+    const compiledPrompt = compileCampaignPrompt({ campaign, item: target.item, variant: target.variant, brandContext, evidenceAnchors });
     const job = await this.generationJobService.authorizeAndCreateJob({
       authorization,
       executionClass: "text.standard",
