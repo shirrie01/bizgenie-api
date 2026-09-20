@@ -424,3 +424,4 @@ describe("campaign generation prompt contract", () => {
     assert.doesNotMatch(CAMPAIGN_CREATIVE_BRIEF, /Morrow Atelier|fragrance|drinks|Fonzo/);
   });
 });
+
