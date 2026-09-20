@@ -13,7 +13,7 @@ const {
 } = require("./errors");
 const { identifier, uuid } = require("./schema");
 const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
-const { CampaignVariantGenerationService } = require("./generation");
+const { CampaignStrategyValidationError, CampaignVariantGenerationService } = require("./generation");
 const { safeMeasurement } = require("./measurementRegistry");
 
 const AUTHENTICATION_ERROR = Object.freeze({
@@ -27,6 +27,10 @@ const AUTHORIZATION_ERROR = Object.freeze({
 const AUTHORIZATION_UNAVAILABLE_ERROR = Object.freeze({
   code: "AUTHORIZATION_UNAVAILABLE",
   message: "Customer authorization is temporarily unavailable",
+});
+const STRATEGY_VALIDATION_ERROR = Object.freeze({
+  code: "CAMPAIGN_STRATEGY_REJECTED",
+  message: "Generated campaign strategy did not pass quality validation",
 });
 
 const idempotencyKey = identifier;
@@ -246,6 +250,13 @@ function safeResult(result) {
 }
 
 function sendCampaignError(error, res, logger) {
+  if (error instanceof CampaignStrategyValidationError) {
+    logger.warn?.("campaign strategy validation rejected generation", {
+      name: error.name,
+      reasons: Array.isArray(error.reasons) ? error.reasons : [],
+    });
+    return res.status(422).json({ error: STRATEGY_VALIDATION_ERROR });
+  }
   if (error instanceof AuthenticationRequiredError) {
     return res.status(401).json({ error: AUTHENTICATION_ERROR });
   }
