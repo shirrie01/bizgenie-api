@@ -284,19 +284,22 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
   before(async () => {
     adminPool = new Pool({ connectionString: ADMIN_DATABASE_URL, max: 4 });
     testDatabase = `bizgenie_billing_${process.pid}_${Date.now()}`.toLowerCase();
-    await adminPool.query(`SELECT pg_advisory_lock(734921)`);
+    const roleBootstrapClient = await adminPool.connect();
     try {
-      await adminPool.query(`
-        DO $
-        BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF;
-        END;
-        $`
+      await roleBootstrapClient.query("SELECT pg_advisory_lock(734921)");
+      await roleBootstrapClient.query(
+        "DO $role_bootstrap$ BEGIN " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; " +
+        "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF; " +
+        "END $role_bootstrap$"
       );
     } finally {
-      await adminPool.query(`SELECT pg_advisory_unlock(734921)`);
+      try {
+        await roleBootstrapClient.query("SELECT pg_advisory_unlock(734921)");
+      } finally {
+        roleBootstrapClient.release();
+      }
     }
     await adminPool.query(`CREATE DATABASE ${testDatabase}`);
     pool = new Pool({ connectionString: databaseUrl(testDatabase), max: 24 });
