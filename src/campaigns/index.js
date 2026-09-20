@@ -6,5 +6,6 @@ const previewRegistry = require("./previewRegistry");
 const goalRecommendation = require("./goalRecommendation");
 const router = require("./router");
 const generation = require("./generation");
+const measurementRegistry = require("./measurementRegistry");
 
-module.exports = { ...errors, ...schema, ...repository, ...postgres, ...previewRegistry, ...goalRecommendation, ...router, ...generation };
+module.exports = { ...errors, ...schema, ...repository, ...postgres, ...previewRegistry, ...goalRecommendation, ...router, ...generation, ...measurementRegistry };
