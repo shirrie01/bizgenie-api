@@ -40,7 +40,6 @@ function renderEvidenceAnchorCatalog(anchors) {
 
 function resolveEvidenceAnchorReferences(metadata, allowableAnchors) {
   const byId = new Map((allowableAnchors || []).map((anchor) => [anchor.id, anchor.exact_text]));
-  const byExactText = new Map((allowableAnchors || []).map((anchor) => [anchor.exact_text, anchor.exact_text]));
   const reasons = [];
   const resolveStrategy = (strategy, label) => {
     if (!strategy || typeof strategy !== "object") return strategy;
@@ -49,7 +48,6 @@ function resolveEvidenceAnchorReferences(metadata, allowableAnchors) {
       if (typeof ref !== "string") { reasons.push(label + " evidence anchor reference must use supplied approved evidence"); return null; }
       const value = ref.trim();
       if (byId.has(value)) return byId.get(value);
-      if (byExactText.has(value)) return byExactText.get(value);
       reasons.push(label + " evidence anchor reference must use supplied approved evidence");
       return null;
     }).filter(Boolean);
@@ -92,6 +90,17 @@ function validateStrategyCandidate(strategy, source, label) {
   return reasons;
 }
 
+const CATEGORY_DEFAULT_PATTERN = /product shot|pack shot|close[- ]?up|pour|sip|fizz|effervescence|condensation|routine demo|product demo|generic|category default|launch announcement/;
+
+function strategyExecutionText(strategy) {
+  return normalizeAngle([strategy?.angle, strategy?.specificity, strategy?.platform_execution].filter(Boolean).join(" "));
+}
+
+function evidenceSpecificity(strategy) {
+  const anchors = Array.isArray(strategy?.evidence_anchors) ? strategy.evidence_anchors : [];
+  return new Set(anchors.map((anchor) => String(anchor || "").trim()).filter((anchor) => anchor.length >= 8)).size;
+}
+
 function validateSelectedStrategy(strategy, { campaign, variant, brandContext, candidates, selection_evidence: selectionEvidence }) {
   const source = `${campaign.goal}\n${brandContext || ""}`.toLowerCase();
   const reasons = validateStrategyCandidate(strategy, source, "selected_strategy");
@@ -115,9 +124,14 @@ function validateSelectedStrategy(strategy, { campaign, variant, brandContext, c
     reasons.push("selection evidence must identify the selected candidate and a supported preference criterion");
   }
   if (typeof evidence.rationale !== "string" || evidence.rationale.trim().length < 8 || evidence.rationale.length > 500) reasons.push("selection rationale must be concise reviewable text");
-  const generic = /product shot|pack shot|pour|sip|routine demo|generic|category default|launch announcement/.test(selectedAngle);
-  const richerCandidateExists = candidates.some((candidate, index) => index !== selectedIndex && Array.isArray(candidate?.evidence_anchors) && candidate.evidence_anchors.some((anchor) => typeof anchor === "string" && anchor.trim().length >= 8) && !/product shot|pack shot|pour|sip|routine demo|generic|category default|launch announcement/.test(normalizeAngle(candidate.angle)));
-  if (generic && richerCandidateExists) reasons.push("category-default selected strategy is not acceptable when a richer evidence-specific candidate exists");
+  const selectedGeneric = CATEGORY_DEFAULT_PATTERN.test(strategyExecutionText(strategy));
+  const selectedEvidenceSpecificity = evidenceSpecificity(strategy);
+  const richerCandidateExists = candidates.some((candidate, index) =>
+    index !== selectedIndex &&
+    !CATEGORY_DEFAULT_PATTERN.test(strategyExecutionText(candidate)) &&
+    evidenceSpecificity(candidate) >= Math.max(1, selectedEvidenceSpecificity)
+  );
+  if (selectedGeneric && richerCandidateExists) reasons.push("category-default selected strategy is not acceptable when a richer evidence-specific candidate exists");
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -153,6 +167,7 @@ function compileCampaignPrompt({ campaign, item, variant, brandContext, evidence
     `Placement: ${variant.placement}`,
     "Use only facts supported by the campaign goal and Brand Brain. Do not invent product, health, commercial, availability, customer-result, or distribution claims.",
     CAMPAIGN_CREATIVE_BRIEF,
+    renderEvidenceAnchorCatalog(evidenceAnchors),
     brandContext ? "Use the separately supplied approved Brand Brain context; do not substitute context from another brand." : "Brand Brain contains no approved context; do not add unsupported brand facts.",
     "Return useful copy for this destination. Keep it as a draft for founder review; do not imply approval, scheduling, or publication.",
   ].join("\n\n");
@@ -208,10 +223,13 @@ class CampaignVariantGenerationService {
           brandContext,
           campaignObjective: campaign.goal,
           campaignInstructions: CAMPAIGN_CREATIVE_BRIEF,
+          evidenceAnchorCatalog: renderEvidenceAnchorCatalog(evidenceAnchors),
         },
       }),
     });
-    const strategyCheck = validateSelectedStrategy(generation.metadata?.selected_strategy, { campaign, variant: target.variant, brandContext, candidates: generation.metadata?.strategy_candidates, selection_evidence: generation.metadata?.selection_evidence });
+    const resolvedEvidence = resolveEvidenceAnchorReferences(generation.metadata, evidenceAnchors);
+    if (!resolvedEvidence.ok) throw new CampaignStrategyValidationError(resolvedEvidence.reasons);
+    const strategyCheck = validateSelectedStrategy(resolvedEvidence.selected_strategy, { campaign, variant: target.variant, brandContext, candidates: resolvedEvidence.candidates, selection_evidence: generation.metadata?.selection_evidence });
     if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons);
     const content = { ...emptyContent(), body: generation.text };
     const result = await this.repository.executeCommand(campaignContext, {
