@@ -19,7 +19,14 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
   const url=(name)=>{const value=new URL(ADMIN_DATABASE_URL);value.pathname=`/${name}`;return value.toString();};
   before(async()=>{
     adminPool=new Pool({connectionString:ADMIN_DATABASE_URL});
-    await adminPool.query(`select pg_advisory_lock(734921)`); try { await adminPool.query(`do $ begin if not exists(select 1 from pg_roles where rolname='anon') then create role anon nologin; end if; if not exists(select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if; if not exists(select 1 from pg_roles where rolname='service_role') then create role service_role nologin; end if; end $`); } finally { await adminPool.query(`select pg_advisory_unlock(734921)`); }
+    const roleBootstrapClient=await adminPool.connect();
+    try {
+      await roleBootstrapClient.query("select pg_advisory_lock(734921)");
+      await roleBootstrapClient.query("do $role_bootstrap$ begin if not exists(select 1 from pg_roles where rolname='anon') then create role anon nologin; end if; if not exists(select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if; if not exists(select 1 from pg_roles where rolname='service_role') then create role service_role nologin; end if; end $role_bootstrap$");
+    } finally {
+      try { await roleBootstrapClient.query("select pg_advisory_unlock(734921)"); }
+      finally { roleBootstrapClient.release(); }
+    }
     database=`bizgenie_campaign_${process.pid}_${Date.now()}`.toLowerCase();
     await adminPool.query(`create database ${database}`);
     pool=new Pool({connectionString:url(database),max:12});
