@@ -51,4 +51,31 @@ describe("campaign generation composed authorization", () => {
     assert.equal(response.status, 201);
     assert.equal(jobs.getById(response.body.generation_id).brand_id, "brand_a");
   });
+
+  it("returns a truthful quality rejection and logs safe validation reasons", async () => {
+    const stored = campaign();
+    const warnings = [];
+    const app = createApp({
+      logger: { warn(message, detail) { warnings.push({ message, detail }); }, error() {}, info() {}, log() {} },
+      customerTokenVerifier: new TokenVerifier(),
+      generationJobRepository: new InMemoryGenerationJobRepository(),
+      brandBrainRepository: new InMemoryBrandBrainRepository(),
+      authorizationRepository: new InMemoryAuthorizationRepository({
+        customerProfiles: [{ auth_user_id: USER }],
+        tenants: [{ tenant_id: "tenant_a", created_by: USER }],
+        memberships: [{ tenant_id: "tenant_a", auth_user_id: USER, role: "owner" }],
+        projects: [{ project_id: "project_a", tenant_id: "tenant_a" }],
+        brands: [{ brand_id: "brand_a", project_id: "project_a", status: "approved" }],
+      }),
+      campaignRepository: { async getCampaign() { return stored; }, async executeCommand() { assert.fail("rejected strategy must not save a revision"); } },
+      generationBillingOrchestrator: { async execute({ operation }) { return operation(); } },
+      scriptGenerator: async () => ({ text: "Rejected draft", metadata: { selected_strategy: { angle: "Generic product shot", evidence_anchors: ["Launch Fonzo in the UK"], specificity: "Generic", platform_execution: "Pack shot and sip" }, strategy_candidates: [] } }),
+    });
+    const response = await request(app).post(`/customer/campaigns/${CAMPAIGN}/variants/${VARIANT}/generate`).set("authorization", "Bearer customer-token").send({ tenant_id: "tenant_a", project_id: "project_a", expected_campaign_version: 3, idempotency_key: "campaign_generate_rejected_001" });
+    assert.equal(response.status, 422);
+    assert.equal(response.body.error.code, "CAMPAIGN_STRATEGY_REJECTED");
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].message, "campaign strategy validation rejected generation");
+    assert.ok(warnings[0].detail.reasons.includes("three to five strategy candidates are required"));
+  });
 });
