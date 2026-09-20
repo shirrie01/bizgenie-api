@@ -6,6 +6,9 @@ const {
   CAMPAIGN_CREATIVE_BRIEF,
   CampaignVariantGenerationService,
   compileCampaignPrompt,
+  deriveAllowableEvidenceAnchors,
+  renderEvidenceAnchorCatalog,
+  resolveEvidenceAnchorReferences,
   validateSelectedStrategy,
 } = require("../src/campaigns/generation");
 
@@ -133,6 +136,38 @@ const authorization = {
 };
 
 describe("campaign generation prompt contract", () => {
+  it("derives a bounded stable approved-evidence catalog and excludes governance-only prohibited claims", () => {
+    const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
+    const anchors = deriveAllowableEvidenceAnchors(objective, context);
+    assert.equal(anchors[0].id, "EA001");
+    assert.equal(anchors[0].exact_text, objective);
+    assert.ok(anchors.some((anchor) => anchor.exact_text === "Botanical flavour with a crisp finish"));
+    assert.ok(anchors.some((anchor) => anchor.exact_text === "sugar-free"));
+    assert.ok(!anchors.some((anchor) => anchor.exact_text === "Clinically proven to improve health"));
+    const catalog = renderEvidenceAnchorCatalog(anchors);
+    assert.match(catalog, /EA001 \| Introduce the new seasonal drink/);
+    assert.match(catalog, /stable IDs from this list only/);
+  });
+
+  it("resolves supplied anchor IDs to exact approved wording and fails unknown or paraphrased references closed", () => {
+    const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
+    const anchors = deriveAllowableEvidenceAnchors(objective, context);
+    const differentiator = anchors.find((anchor) => anchor.exact_text === "Botanical flavour with a crisp finish");
+    const metadata = {
+      strategy_candidates: [
+        { angle: "Audience weekday choice", evidence_anchors: ["EA001"], specificity: "Specific", platform_execution: "Reels story" },
+        { angle: "Botanical sensory contrast", evidence_anchors: [differentiator.id], specificity: "Specific", platform_execution: "Reels sequence" },
+        { angle: "Decision context story", evidence_anchors: ["EA001"], specificity: "Specific", platform_execution: "Native comparison" },
+      ],
+      selected_strategy: { angle: "Botanical sensory contrast", evidence_anchors: [differentiator.id], specificity: "Specific", platform_execution: "Reels sequence" },
+    };
+    const resolved = resolveEvidenceAnchorReferences(metadata, anchors);
+    assert.equal(resolved.ok, true);
+    assert.deepEqual(resolved.selected_strategy.evidence_anchors, ["Botanical flavour with a crisp finish"]);
+    assert.equal(resolveEvidenceAnchorReferences({ ...metadata, selected_strategy: { ...metadata.selected_strategy, evidence_anchors: ["EA999"] } }, anchors).ok, false);
+    assert.equal(resolveEvidenceAnchorReferences({ ...metadata, selected_strategy: { ...metadata.selected_strategy, evidence_anchors: ["crisp botanical flavour"] } }, anchors).ok, false);
+  });
+
   it("accepts only a bounded evidence-backed selected-strategy artefact", () => {
     const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
     const base = { campaign: { goal: objective }, variant: { platform: "instagram" }, brandContext: context };
