@@ -15,6 +15,53 @@ const GENERATION_CONFIG = Object.freeze({
   candidateCount: 1,
 });
 
+const STRATEGY_RESPONSE_SCHEMA = Object.freeze({
+  type: "OBJECT",
+  properties: {
+    draft_text: { type: "STRING" },
+    strategy_candidates: {
+      type: "ARRAY",
+      minItems: 3,
+      maxItems: 5,
+      items: {
+        type: "OBJECT",
+        properties: {
+          angle: { type: "STRING" },
+          evidence_anchors: { type: "ARRAY", items: { type: "STRING" } },
+          specificity: { type: "STRING" },
+          platform_execution: { type: "STRING" },
+          approved_claims: { type: "ARRAY", items: { type: "STRING" } },
+        },
+        required: ["angle", "evidence_anchors", "specificity", "platform_execution"],
+      },
+    },
+    selected_strategy: {
+      type: "OBJECT",
+      properties: {
+        angle: { type: "STRING" },
+        evidence_anchors: { type: "ARRAY", items: { type: "STRING" } },
+        specificity: { type: "STRING" },
+        platform_execution: { type: "STRING" },
+        approved_claims: { type: "ARRAY", items: { type: "STRING" } },
+      },
+      required: ["angle", "evidence_anchors", "specificity", "platform_execution"],
+    },
+    selection_evidence: {
+      type: "OBJECT",
+      properties: {
+        selected_candidate_index: { type: "INTEGER" },
+        criteria: {
+          type: "ARRAY",
+          items: { type: "STRING", enum: ["brand_truth", "audience_relevance", "differentiator", "platform_fit"] },
+        },
+        rationale: { type: "STRING" },
+      },
+      required: ["selected_candidate_index", "criteria", "rationale"],
+    },
+  },
+  required: ["draft_text", "strategy_candidates", "selected_strategy", "selection_evidence"],
+});
+
 const REQUIRED_SECTIONS = Object.freeze([
   "Hook",
   "Concept",
@@ -160,9 +207,22 @@ function isRetryable({ finishReason, promptBlockReason }) {
   );
 }
 
-function validateGenerationResponse(response, { model = DEFAULT_MODEL_NAME } = {}) {
+function parseStrategyEnvelope(rawText) {
+  let envelope;
+  try {
+    envelope = JSON.parse(rawText);
+  } catch {
+    return null;
+  }
+  if (!envelope || typeof envelope !== "object" || typeof envelope.draft_text !== "string") return null;
+  return envelope;
+}
+
+function validateGenerationResponse(response, { model = DEFAULT_MODEL_NAME, structuredStrategy = false } = {}) {
   const candidate = response?.candidates?.[0];
-  const text = assembleCandidateText(candidate);
+  const rawText = assembleCandidateText(candidate);
+  const envelope = structuredStrategy ? parseStrategyEnvelope(rawText) : null;
+  const text = structuredStrategy ? (envelope?.draft_text || "") : rawText;
   const missingSections = findMissingSections(text);
   const metadata = normalizeCompletionMetadata(response, candidate, model);
   const reason = incompleteReason({
@@ -173,6 +233,12 @@ function validateGenerationResponse(response, { model = DEFAULT_MODEL_NAME } = {
 
   metadata.incomplete_reason = reason;
   metadata.required_sections_complete = missingSections.length === 0;
+
+  if (structuredStrategy && envelope) {
+    metadata.strategy_candidates = envelope.strategy_candidates;
+    metadata.selected_strategy = envelope.selected_strategy;
+    metadata.selection_evidence = envelope.selection_evidence;
+  }
 
   if (reason) {
     throw new GenerationIncompleteError({
@@ -208,6 +274,7 @@ async function generateScriptWithVertex(
   }
 
   const vertexAI = new VertexAIClient({ project: projectId, location });
+  const structuredStrategy = typeof promptOptions.campaignInstructions === "string" && Boolean(promptOptions.campaignInstructions.trim());
   const compiledPrompt = compilePrompt({
     ...promptOptions,
     appName: branding.appName,
@@ -219,7 +286,9 @@ async function generateScriptWithVertex(
       role: "system",
       parts: [{ text: buildSystemInstruction(branding) }],
     },
-    generationConfig: GENERATION_CONFIG,
+    generationConfig: structuredStrategy
+      ? { ...GENERATION_CONFIG, responseMimeType: "application/json", responseSchema: STRATEGY_RESPONSE_SCHEMA }
+      : GENERATION_CONFIG,
   });
 
   const result = await model.generateContent({
@@ -231,7 +300,7 @@ async function generateScriptWithVertex(
     ],
   });
 
-  return validateGenerationResponse(result.response, { model: modelName });
+  return validateGenerationResponse(result.response, { model: modelName, structuredStrategy });
 }
 
 module.exports = {
@@ -242,6 +311,7 @@ module.exports = {
   GENERATION_INCOMPLETE_MESSAGE,
   GenerationIncompleteError,
   REQUIRED_SECTIONS,
+  STRATEGY_RESPONSE_SCHEMA,
   assembleCandidateText,
   buildSystemInstruction,
   findMissingSections,

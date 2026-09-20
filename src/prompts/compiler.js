@@ -91,7 +91,16 @@ function compilePrompt({
       typeof userContext === "string" ? userContext : "",
     ]),
     section("QUALITY RULES", qualityRules),
-    section("OUTPUT CONTRACT", outputContract),
+    section("OUTPUT CONTRACT",
+      typeof campaignInstructions === "string" && campaignInstructions.trim()
+        ? [
+            "Return one JSON object matching the provider response schema.",
+            "Put the complete reviewable customer draft in draft_text.",
+            "draft_text must include every normal required section: Hook, Concept, Script, CTA, Caption, Hashtags, and Filming instructions.",
+            "Return strategy_candidates, selected_strategy, and selection_evidence as concise reviewable artefacts only; do not return chain-of-thought.",
+          ]
+        : outputContract
+    ),
   ];
 
   return sections.filter(Boolean).join("\n\n");
