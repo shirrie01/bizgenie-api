@@ -107,10 +107,20 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
         return operation();
       },
     },
-    scriptGenerator: scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses the supplied audience need", platform_execution: "Native short-form comparison" } } })),
+    scriptGenerator: scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: strategyMetadata() })),
     branding: { appName: "BizGenie" },
   });
   return { service, calls };
+}
+
+
+function strategyMetadata(selected = 0) {
+  const strategy_candidates = [
+    { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses the supplied audience need", platform_execution: "Native short-form comparison" },
+    { angle: "Botanical crisp finish sensory contrast", evidence_anchors: ["Botanical flavour with a crisp finish"], specificity: "Uses the approved differentiator", platform_execution: "Reels sensory sequence" },
+    { angle: "Weekday lunch refreshment decision", evidence_anchors: ["refreshing option for weekday lunches"], specificity: "Uses the supplied audience goal", platform_execution: "Lunch-context Reels story" },
+  ];
+  return { selected_strategy: strategy_candidates[selected], strategy_candidates, selection_evidence: { selected_candidate_index: selected, criteria: ["audience_relevance", "differentiator", "platform_fit"], rationale: "Selected for the strongest supported audience and platform connection." } };
 }
 
 const authorization = {
@@ -126,8 +136,36 @@ describe("campaign generation prompt contract", () => {
   it("accepts only a bounded evidence-backed selected-strategy artefact", () => {
     const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
     const base = { campaign: { goal: objective }, variant: { platform: "instagram" }, brandContext: context };
-    assert.equal(validateSelectedStrategy({ angle: "Audience-led low-sugar choice", evidence_anchors: ["low-sugar option"], specificity: "Specific", platform_execution: "Reels comparison" }, base).ok, true);
-    assert.equal(validateSelectedStrategy({ angle: "Product shot and pour", evidence_anchors: ["invented audience fact"], specificity: "Distinctive", platform_execution: "Reels" }, base).ok, false);
+    const metadata = strategyMetadata();
+    assert.equal(validateSelectedStrategy(metadata.selected_strategy, { ...base, candidates: metadata.strategy_candidates, selection_evidence: metadata.selection_evidence }).ok, true);
+    assert.equal(validateSelectedStrategy({ angle: "Product shot and pour", evidence_anchors: ["invented audience fact"], specificity: "Distinctive", platform_execution: "Reels" }, { ...base, candidates: metadata.strategy_candidates, selection_evidence: metadata.selection_evidence }).ok, false);
+  });
+
+  it("rejects paraphrased candidate sets and generic selections when richer evidence exists", () => {
+    const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
+    const base = { campaign: { goal: objective }, variant: { platform: "instagram" }, brandContext: context };
+    const paraphrases = [
+      { angle:"Low sugar weekday choice", evidence_anchors:["low-sugar option"], specificity:"A", platform_execution:"Reels" },
+      { angle:"Weekday low sugar choice", evidence_anchors:["low-sugar option"], specificity:"B", platform_execution:"Reels" },
+      { angle:"Low sugar choice for weekdays", evidence_anchors:["low-sugar option"], specificity:"C", platform_execution:"Reels" },
+    ];
+    assert.equal(validateSelectedStrategy(paraphrases[0], { ...base, candidates:paraphrases, selection_evidence:{selected_candidate_index:0,criteria:["audience_relevance"],rationale:"Uses the supported audience need."} }).ok,false);
+    const rich = strategyMetadata();
+    const generic = { angle:"Product shot and pour", evidence_anchors:["low-sugar option"], specificity:"Product demo", platform_execution:"Reels" };
+    const candidates=[generic, rich.strategy_candidates[1], rich.strategy_candidates[2]];
+    const result=validateSelectedStrategy(generic,{...base,candidates,selection_evidence:{selected_candidate_index:0,criteria:["platform_fit"],rationale:"Simple native product execution."}});
+    assert.equal(result.ok,false);
+    assert.match(result.reasons.join(" "),/category-default selected strategy/);
+  });
+
+  it("rejects selection outside the candidate set and unsupported candidate evidence", () => {
+    const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
+    const base = { campaign: { goal: objective }, variant: { platform: "instagram" }, brandContext: context };
+    const metadata=strategyMetadata();
+    const outside={...metadata.selected_strategy,angle:"Different selected angle"};
+    assert.equal(validateSelectedStrategy(outside,{...base,candidates:metadata.strategy_candidates,selection_evidence:metadata.selection_evidence}).ok,false);
+    const unsupported=structuredClone(metadata.strategy_candidates); unsupported[2].evidence_anchors=["invented evidence"];
+    assert.equal(validateSelectedStrategy(metadata.selected_strategy,{...base,candidates:unsupported,selection_evidence:metadata.selection_evidence}).ok,false);
   });
 
   it("passes objective and approved Brand Brain intelligence into the compiled Instagram prompt", async () => {
@@ -145,7 +183,7 @@ describe("campaign generation prompt contract", () => {
       scriptGenerator: async (userContext, { promptOptions }) => {
         calls.generations++;
         finalPrompt = compilePrompt({ ...promptOptions, userContext });
-        return { text: "Reviewable campaign draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses the supplied audience need", platform_execution: "Native short-form comparison" } } };
+        return { text: "Reviewable campaign draft", metadata: strategyMetadata() };
       },
     });
 
@@ -203,7 +241,7 @@ describe("campaign generation prompt contract", () => {
         const prompt = compilePrompt({ ...promptOptions, userContext });
         assert.match(prompt, /Fonzo-only differentiator/);
         assert.doesNotMatch(prompt, /Lease Expert|Audi A3|Leasexpert|another brand secret/);
-        return { text: "Draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses supplied context", platform_execution: "Native execution" } } };
+        return { text: "Draft", metadata: strategyMetadata() };
       },
     });
 
@@ -233,7 +271,7 @@ describe("campaign generation prompt contract", () => {
         assert.match(prompt, /Use audience and voice details only when they are present/);
         assert.match(prompt, /never invent missing intelligence/);
         assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
-        return { text: "Draft", metadata: { selected_strategy: { angle: "Audience-led low-sugar weekday choice", evidence_anchors: ["low-sugar option"], specificity: "Uses supplied context", platform_execution: "Native execution" } } };
+        return { text: "Draft", metadata: strategyMetadata() };
       },
     });
 
