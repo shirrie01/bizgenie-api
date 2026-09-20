@@ -6,6 +6,7 @@ const { InMemoryAuthorizationRepository, createCustomerActorFromVerifiedIdentity
 const { InMemoryBrandBrainRepository } = require("../src/brand-brain");
 const { InMemoryGenerationJobRepository } = require("../src/generation-jobs");
 const { AuthenticationRequiredError } = require("../src/authorization");
+const { GenerationIncompleteError } = require("../src/generation");
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const CAMPAIGN = "11111111-1111-4111-8111-111111111112";
@@ -50,6 +51,51 @@ describe("campaign generation composed authorization", () => {
     const response = await request(app).post(`/customer/campaigns/${CAMPAIGN}/variants/${VARIANT}/generate`).set("authorization", "Bearer customer-token").send({ tenant_id: "tenant_a", project_id: "project_a", expected_campaign_version: 3, idempotency_key: "campaign_generate_001" });
     assert.equal(response.status, 201);
     assert.equal(jobs.getById(response.body.generation_id).brand_id, "brand_a");
+  });
+
+
+  it("returns a truthful incomplete-generation rejection and logs safe completion diagnostics", async () => {
+    const stored = campaign();
+    const warnings = [];
+    const app = createApp({
+      logger: { warn(message, detail) { warnings.push({ message, detail }); }, error() {}, info() {}, log() {} },
+      customerTokenVerifier: new TokenVerifier(),
+      generationJobRepository: new InMemoryGenerationJobRepository(),
+      brandBrainRepository: new InMemoryBrandBrainRepository(),
+      authorizationRepository: new InMemoryAuthorizationRepository({
+        customerProfiles: [{ auth_user_id: USER }],
+        tenants: [{ tenant_id: "tenant_a", created_by: USER }],
+        memberships: [{ tenant_id: "tenant_a", auth_user_id: USER, role: "owner" }],
+        projects: [{ project_id: "project_a", tenant_id: "tenant_a" }],
+        brands: [{ brand_id: "brand_a", project_id: "project_a", status: "approved" }],
+      }),
+      campaignRepository: { async getCampaign() { return stored; }, async executeCommand() { assert.fail("incomplete generation must not save a revision"); } },
+      generationBillingOrchestrator: { async execute({ operation }) { return operation(); } },
+      scriptGenerator: async () => {
+        throw new GenerationIncompleteError({
+          finishReason: "MAX_TOKENS",
+          missingSections: ["Hashtags", "Filming instructions"],
+          retryable: true,
+          metadata: {
+            incomplete_reason: "TOKEN_EXHAUSTION",
+            prompt_token_count: 1200,
+            output_token_count: 4096,
+            total_token_count: 5296,
+          },
+        });
+      },
+    });
+    const response = await request(app).post(`/customer/campaigns/${CAMPAIGN}/variants/${VARIANT}/generate`).set("authorization", "Bearer customer-token").send({ tenant_id: "tenant_a", project_id: "project_a", expected_campaign_version: 3, idempotency_key: "campaign_generate_incomplete_001" });
+    assert.equal(response.status, 422);
+    assert.equal(response.body.error.code, "GENERATION_INCOMPLETE");
+    assert.equal(response.body.error.message, "Generated campaign content was incomplete and was not saved");
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].message, "campaign generation incomplete");
+    assert.deepEqual(warnings[0].detail.missing_sections, ["Hashtags", "Filming instructions"]);
+    assert.equal(warnings[0].detail.finish_reason, "MAX_TOKENS");
+    assert.equal(warnings[0].detail.retryable, true);
+    assert.equal(warnings[0].detail.incomplete_reason, "TOKEN_EXHAUSTION");
+    assert.equal(warnings[0].detail.output_token_count, 4096);
   });
 
   it("returns a truthful quality rejection and logs safe validation reasons", async () => {
