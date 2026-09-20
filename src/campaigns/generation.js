@@ -88,7 +88,7 @@ function findVariant(campaign, variantId) {
   return null;
 }
 
-function compileCampaignPrompt({ campaign, item, variant, brandContext }) {
+function compileCampaignPrompt({ campaign, item, variant, brandContext, evidenceAnchors = [] }) {
   return [
     "Create reviewable campaign copy for the following existing draft. The approved Brand Brain is supplied separately in the compiled brand-context section; use only that selected context.",
     `Campaign objective: ${campaign.goal}`,
@@ -132,7 +132,7 @@ class CampaignVariantGenerationService {
       brandId: authorization.brand_id,
       generationContext: { platform: target.variant.platform, mediaType: "text" },
     });
-    const compiledPrompt = compileCampaignPrompt({ campaign, item: target.item, variant: target.variant, brandContext });
+    const evidenceAnchors = deriveAllowableEvidenceAnchors(campaign.goal, brandContext);\n    const compiledPrompt = compileCampaignPrompt({ campaign, item: target.item, variant: target.variant, brandContext, evidenceAnchors });
     const job = await this.generationJobService.authorizeAndCreateJob({
       authorization,
       executionClass: "text.standard",
@@ -172,4 +172,4 @@ class CampaignVariantGenerationService {
   }
 }
 
-module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, findVariant, validateSelectedStrategy };
+module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, deriveAllowableEvidenceAnchors, findVariant, renderEvidenceAnchorCatalog, resolveEvidenceAnchorReferences, validateSelectedStrategy };
