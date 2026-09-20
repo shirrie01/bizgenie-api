@@ -6,6 +6,62 @@ class CampaignStrategyValidationError extends Error {
   constructor(reasons) { super("Generated strategy failed validation"); this.name = "CampaignStrategyValidationError"; this.reasons = reasons; }
 }
 
+const APPROVED_EVIDENCE_LABELS = new Set([
+  "Brand", "Description", "Mission", "Vision", "Values", "Positioning", "Tone", "Writing style", "Personality",
+  "Preferred terms", "Audience", "Audience pain points", "Audience goals", "Audience objections", "Buying triggers",
+  "Differentiators", "Approved claims", "CTA preference", "Brand colours", "Brand fonts", "Photography style",
+]);
+
+function deriveAllowableEvidenceAnchors(campaignGoal, brandContext = "", { maxAnchors = 32 } = {}) {
+  const values = [];
+  const add = (text, source) => {
+    const exact_text = String(text || "").trim().replace(/^[-*]\s+/, "");
+    if (exact_text.length < 3 || values.some((entry) => entry.exact_text === exact_text)) return;
+    values.push({ source, exact_text });
+  };
+  add(campaignGoal, "campaign_objective");
+  for (const block of String(brandContext || "").split(/\n\s*\n/)) {
+    const lines = block.split("\n");
+    const match = lines[0]?.match(/^([^:]+):$/);
+    if (!match || !APPROVED_EVIDENCE_LABELS.has(match[1])) continue;
+    for (const line of lines.slice(1)) add(line, "brand_brain:" + match[1]);
+  }
+  return values.slice(0, maxAnchors).map((entry, index) => ({ id: "EA" + String(index + 1).padStart(3, "0"), ...entry }));
+}
+
+function renderEvidenceAnchorCatalog(anchors) {
+  if (!Array.isArray(anchors) || anchors.length === 0) return "";
+  return [
+    "[APPROVED EVIDENCE ANCHORS]",
+    "Use evidence_anchors as stable IDs from this list only. Never paraphrase, reconstruct, or invent an evidence anchor. Anchor IDs identify approved evidence; they do not permit broader factual claims.",
+    ...anchors.map(({ id, exact_text }) => id + " | " + exact_text),
+  ].join("\n");
+}
+
+function resolveEvidenceAnchorReferences(metadata, allowableAnchors) {
+  const byId = new Map((allowableAnchors || []).map((anchor) => [anchor.id, anchor.exact_text]));
+  const byExactText = new Map((allowableAnchors || []).map((anchor) => [anchor.exact_text, anchor.exact_text]));
+  const reasons = [];
+  const resolveStrategy = (strategy, label) => {
+    if (!strategy || typeof strategy !== "object") return strategy;
+    const refs = Array.isArray(strategy.evidence_anchors) ? strategy.evidence_anchors : [];
+    const resolved = refs.map((ref) => {
+      if (typeof ref !== "string") { reasons.push(label + " evidence anchor reference must use supplied approved evidence"); return null; }
+      const value = ref.trim();
+      if (byId.has(value)) return byId.get(value);
+      if (byExactText.has(value)) return byExactText.get(value);
+      reasons.push(label + " evidence anchor reference must use supplied approved evidence");
+      return null;
+    }).filter(Boolean);
+    return { ...strategy, evidence_anchors: resolved };
+  };
+  const candidates = Array.isArray(metadata?.strategy_candidates)
+    ? metadata.strategy_candidates.map((candidate, index) => resolveStrategy(candidate, "strategy_candidates[" + index + "]"))
+    : metadata?.strategy_candidates;
+  const selected_strategy = resolveStrategy(metadata?.selected_strategy, "selected_strategy");
+  return { ok: reasons.length === 0, reasons, candidates, selected_strategy };
+}
+
 function normalizeAngle(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 }
