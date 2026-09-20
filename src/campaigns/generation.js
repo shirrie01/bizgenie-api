@@ -6,22 +6,62 @@ class CampaignStrategyValidationError extends Error {
   constructor(reasons) { super("Generated strategy failed validation"); this.name = "CampaignStrategyValidationError"; this.reasons = reasons; }
 }
 
-function validateSelectedStrategy(strategy, { campaign, variant, brandContext }) {
+function normalizeAngle(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function angleTokens(value) {
+  return new Set(normalizeAngle(value).split(" ").filter((token) => token.length >= 4));
+}
+
+function materiallyDifferent(a, b) {
+  const left = angleTokens(a);
+  const right = angleTokens(b);
+  if (!left.size || !right.size) return false;
+  const overlap = [...left].filter((token) => right.has(token)).length;
+  return overlap / Math.min(left.size, right.size) < 0.7;
+}
+
+function validateStrategyCandidate(strategy, source, label) {
   const reasons = [];
-  if (!strategy || typeof strategy !== "object") return { ok: false, reasons: ["selected_strategy is required"] };
+  if (!strategy || typeof strategy !== "object") return [`${label} is required`];
   for (const field of ["angle", "evidence_anchors", "specificity", "platform_execution"]) {
-    if (!strategy[field] || (Array.isArray(strategy[field]) && strategy[field].length === 0)) reasons.push(`${field} is required`);
+    if (!strategy[field] || (Array.isArray(strategy[field]) && strategy[field].length === 0)) reasons.push(`${label}.${field} is required`);
   }
-  const source = `${campaign.goal}\n${brandContext || ""}`.toLowerCase();
   const anchors = Array.isArray(strategy.evidence_anchors) ? strategy.evidence_anchors : [];
-  if (anchors.some((anchor) => typeof anchor !== "string" || !anchor.trim() || !source.includes(anchor.toLowerCase().trim()))) reasons.push("evidence anchors must match supplied approved context");
-  const angle = typeof strategy.angle === "string" ? strategy.angle.toLowerCase() : "";
-  const generic = /product shot|pack shot|pour|sip|routine demo|generic|category default|launch announcement/.test(angle);
-  const hasSpecificAnchor = anchors.some((anchor) => typeof anchor === "string" && anchor.trim().length >= 8);
-  if (generic && hasSpecificAnchor) reasons.push("category-default strategy is not acceptable when richer evidence is supplied");
-  if (!hasSpecificAnchor) reasons.push("strategy must be specific to supplied evidence");
-  if (strategy.platform_execution && typeof strategy.platform_execution !== "string") reasons.push("platform_execution must be reviewable text");
-  if (strategy.approved_claims && (!Array.isArray(strategy.approved_claims) || strategy.approved_claims.some((claim) => !source.includes(String(claim).toLowerCase())))) reasons.push("approved claims must remain bounded to supplied wording");
+  if (anchors.some((anchor) => typeof anchor !== "string" || !anchor.trim() || !source.includes(anchor.toLowerCase().trim()))) reasons.push(`${label} evidence anchors must match supplied approved context`);
+  if (!anchors.some((anchor) => typeof anchor === "string" && anchor.trim().length >= 8)) reasons.push(`${label} must be specific to supplied evidence`);
+  if (strategy.platform_execution && typeof strategy.platform_execution !== "string") reasons.push(`${label}.platform_execution must be reviewable text`);
+  if (strategy.approved_claims && (!Array.isArray(strategy.approved_claims) || strategy.approved_claims.some((claim) => !source.includes(String(claim).toLowerCase())))) reasons.push(`${label} approved claims must remain bounded to supplied wording`);
+  return reasons;
+}
+
+function validateSelectedStrategy(strategy, { campaign, variant, brandContext, candidates, selection_evidence: selectionEvidence }) {
+  const source = `${campaign.goal}\n${brandContext || ""}`.toLowerCase();
+  const reasons = validateStrategyCandidate(strategy, source, "selected_strategy");
+  if (!Array.isArray(candidates) || candidates.length < 3 || candidates.length > 5) {
+    reasons.push("three to five strategy candidates are required");
+    return { ok: false, reasons };
+  }
+  candidates.forEach((candidate, index) => reasons.push(...validateStrategyCandidate(candidate, source, `strategy_candidates[${index}]`)));
+  for (let i = 0; i < candidates.length; i++) {
+    for (let j = i + 1; j < candidates.length; j++) {
+      if (!materiallyDifferent(candidates[i]?.angle, candidates[j]?.angle)) reasons.push("strategy candidates must be materially different, not paraphrases");
+    }
+  }
+  const selectedAngle = normalizeAngle(strategy?.angle);
+  const selectedIndex = candidates.findIndex((candidate) => normalizeAngle(candidate?.angle) === selectedAngle);
+  if (selectedIndex < 0) reasons.push("selected strategy must be one of the supplied candidates");
+  const evidence = selectionEvidence && typeof selectionEvidence === "object" ? selectionEvidence : {};
+  const criteria = Array.isArray(evidence.criteria) ? evidence.criteria : [];
+  const supportedCriteria = new Set(["brand_truth", "audience_relevance", "differentiator", "platform_fit"]);
+  if (evidence.selected_candidate_index !== selectedIndex || !criteria.some((criterion) => supportedCriteria.has(criterion))) {
+    reasons.push("selection evidence must identify the selected candidate and a supported preference criterion");
+  }
+  if (typeof evidence.rationale !== "string" || evidence.rationale.trim().length < 8 || evidence.rationale.length > 500) reasons.push("selection rationale must be concise reviewable text");
+  const generic = /product shot|pack shot|pour|sip|routine demo|generic|category default|launch announcement/.test(selectedAngle);
+  const richerCandidateExists = candidates.some((candidate, index) => index !== selectedIndex && Array.isArray(candidate?.evidence_anchors) && candidate.evidence_anchors.some((anchor) => typeof anchor === "string" && anchor.trim().length >= 8) && !/product shot|pack shot|pour|sip|routine demo|generic|category default|launch announcement/.test(normalizeAngle(candidate.angle)));
+  if (generic && richerCandidateExists) reasons.push("category-default selected strategy is not acceptable when a richer evidence-specific candidate exists");
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -31,7 +71,8 @@ const CAMPAIGN_CREATIVE_BRIEF = [
   "Avoid generic filler such as ‘Big news’, ‘get ready’, or ‘perfect refreshment’ unless the supplied campaign objective and Brand Brain genuinely justify it.",
   "Make the creative direction native to the selected platform and placement; do not default to a generic product shot or routine product demonstration.",
   "Use audience and voice details only when they are present in the approved Brand Brain. Do not invent a script type, audience, or voice.",
-  "Before drafting, privately compare at least three materially different strategic angles, not alternate phrasings of one hook; select the strongest defensible angle grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour.",
+  "Before drafting, compare three to five materially different strategic angles, not alternate phrasings of one hook; select the strongest defensible angle grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour.",
+  "Return concise structured strategy metadata for verification: strategy_candidates (3-5 bounded candidate artefacts), selected_strategy (exactly one candidate), and selection_evidence with selected_candidate_index, one or more criteria from brand_truth/audience_relevance/differentiator/platform_fit, and a short reviewable rationale. Do not include hidden reasoning or chain-of-thought.",
   "Reject stock hooks and category-default concepts when the supplied intelligence supports a more specific angle; keep a generic execution only when it is genuinely the strongest supported choice.",
   "Use the Concept section to name only the selected angle and its concise evidence anchor. Do not reveal or persist internal analysis or rejected angles.",
   "Treat approved claims as the complete allowlist for factual/product claims. Preserve approved wording verbatim; do not strengthen, qualify, quantify, broaden, or replace it with a synonym unless that alternative wording is separately approved. Omit a claim rather than paraphrase it when exact fidelity is not possible.",
@@ -113,7 +154,7 @@ class CampaignVariantGenerationService {
         },
       }),
     });
-    const strategyCheck = validateSelectedStrategy(generation.metadata?.selected_strategy, { campaign, variant: target.variant, brandContext });
+    const strategyCheck = validateSelectedStrategy(generation.metadata?.selected_strategy, { campaign, variant: target.variant, brandContext, candidates: generation.metadata?.strategy_candidates, selection_evidence: generation.metadata?.selection_evidence });
     if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons);
     const content = { ...emptyContent(), body: generation.text };
     const result = await this.repository.executeCommand(campaignContext, {
