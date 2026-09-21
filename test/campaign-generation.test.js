@@ -111,7 +111,11 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
         return operation();
       },
     },
-    scriptGenerator: scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: strategyIdMetadata() })),
+    scriptGenerator: async (...args) => {
+      calls.generations++;
+      const generate = scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: strategyIdMetadata() }));
+      return generate(...args);
+    },
     branding: { appName: "BizGenie" },
   });
   return { service, calls };
