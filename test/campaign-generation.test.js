@@ -378,7 +378,7 @@ describe("campaign generation prompt contract", () => {
       service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }),
       /Generated strategy failed validation/
     );
-    assert.equal(calls.generations, 0);
+    assert.equal(calls.billed, 1);
     assert.equal(calls.saves, 0);
   });
 
