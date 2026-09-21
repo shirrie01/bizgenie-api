@@ -232,7 +232,6 @@ describe("campaign generation prompt contract", () => {
         },
       },
       scriptGenerator: async (userContext, { promptOptions }) => {
-        calls.generations++;
         finalPrompt = compilePrompt({ ...promptOptions, userContext });
         return { text: "Reviewable campaign draft", metadata: strategyIdMetadata() };
       },
