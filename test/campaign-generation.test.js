@@ -348,7 +348,13 @@ describe("campaign generation prompt contract", () => {
     const bad = makeService({ scriptGenerator: async () => ({ text: "Draft", metadata: strategyMetadata() }) });
     await assert.rejects(
       bad.service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }),
-      /Generated strategy failed validation/
+      (error) => {
+        assert.equal(error.message, "Generated strategy failed validation");
+        assert.equal(error.stage, "evidence_anchor_resolution");
+        assert.equal(error.generationJobId, "generation_job_1");
+        assert.ok(error.reasons.some((reason) => reason.includes("evidence anchor reference")));
+        return true;
+      }
     );
     assert.equal(bad.calls.saves, 0);
   });
@@ -376,9 +382,16 @@ describe("campaign generation prompt contract", () => {
 
     await assert.rejects(
       service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }),
-      /Generated strategy failed validation/
+      (error) => {
+        assert.equal(error.message, "Generated strategy failed validation");
+        assert.equal(error.stage, "final_draft_execution_fidelity");
+        assert.equal(error.generationJobId, "generation_job_1");
+        assert.ok(error.reasons.includes("final draft collapses into category-default execution not present in the selected strategy"));
+        return true;
+      }
     );
     assert.equal(calls.billed, 1);
+    assert.equal(calls.generations, 1);
     assert.equal(calls.saves, 0);
   });
 
