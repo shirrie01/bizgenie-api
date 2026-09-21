@@ -3,7 +3,13 @@ const { resolveBrandBrainContext } = require("../brand-brain");
 const { emptyContent } = require("./schema");
 
 class CampaignStrategyValidationError extends Error {
-  constructor(reasons) { super("Generated strategy failed validation"); this.name = "CampaignStrategyValidationError"; this.reasons = reasons; }
+  constructor(reasons, { stage = null, generationJobId = null } = {}) {
+    super("Generated strategy failed validation");
+    this.name = "CampaignStrategyValidationError";
+    this.reasons = reasons;
+    this.stage = stage;
+    this.generationJobId = generationJobId;
+  }
 }
 
 const APPROVED_EVIDENCE_LABELS = new Set([
@@ -242,11 +248,11 @@ class CampaignVariantGenerationService {
       }),
     });
     const resolvedEvidence = resolveEvidenceAnchorReferences(generation.metadata, evidenceAnchors);
-    if (!resolvedEvidence.ok) throw new CampaignStrategyValidationError(resolvedEvidence.reasons);
+    if (!resolvedEvidence.ok) throw new CampaignStrategyValidationError(resolvedEvidence.reasons, { stage: "evidence_anchor_resolution", generationJobId: job.job_id });
     const strategyCheck = validateSelectedStrategy(resolvedEvidence.selected_strategy, { campaign, variant: target.variant, brandContext, candidates: resolvedEvidence.candidates, selection_evidence: generation.metadata?.selection_evidence });
-    if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons);
+    if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons, { stage: "selected_strategy_validation", generationJobId: job.job_id });
     const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
-    if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons);
+    if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons, { stage: "final_draft_execution_fidelity", generationJobId: job.job_id });
     const content = { ...emptyContent(), body: generation.text };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",
