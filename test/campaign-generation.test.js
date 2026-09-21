@@ -9,6 +9,7 @@ const {
   deriveAllowableEvidenceAnchors,
   renderEvidenceAnchorCatalog,
   resolveEvidenceAnchorReferences,
+  validateDraftExecutionFidelity,
   validateSelectedStrategy,
 } = require("../src/campaigns/generation");
 
@@ -361,6 +362,46 @@ describe("campaign generation prompt contract", () => {
     const result = validateSelectedStrategy(disguised, { ...base, candidates, selection_evidence: { selected_candidate_index: 0, criteria: ["platform_fit"], rationale: "Selected as a native short-form execution." } });
     assert.equal(result.ok, false);
     assert.match(result.reasons.join(" "), /category-default selected strategy/);
+  });
+
+  it("rejects a category-default final draft that escaped through non-generic selected-strategy metadata", async () => {
+    const escapedDraft = [
+      "Hook: Dynamic close-up product shot.",
+      "Script: Pour over ice, show fizz, then a sip and reaction.",
+      "Filming instructions: End on a final pack shot.",
+    ].join("\n");
+    const { service, calls } = makeService({
+      scriptGenerator: async () => ({ text: escapedDraft, metadata: strategyIdMetadata() }),
+    });
+
+    await assert.rejects(
+      service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }),
+      /Generated strategy failed validation/
+    );
+    assert.equal(calls.generations, 0);
+    assert.equal(calls.saves, 0);
+  });
+
+  it("accepts a final draft whose execution does not collapse beneath the selected strategy", () => {
+    const metadata = strategyIdMetadata();
+    const result = validateDraftExecutionFidelity(
+      "Hook: Make the weekday lunch decision the story. Contrast the audience choice through a native short-form comparison.",
+      metadata.selected_strategy
+    );
+    assert.equal(result.ok, true);
+  });
+
+  it("applies final-draft fidelity horizontally to non-drinks execution", () => {
+    const selected = {
+      angle: "Appointment-anxiety myth check",
+      evidence_anchors: ["EA001"],
+      specificity: "Uses supplied audience evidence",
+      platform_execution: "Native short-form myth-versus-fact sequence",
+    };
+    assert.equal(validateDraftExecutionFidelity(
+      "Hook: Start with the customer question, then reveal the evidence-backed answer through a myth-versus-fact sequence.",
+      selected
+    ).ok, true);
   });
 
   it("preserves the reviewable draft campaign brief contract without brand-specific shared copy", () => {
