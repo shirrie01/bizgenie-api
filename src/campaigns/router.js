@@ -271,10 +271,14 @@ function sendCampaignError(error, res, logger) {
     return res.status(422).json({ error: GENERATION_INCOMPLETE_ERROR });
   }
   if (error instanceof CampaignStrategyValidationError) {
-    logger.warn?.("campaign strategy validation rejected generation", {
+    logger.warn?.(JSON.stringify({
+      event: "campaign_strategy_validation_rejected",
+      code: STRATEGY_VALIDATION_ERROR.code,
       name: error.name,
+      generation_job_id: typeof error.generationJobId === "string" ? error.generationJobId : null,
+      rejection_stage: typeof error.stage === "string" ? error.stage : null,
       reasons: Array.isArray(error.reasons) ? error.reasons : [],
-    });
+    }));
     return res.status(422).json({ error: STRATEGY_VALIDATION_ERROR });
   }
   if (error instanceof AuthenticationRequiredError) {
