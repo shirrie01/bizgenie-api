@@ -101,6 +101,20 @@ function evidenceSpecificity(strategy) {
   return new Set(anchors.map((anchor) => String(anchor || "").trim()).filter((anchor) => anchor.length >= 8)).size;
 }
 
+function validateDraftExecutionFidelity(draftText, strategy) {
+  const reasons = [];
+  const draftExecution = normalizeAngle(draftText);
+  if (!draftExecution) {
+    reasons.push("final draft execution is required");
+    return { ok: false, reasons };
+  }
+  const selectedExecution = strategyExecutionText(strategy);
+  if (!CATEGORY_DEFAULT_PATTERN.test(selectedExecution) && CATEGORY_DEFAULT_PATTERN.test(draftExecution)) {
+    reasons.push("final draft collapses into category-default execution not present in the selected strategy");
+  }
+  return { ok: reasons.length === 0, reasons };
+}
+
 function validateSelectedStrategy(strategy, { campaign, variant, brandContext, candidates, selection_evidence: selectionEvidence }) {
   const source = `${campaign.goal}\n${brandContext || ""}`.toLowerCase();
   const reasons = validateStrategyCandidate(strategy, source, "selected_strategy");
@@ -231,6 +245,8 @@ class CampaignVariantGenerationService {
     if (!resolvedEvidence.ok) throw new CampaignStrategyValidationError(resolvedEvidence.reasons);
     const strategyCheck = validateSelectedStrategy(resolvedEvidence.selected_strategy, { campaign, variant: target.variant, brandContext, candidates: resolvedEvidence.candidates, selection_evidence: generation.metadata?.selection_evidence });
     if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons);
+    const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
+    if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons);
     const content = { ...emptyContent(), body: generation.text };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",
@@ -247,4 +263,4 @@ class CampaignVariantGenerationService {
   }
 }
 
-module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, deriveAllowableEvidenceAnchors, findVariant, renderEvidenceAnchorCatalog, resolveEvidenceAnchorReferences, validateSelectedStrategy };
+module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, deriveAllowableEvidenceAnchors, findVariant, renderEvidenceAnchorCatalog, resolveEvidenceAnchorReferences, validateDraftExecutionFidelity, validateSelectedStrategy };
