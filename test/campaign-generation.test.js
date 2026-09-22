@@ -261,7 +261,7 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /three to five materially different strategic angles/);
     assert.match(finalPrompt, /different primary strategic route/);
     assert.match(finalPrompt, /audience tension or decision context, product\/brand truth, differentiator, and channel behaviour/i);
-    assert.match(finalPrompt, /changing only the hook, wording, shot order, or evidence anchor does not create a different route/i);
+    assert.match(finalPrompt, /changing only the hook, wording, shot order, platform treatment, or evidence anchor does not create a different route/i);
     assert.match(finalPrompt, /Reject stock hooks and category-default concepts/);
     assert.match(finalPrompt, /grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour/);
     assert.match(finalPrompt, /complete allowlist for factual\/product claims/);
