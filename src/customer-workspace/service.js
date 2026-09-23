@@ -85,6 +85,32 @@ class CustomerWorkspaceService {
     return this.#provision(customer.auth_user_id, workspace);
   }
 
+  async getSelectedBrandBrain({ actor }) {
+    const customer = parseCustomerActor(actor);
+    const scope = customer.trusted_scope;
+    if (!scope) {
+      throw new CustomerWorkspaceValidationError([
+        { path: "trusted_scope", code: "unauthorized", message: "A trusted selected workspace is required" },
+      ]);
+    }
+    const selected = await this.repository.getAuthorizedWorkspaceSelection({
+      auth_user_id: customer.auth_user_id,
+      ...scope,
+    });
+    if (!selected) {
+      throw new CustomerWorkspaceValidationError([
+        { path: "trusted_scope", code: "unauthorized", message: "Workspace selection is not authorized" },
+      ]);
+    }
+    const record = await this.brandBrainRepository.getByProjectAndBrand(scope.project_id, scope.brand_id);
+    if (!record) {
+      throw new CustomerWorkspaceValidationError([
+        { path: "trusted_scope", code: "unauthorized", message: "Selected Brand Brain is not owned by this customer" },
+      ]);
+    }
+    return { status: "ready", brand_brain: BrandBrainSchema.parse(record) };
+  }
+
   async correctSelectedBrandBrain({ actor, request }) {
     const customer = parseCustomerActor(actor);
     const scope = customer.trusted_scope;

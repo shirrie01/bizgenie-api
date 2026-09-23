@@ -95,6 +95,15 @@ function createCustomerWorkspaceRouter({ service, tokenVerifier, logger = consol
     }
   });
 
+  router.get("/brand-brain", async (req, res) => {
+    try {
+      const actor = await scopedActorForRequest(req);
+      return res.json(await service.getSelectedBrandBrain({ actor }));
+    } catch (error) {
+      return sendWorkspaceError({ error, res, logger, path: req.path });
+    }
+  });
+
   router.put("/brand-brain", async (req, res) => {
     try {
       const actor = await scopedActorForRequest(req);
