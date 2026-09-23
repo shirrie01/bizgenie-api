@@ -15,7 +15,8 @@ const SCOPE_B = { tenant_id: "tenant_a", project_id: "project_b", brand_id: "bra
 
 function brain(scope, name) {
   return {
-    ...scope,
+    project_id: scope.project_id,
+    brand_id: scope.brand_id,
     name,
     identity: { positioning: `${name} positioning` },
     commercial: { approved_claims: [`${name} approved claim`] },
