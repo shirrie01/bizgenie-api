@@ -66,6 +66,20 @@ function correction(name = "Fonzo") {
 }
 
 describe("customer Brand Brain correction boundary", () => {
+  it("reads only the trusted selected Brand Brain", async () => {
+    const { client } = fixture();
+    const response = await client.get("/customer/workspace/brand-brain").set("authorization", "Bearer token");
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.status, "ready");
+    assert.equal(response.body.brand_brain.brand_id, SCOPE_A.brand_id);
+    assert.equal(response.body.brand_brain.project_id, SCOPE_A.project_id);
+    assert.equal(response.body.brand_brain.name, "Fonzo");
+
+    const noScope = fixture(SCOPE_A, false);
+    const denied = await noScope.client.get("/customer/workspace/brand-brain").set("authorization", "Bearer token");
+    assert.equal(denied.status, 400);
+  });
+
   it("updates only the trusted selected Brand Brain and preserves governance timestamps", async () => {
     const { client, brandBrainRepository } = fixture();
     const beforeB = await brandBrainRepository.getByProjectAndBrand(SCOPE_B.project_id, SCOPE_B.brand_id);
