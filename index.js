@@ -713,6 +713,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       customerScopeProvisioner,
       customerTokenVerifier,
       generationJobRepository,
+      mediaAssetRepository: media.mediaAssetRepository,
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
       imageProvider: media.imageProvider,
       videoGenerationRepository,
