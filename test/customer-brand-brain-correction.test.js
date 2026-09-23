@@ -35,9 +35,19 @@ function fixture(scope = SCOPE_A, includeScope = true) {
   const brandBrainRepository = new InMemoryBrandBrainRepository();
   brandBrainRepository.upsert(brain(SCOPE_A, "Fonzo"));
   brandBrainRepository.upsert(brain(SCOPE_B, "Lease Expert"));
-  const verifier = { async verifyIdentityAccessToken() {
-    return createCustomerActorFromVerifiedIdentity({ verifiedAuthUserId: USER, ...(includeScope ? { verifiedScope: scope } : {}) });
-  } };
+  const verifier = {
+    async verifyIdentityAccessToken() {
+      return createCustomerActorFromVerifiedIdentity({
+        verifiedAuthUserId: USER,
+      });
+    },
+    async verifyAccessToken() {
+      return createCustomerActorFromVerifiedIdentity({
+        verifiedAuthUserId: USER,
+        ...(includeScope ? { verifiedScope: scope } : {}),
+      });
+    },
+  };
   const app = createApp({
     customerWorkspaceRepository: workspaceRepository,
     brandBrainRepository,

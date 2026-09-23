@@ -39,6 +39,11 @@ function createCustomerWorkspaceRouter({ service, tokenVerifier, logger = consol
     return tokenVerifier.verifyAccessToken(accessToken);
   }
 
+  async function scopedActorForRequest(req) {
+    const accessToken = extractBearerToken(req.header("authorization"));
+    return tokenVerifier.verifyAccessToken(accessToken);
+  }
+
   router.get("/", async (req, res) => {
     try {
       const actor = await actorForRequest(req);
@@ -92,7 +97,7 @@ function createCustomerWorkspaceRouter({ service, tokenVerifier, logger = consol
 
   router.put("/brand-brain", async (req, res) => {
     try {
-      const actor = await actorForRequest(req);
+      const actor = await scopedActorForRequest(req);
       return res.json(await service.correctSelectedBrandBrain({
         actor,
         request: req.body && typeof req.body === "object" ? req.body : {},
