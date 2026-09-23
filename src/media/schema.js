@@ -16,6 +16,7 @@ const MediaAssetSchema = z.object({
   asset_id: uuid,
   tenant_id: identifier,
   project_id: identifier,
+  brand_id: identifier.optional(),
   generation_job_id: identifier.optional(),
   generation_id: identifier.optional(),
   source_kind: z.enum(["generated", "reference"]),
@@ -33,6 +34,9 @@ const MediaAssetSchema = z.object({
 }).strict().superRefine((asset, ctx) => {
   if (asset.source_kind === "generated" && (!asset.generation_job_id || !asset.generation_id)) {
     ctx.addIssue({ code: "custom", path: ["generation_job_id"], message: "Generated media requires immutable generation authority" });
+  }
+  if (asset.source_kind === "generated" && asset.brand_id) {
+    ctx.addIssue({ code: "custom", path: ["brand_id"], message: "Generated media brand authority comes from its immutable generation job" });
   }
   if (asset.media_kind === "image" && !asset.mime_type.startsWith("image/")) {
     ctx.addIssue({ code: "custom", path: ["mime_type"], message: "Image media requires an image MIME type" });

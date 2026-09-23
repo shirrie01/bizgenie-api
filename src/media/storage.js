@@ -240,6 +240,7 @@ class RightsAwareMediaReferenceLoader {
       assetId: request?.asset_id,
       tenantId: request?.tenant_id,
       projectId: request?.project_id,
+      brandId: request?.brand_id,
       requiredRight: request?.required_right,
       mediaKind: "image",
     });

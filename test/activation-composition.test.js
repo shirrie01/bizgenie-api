@@ -32,7 +32,7 @@ function mediaPool() {
   return {
     async query(sql) {
       if (sql.includes("to_regclass('public.media_assets')")) {
-        return { rows: [{ relation: "media_assets", generation_authority: true, authority_trigger: true }] };
+        return { rows: [{ relation: "media_assets", generation_authority: true, reference_brand_authority: true, brand_column: true, authority_trigger: true }] };
       }
       if (sql.includes("information_schema.role_table_grants")) {
         return { rowCount: 0, rows: [] };

@@ -21,6 +21,7 @@ class InMemoryMediaAssetRepository extends MediaAssetRepository {
 
   async create(value) {
     const asset = MediaAssetSchema.parse(value);
+    if (asset.source_kind === "reference" && !asset.brand_id) throw new MediaPersistenceError();
     if (this.assets.has(asset.asset_id)) throw new MediaPersistenceError();
     if ([...this.assets.values()].some((row) => row.storage_bucket === asset.storage_bucket && row.storage_key === asset.storage_key)) {
       throw new MediaPersistenceError();
@@ -35,9 +36,10 @@ class InMemoryMediaAssetRepository extends MediaAssetRepository {
     return copy(asset);
   }
 
-  async findAuthorizedReference({ assetId, tenantId, projectId, requiredRight, mediaKind = "image" }) {
+  async findAuthorizedReference({ assetId, tenantId, projectId, brandId, requiredRight, mediaKind = "image" }) {
     const asset = await this.findOwned({ assetId, tenantId, projectId });
     if (!asset || asset.media_kind !== mediaKind || !asset.allowed_uses.includes(requiredRight)) return null;
+    if (asset.source_kind === "reference" && (!brandId || asset.brand_id !== brandId)) return null;
     return asset;
   }
 }
@@ -59,13 +61,23 @@ class PostgresMediaAssetRepository extends MediaAssetRepository {
                     AND conname = 'media_assets_generation_authority_fkey'
                ) AS generation_authority,
                EXISTS (
+                 SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'public.media_assets'::regclass
+                    AND conname = 'media_assets_reference_brand_fkey'
+               ) AS reference_brand_authority,
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'media_assets'
+                    AND column_name = 'brand_id'
+               ) AS brand_column,
+               EXISTS (
                  SELECT 1 FROM pg_trigger
                   WHERE tgrelid = 'public.media_assets'::regclass
                     AND tgname = 'protect_media_asset_authority'
                     AND NOT tgisinternal
                ) AS authority_trigger`);
       const row = result.rows[0];
-      if (!row?.relation || row.generation_authority !== true || row.authority_trigger !== true) {
+      if (!row?.relation || row.generation_authority !== true || row.reference_brand_authority !== true || row.brand_column !== true || row.authority_trigger !== true) {
         throw new MediaConfigurationError();
       }
       const unsafe = await this.pool.query(`
@@ -81,16 +93,17 @@ class PostgresMediaAssetRepository extends MediaAssetRepository {
 
   async create(value) {
     const asset = MediaAssetSchema.parse(value);
+    if (asset.source_kind === "reference" && !asset.brand_id) throw new MediaPersistenceError();
     try {
       const result = await this.pool.query(
         `INSERT INTO public.media_assets
-          (asset_id, tenant_id, project_id, generation_job_id, generation_id,
+          (asset_id, tenant_id, project_id, brand_id, generation_job_id, generation_id,
            source_kind, media_kind, storage_bucket, storage_key, mime_type,
            width, height, duration_seconds, byte_size, allowed_uses, status, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
          RETURNING *`,
         [asset.asset_id, asset.tenant_id, asset.project_id,
-          asset.generation_job_id || null, asset.generation_id || null,
+          asset.brand_id || null, asset.generation_job_id || null, asset.generation_id || null,
           asset.source_kind, asset.media_kind, asset.storage_bucket,
           asset.storage_key, asset.mime_type, asset.width || null,
           asset.height || null, asset.duration_seconds || null,
@@ -117,13 +130,14 @@ class PostgresMediaAssetRepository extends MediaAssetRepository {
     }
   }
 
-  async findAuthorizedReference({ assetId, tenantId, projectId, requiredRight, mediaKind = "image" }) {
+  async findAuthorizedReference({ assetId, tenantId, projectId, brandId, requiredRight, mediaKind = "image" }) {
     try {
       const result = await this.pool.query(
         `SELECT * FROM public.media_assets
           WHERE asset_id = $1 AND tenant_id = $2 AND project_id = $3
-            AND media_kind = $4 AND status = 'active' AND $5 = ANY(allowed_uses)`,
-        [assetId, tenantId, projectId, mediaKind, requiredRight]
+            AND media_kind = $4 AND status = 'active' AND $5 = ANY(allowed_uses)
+            AND (source_kind = 'generated' OR (source_kind = 'reference' AND brand_id = $6))`,
+        [assetId, tenantId, projectId, mediaKind, requiredRight, brandId || null]
       );
       return result.rows[0] ? this.toAsset(result.rows[0]) : null;
     } catch (_error) {
@@ -137,6 +151,7 @@ class PostgresMediaAssetRepository extends MediaAssetRepository {
       asset_id: row.asset_id,
       tenant_id: row.tenant_id,
       project_id: row.project_id,
+      ...(row.brand_id ? { brand_id: row.brand_id } : {}),
       ...(row.generation_job_id ? { generation_job_id: row.generation_job_id } : {}),
       ...(row.generation_id ? { generation_id: row.generation_id } : {}),
       source_kind: row.source_kind,
