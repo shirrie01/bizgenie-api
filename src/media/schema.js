@@ -38,9 +38,6 @@ const MediaAssetSchema = z.object({
   if (asset.source_kind === "generated" && asset.brand_id) {
     ctx.addIssue({ code: "custom", path: ["brand_id"], message: "Generated media brand authority comes from its immutable generation job" });
   }
-  if (asset.source_kind === "reference" && !asset.brand_id) {
-    ctx.addIssue({ code: "custom", path: ["brand_id"], message: "Reference media requires immutable brand authority" });
-  }
   if (asset.media_kind === "image" && !asset.mime_type.startsWith("image/")) {
     ctx.addIssue({ code: "custom", path: ["mime_type"], message: "Image media requires an image MIME type" });
   }
