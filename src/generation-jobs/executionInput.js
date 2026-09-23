@@ -18,6 +18,9 @@ const EXECUTION_INPUT_ALLOWED_KEYS = Object.freeze([
   "aspect_ratio",
   "additional_context",
   "product_service_context",
+  "execution_mode",
+  "execution_brief",
+  "supplied_asset_refs",
 ]);
 
 const MAX_VALUE_LENGTH = 8_000;

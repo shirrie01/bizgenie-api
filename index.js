@@ -276,6 +276,7 @@ function createApp({
   customerScopeProvisioner,
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
+  mediaAssetRepository = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   campaignGenerationService,
@@ -305,6 +306,7 @@ function createApp({
   const resolvedCampaignGenerationService = campaignGenerationService || new CampaignVariantGenerationService({
     repository: campaignRepository,
     brandBrainRepository,
+    mediaAssetRepository,
     generationJobService: resolvedGenerationJobService,
     generationBillingOrchestrator,
     scriptGenerator,
@@ -711,6 +713,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       customerScopeProvisioner,
       customerTokenVerifier,
       generationJobRepository,
+      mediaAssetRepository: media.mediaAssetRepository,
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
       imageProvider: media.imageProvider,
       videoGenerationRepository,

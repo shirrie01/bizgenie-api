@@ -92,7 +92,26 @@ const approveBody = bodyScope.extend({
   preview_id: uuid,
   approved: z.literal(true),
 }).strict();
-const generationBody = bodyScope.extend({ expected_campaign_version: expectedVersion }).strict();
+const suppliedAsset = z.object({
+  asset_id: uuid,
+  role: z.enum(["primary", "supporting"]),
+}).strict();
+const generationBody = bodyScope.extend({
+  expected_campaign_version: expectedVersion,
+  execution_mode: z.enum(["ai", "human", "hybrid"]).optional().default("ai"),
+  execution_brief: z.string().trim().min(1).max(4000).optional(),
+  supplied_assets: z.array(suppliedAsset).max(10).superRefine((assets, ctx) => {
+    const seen = new Set();
+    assets.forEach((asset, index) => {
+      if (seen.has(asset.asset_id)) ctx.addIssue({ code: "custom", path: [index, "asset_id"], message: "Duplicate supplied asset" });
+      seen.add(asset.asset_id);
+    });
+  }).optional().default([]),
+}).strict().superRefine((body, ctx) => {
+  if (body.execution_mode === "hybrid" && body.supplied_assets.length === 0) {
+    ctx.addIssue({ code: "custom", path: ["supplied_assets"], message: "Hybrid execution requires supplied assets" });
+  }
+});
 const scheduleBody = bodyScope.extend({
   expected_campaign_version: expectedVersion,
   revision_id: uuid,
@@ -333,7 +352,16 @@ function createCustomerCampaignRouter({
         action: "generation:create",
         requireApprovedBrand: true,
       });
-      const result = await campaignGenerationService.generate({ authorization: generationAuthorization, campaignId, variantId, expectedCampaignVersion: body.expected_campaign_version, idempotencyKey: body.idempotency_key });
+      const result = await campaignGenerationService.generate({
+        authorization: generationAuthorization,
+        campaignId,
+        variantId,
+        expectedCampaignVersion: body.expected_campaign_version,
+        idempotencyKey: body.idempotency_key,
+        executionMode: body.execution_mode,
+        executionBrief: body.execution_brief,
+        suppliedAssets: body.supplied_assets,
+      });
       return res.status(201).json({ generation_id: result.generation_id, campaign: safeCampaign(result.campaign, { detail: true }) });
     } catch (error) { return sendCampaignError(error, res, logger); }
   });
