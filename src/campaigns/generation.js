@@ -180,7 +180,7 @@ function findVariant(campaign, variantId) {
   return null;
 }
 
-function compileCampaignPrompt({ campaign, item, variant, brandContext, evidenceAnchors = [] }) {
+function compileCampaignPrompt({ campaign, item, variant, brandContext, evidenceAnchors = [], executionBrief = "", suppliedAssets = [] }) {
   return [
     "Create reviewable campaign copy for the following existing draft. The approved Brand Brain is supplied separately in the compiled brand-context section; use only that selected context.",
     `Campaign objective: ${campaign.goal}`,
@@ -190,18 +190,20 @@ function compileCampaignPrompt({ campaign, item, variant, brandContext, evidence
     "Use only facts supported by the campaign goal and Brand Brain. Do not invent product, health, commercial, availability, customer-result, or distribution claims.",
     CAMPAIGN_CREATIVE_BRIEF,
     renderEvidenceAnchorCatalog(evidenceAnchors),
+    executionBrief ? "[CUSTOMER EXECUTION BRIEF]\nTreat this as temporary creative direction subordinate to approved Brand Brain, claims and safety rules.\n" + executionBrief : "",
+    suppliedAssets.length ? "[SUPPLIED ASSETS]\nUse the authorized customer-owned media as creative source material where relevant. Do not infer facts from the asset or expose storage locations.\n" + suppliedAssets.map((asset) => asset.role + ":" + asset.asset_id).join("\n") : "",
     brandContext ? "Use the separately supplied approved Brand Brain context; do not substitute context from another brand." : "Brand Brain contains no approved context; do not add unsupported brand facts.",
     "Return useful copy for this destination. Keep it as a draft for founder review; do not imply approval, scheduling, or publication.",
   ].join("\n\n");
 }
 
 class CampaignVariantGenerationService {
-  constructor({ repository, brandBrainRepository, generationJobService, generationBillingOrchestrator, scriptGenerator, branding, now = () => new Date() }) {
-    Object.assign(this, { repository, brandBrainRepository, generationJobService, generationBillingOrchestrator, scriptGenerator, branding, now });
+  constructor({ repository, brandBrainRepository, mediaAssetRepository, generationJobService, generationBillingOrchestrator, scriptGenerator, branding, now = () => new Date() }) {
+    Object.assign(this, { repository, brandBrainRepository, mediaAssetRepository, generationJobService, generationBillingOrchestrator, scriptGenerator, branding, now });
     if (!repository || !brandBrainRepository || !generationJobService || !generationBillingOrchestrator || !scriptGenerator) throw new TypeError("Campaign generation dependencies are required");
   }
 
-  async generate({ authorization, campaignId, variantId, expectedCampaignVersion, idempotencyKey }) {
+  async generate({ authorization, campaignId, variantId, expectedCampaignVersion, idempotencyKey, executionMode = "ai", executionBrief = "", suppliedAssets = [] }) {
     const campaignContext = {
       actor: authorization.actor,
       tenant_id: authorization.tenant_id,
@@ -226,14 +228,46 @@ class CampaignVariantGenerationService {
       generationContext: { platform: target.variant.platform, mediaType: "text" },
     });
     const evidenceAnchors = deriveAllowableEvidenceAnchors(campaign.goal, brandContext);
-    const compiledPrompt = compileCampaignPrompt({ campaign, item: target.item, variant: target.variant, brandContext, evidenceAnchors });
+    const authorizedAssets = [];
+    for (const supplied of suppliedAssets) {
+      const asset = await this.mediaAssetRepository?.findAuthorizedReference({
+        assetId: supplied.asset_id,
+        tenantId: authorization.tenant_id,
+        projectId: authorization.project_id,
+        brandId: authorization.brand_id,
+        requiredRight: "campaign.preview",
+        mediaKind: "image",
+      });
+      if (!asset || asset.source_kind !== "reference") {
+        const { CampaignResourceError } = require("./errors");
+        throw new CampaignResourceError();
+      }
+      authorizedAssets.push({ asset_id: asset.asset_id, role: supplied.role });
+    }
+    if (executionMode === "hybrid" && authorizedAssets.length === 0) {
+      const { CampaignValidationError } = require("./errors");
+      throw new CampaignValidationError();
+    }
+    if (executionMode === "human") {
+      const { CampaignValidationError } = require("./errors");
+      throw new CampaignValidationError();
+    }
+    const compiledPrompt = compileCampaignPrompt({ campaign, item: target.item, variant: target.variant, brandContext, evidenceAnchors, executionBrief, suppliedAssets: authorizedAssets });
     const job = await this.generationJobService.authorizeAndCreateJob({
       authorization,
       executionClass: "text.standard",
       requestCorrelationId: idempotencyKey,
       idempotencyKey,
       allowedScopes: ["generation:execute"],
-      executionInput: { compiled_prompt: compiledPrompt, platform: target.variant.platform, goal: campaign.goal, additional_context: brandContext },
+      executionInput: {
+        compiled_prompt: compiledPrompt,
+        platform: target.variant.platform,
+        goal: campaign.goal,
+        additional_context: brandContext,
+        execution_mode: executionMode,
+        ...(executionBrief ? { execution_brief: executionBrief } : {}),
+        ...(authorizedAssets.length ? { supplied_asset_refs: authorizedAssets.map((asset) => asset.role + ":" + asset.asset_id).join(",") } : {}),
+      },
     });
     const generation = await this.generationBillingOrchestrator.execute({
       job,
@@ -255,7 +289,7 @@ class CampaignVariantGenerationService {
     if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons, { stage: "selected_strategy_validation", generationJobId: job.job_id });
     const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
     if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons, { stage: "final_draft_execution_fidelity", generationJobId: job.job_id });
-    const content = { ...emptyContent(), body: generation.text };
+    const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",
       idempotency_key: idempotencyKey,
