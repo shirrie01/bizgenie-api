@@ -21,6 +21,7 @@ class InMemoryMediaAssetRepository extends MediaAssetRepository {
 
   async create(value) {
     const asset = MediaAssetSchema.parse(value);
+    if (asset.source_kind === "reference" && !asset.brand_id) throw new MediaPersistenceError();
     if (this.assets.has(asset.asset_id)) throw new MediaPersistenceError();
     if ([...this.assets.values()].some((row) => row.storage_bucket === asset.storage_bucket && row.storage_key === asset.storage_key)) {
       throw new MediaPersistenceError();
@@ -92,6 +93,7 @@ class PostgresMediaAssetRepository extends MediaAssetRepository {
 
   async create(value) {
     const asset = MediaAssetSchema.parse(value);
+    if (asset.source_kind === "reference" && !asset.brand_id) throw new MediaPersistenceError();
     try {
       const result = await this.pool.query(
         `INSERT INTO public.media_assets
