@@ -271,6 +271,40 @@ describe("strict staging CORS allowlist", () => {
       .set("access-control-request-method", "POST")
       .set("access-control-request-headers", "authorization, content-type");
     assert.equal(preflight.status, 204);
+
+    const putPreflight = await request(app)
+      .options("/customer/workspace/brand-brain")
+      .set("origin", "https://frontend-a.example")
+      .set("access-control-request-method", "PUT")
+      .set("access-control-request-headers", "authorization, content-type");
+    assert.equal(putPreflight.status, 204);
+    assert.equal(
+      putPreflight.headers["access-control-allow-origin"],
+      "https://frontend-a.example"
+    );
+    assert.match(
+      putPreflight.headers["access-control-allow-methods"],
+      /(?:^|,)PUT(?:,|$)/
+    );
+    assert.equal(
+      putPreflight.headers["access-control-allow-headers"],
+      "authorization,content-type"
+    );
+
+    const rejectedOrigin = await request(app)
+      .options("/customer/workspace/brand-brain")
+      .set("origin", "https://attacker.example")
+      .set("access-control-request-method", "PUT")
+      .set("access-control-request-headers", "authorization, content-type");
+    assert.equal(rejectedOrigin.status, 403);
+
+    const unsupportedMethod = await request(app)
+      .options("/customer/workspace/brand-brain")
+      .set("origin", "https://frontend-a.example")
+      .set("access-control-request-method", "DELETE")
+      .set("access-control-request-headers", "authorization, content-type");
+    assert.equal(unsupportedMethod.status, 403);
+
     const widened = await request(app)
       .options("/customer/generate-video")
       .set("origin", "https://frontend-a.example")
