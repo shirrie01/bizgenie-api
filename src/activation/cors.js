@@ -4,7 +4,7 @@ const {
   requireActivationEnvironment,
 } = require("./config");
 
-const ALLOWED_METHODS = "GET,POST,OPTIONS";
+const ALLOWED_METHODS = "GET,POST,PUT,OPTIONS";
 const ALLOWED_HEADERS = "authorization,content-type";
 const allowedMethods = new Set(ALLOWED_METHODS.split(","));
 const allowedHeaders = new Set(ALLOWED_HEADERS.split(","));
