@@ -42,11 +42,20 @@ function parseRecommendationRequest(value) {
   return parsed.data;
 }
 
-function goalKind(goal) {
-  const value = goal.toLowerCase();
-  if (/\b(event|opening|launch|grand opening|new)\b/.test(value)) return "launch";
+function goalKind(goal, brandBrain = {}) {
+  const value = [
+    goal,
+    brandBrain.identity?.positioning,
+    brandBrain.identity?.mission,
+    brandBrain.audience?.summary,
+    ...(brandBrain.audience?.goals || []),
+    brandBrain.commercial?.primary_cta,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  if (/\b(retailer|retailers|wholesaler|wholesalers|distributor|distributors|trade|stocking|stockists|distribution|trade enquiries|businesses)\b/.test(value)) return "lead";
+  if (/\b(event|opening|launch|grand opening|new product|product launch)\b/.test(value)) return "launch";
   if (/\b(offer|sale|discount|deal|promo)\b/.test(value)) return "offer";
-  if (/\b(book|appointment|enquiry|lead|quote)\b/.test(value)) return "lead";
+  if (/\b(book|appointment|enquiry|enquiries|lead|leads|quote)\b/.test(value)) return "lead";
   return "awareness";
 }
 
@@ -54,8 +63,47 @@ function titleCase(value) {
   return value.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => word[0].toUpperCase() + word.slice(1).toLowerCase()).join(" ");
 }
 
-function itemSet(kind) {
+function itemSet(kind, { goal = "", brandBrain = {} } = {}) {
   const fallback = "because it is grounded in the goal you entered and BizGenie does not have enough performance history yet";
+  const objective = [
+    goal,
+    brandBrain.identity?.positioning,
+    brandBrain.identity?.mission,
+    brandBrain.audience?.summary,
+    ...(brandBrain.audience?.goals || []),
+    brandBrain.commercial?.primary_cta,
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  const isTradeLead = /\b(retailer|retailers|wholesaler|wholesalers|distributor|distributors|trade|stocking|stockists|distribution|trade enquiries)\b/.test(objective);
+
+  if (kind === "lead" && isTradeLead) {
+    return [
+      {
+        name: "Trade stockist acquisition post",
+        format: "text",
+        platform: "linkedin",
+        placement: "feed",
+        destination_label: "LinkedIn",
+        reason: "Recommended because the objective is to reach retailers, wholesalers or distributors and generate qualified trade interest."
+      },
+      {
+        name: "Retailer and distributor enquiry post",
+        format: "text",
+        platform: "facebook",
+        placement: "feed",
+        destination_label: "Facebook",
+        reason: "Recommended because the campaign needs a clear trade call to action for businesses interested in stocking or distributing the brand."
+      },
+      {
+        name: "Trade outreach email",
+        format: "text",
+        platform: "email",
+        placement: "message",
+        destination_label: "Email",
+        reason: "Recommended because direct trade outreach gives prospective stockists and distribution partners an owner-controlled route to enquire."
+      },
+    ];
+  }
   if (kind === "offer") {
     return [
       { name: "Offer announcement", format: "text", platform: "instagram", placement: "feed", destination_label: "Instagram", reason: "Recommended because the goal mentions an offer and needs one clear public message first." },
@@ -85,10 +133,13 @@ function itemSet(kind) {
 }
 
 function buildRecommendation({ context, request, now, idFactory, evidence = [] }) {
-  const kind = goalKind(request.goal);
+  const kind = goalKind(request.goal, context.brand_brain);
   const generatedAt = iso(now());
   const campaignName = `${titleCase(request.goal)} Campaign`;
-  const suggestedItems = itemSet(kind);
+  const suggestedItems = itemSet(kind, {
+    goal: request.goal,
+    brandBrain: context.brand_brain,
+  });
   const usableEvidence = Array.isArray(evidence) ? evidence.filter((row) =>
     row && row.tenant_id === context.tenant_id && row.project_id === context.project_id &&
     row.brand_id === request.brand_id && typeof row.metric === "string" &&

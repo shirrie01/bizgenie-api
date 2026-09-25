@@ -3,6 +3,7 @@ const { describe, it } = require("node:test");
 const {
   CampaignIdempotencyError,
   PostgresGoalRecommendationRegistry,
+  createDefaultGoalRecommendationRegistry,
 } = require("../src/campaigns");
 
 const AUTH_USER = "11111111-1111-4111-8111-111111111111";
@@ -117,4 +118,69 @@ describe("PostgresGoalRecommendationRegistry", () => {
 
     await assert.rejects(() => registry.recommend(context, request), CampaignIdempotencyError);
   });
+});
+
+it("trade acquisition objective is classified as lead and receives trade-specific recommendations", async () => {
+  const registry = createDefaultGoalRecommendationRegistry({
+    idFactory: () => "recommendation-trade-proof",
+    now: () => new Date("2026-09-25T00:00:00.000Z"),
+  });
+
+  const recommendation = await registry.recommend(
+    {
+      tenant_id: "tenant_fairway",
+      project_id: "project_fairway",
+      actor: {
+        kind: "customer",
+        auth_user_id: "33333333-3333-4333-8333-333333333333",
+      },
+      brand_brain: {
+        status: "approved",
+        identity: {
+          positioning: "Soft drinks manufacturer and brand owner",
+          mission: "Build strong drinks brands and distribution",
+        },
+        audience: {
+          summary: "Independent retailers, wholesalers and distributors",
+          goals: ["Stock profitable drinks brands"],
+        },
+        commercial: {
+          primary_cta: "Enquire about stocking or distribution",
+        },
+      },
+    },
+    {
+      tenant_id: "tenant_fairway",
+      project_id: "project_fairway",
+      brand_id: "brand_fairway",
+      goal: "Win new independent retailers, wholesalers and distributors for Fairway's drinks portfolio, generating qualified trade enquiries from businesses interested in stocking our brands or discussing distribution opportunities.",
+      display_timezone: "Europe/London",
+      idempotency_key: "fairway_trade_acquisition_proof",
+    },
+    { evidence: [] }
+  );
+
+  assert.equal(recommendation.recommendation_kind, "lead");
+  assert.equal(recommendation.suggested_items.length, 3);
+
+  assert.deepEqual(
+    recommendation.suggested_items.map((item) => item.name),
+    [
+      "Trade stockist acquisition post",
+      "Retailer and distributor enquiry post",
+      "Trade outreach email",
+    ]
+  );
+
+  assert.deepEqual(
+    recommendation.suggested_items.map((item) => item.platform),
+    ["linkedin", "facebook", "email"]
+  );
+
+  assert.equal(
+    recommendation.suggested_items.some((item) =>
+      /launch announcement|facebook launch post|launch email/i.test(item.name)
+    ),
+    false
+  );
 });
