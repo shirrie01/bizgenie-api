@@ -656,6 +656,7 @@ function createCustomerCampaignRouter({
 function createCustomerCampaignRecommendationRouter({
   recommendationRegistry = createDefaultGoalRecommendationRegistry(),
   measurementRegistry,
+  brandBrainRepository,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -678,7 +679,16 @@ function createCustomerCampaignRecommendationRouter({
         action: "project:read",
       });
       const evidence = await measurementRegistry.listBrand(context, body.brand_id);
-      const recommendation = await recommendationRegistry.recommend(context, body, { evidence });
+      const brandBrain = brandBrainRepository
+        ? await brandBrainRepository.getByProjectAndBrand(context.project_id, body.brand_id)
+        : null;
+      const recommendation = await recommendationRegistry.recommend(
+        brandBrain?.metadata?.status === "approved" || brandBrain?.status === "approved"
+          ? { ...context, brand_brain: brandBrain }
+          : context,
+        body,
+        { evidence }
+      );
       return res.status(201).json({ recommendation });
     } catch (error) {
       return sendCampaignError(error, res, logger);

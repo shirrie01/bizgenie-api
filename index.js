@@ -509,6 +509,7 @@ function createApp({
     createCustomerCampaignRecommendationRouter({
       recommendationRegistry: goalRecommendationRegistry,
       measurementRegistry: campaignMeasurementRegistry,
+      brandBrainRepository,
       tokenVerifier: customerTokenVerifier,
       authorizationService: resolvedAuthorizationService,
       logger,
