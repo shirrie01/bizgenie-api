@@ -122,6 +122,49 @@ function validateDraftExecutionFidelity(draftText, strategy) {
   return { ok: reasons.length === 0, reasons };
 }
 
+const DRAFT_SECTION_PATTERN = /^(Hook|Concept|Script|CTA|Caption|Hashtags|Filming instructions):\s*(.+)$/gim;
+const COPY_STOP_WORDS = new Set("a an and are as at be by for from in is it of on or that the their this to with you your".split(" "));
+const GENERIC_FILMING_PATTERN = /\b(?:generic|professional|business|product|pack|logo|brand)\s+(?:graphics?|visuals?|shot|shots?|footage|b-?roll|animation|treatment)|\b(?:product|pack)\s+shot|\bstock\s+footage|\bclean\s+business\b/i;
+
+function meaningfulDraftWords(value) {
+  return String(value || "").toLowerCase().match(/[a-z0-9]+(?:['’-][a-z0-9]+)*/g)?.filter((word) => word.length > 2 && !COPY_STOP_WORDS.has(word)) || [];
+}
+
+function extractDraftSections(text) {
+  const sections = {};
+  for (const match of String(text || "").matchAll(DRAFT_SECTION_PATTERN)) sections[match[1].toLowerCase()] = match[2].trim();
+  return sections;
+}
+
+function hasSubstantialSourceRepetition(copy, source, approvedClaims = []) {
+  let boundedSource = String(source || "");
+  for (const claim of approvedClaims) boundedSource = boundedSource.replace(new RegExp(String(claim).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
+  const copyWords = meaningfulDraftWords(copy);
+  const sourceWords = new Set(meaningfulDraftWords(boundedSource));
+  if (copyWords.length < 5 || sourceWords.size < 5) return false;
+  const overlap = copyWords.filter((word) => sourceWords.has(word)).length / copyWords.length;
+  const sourceWordList = meaningfulDraftWords(boundedSource);
+  const copyTrigrams = new Set(copyWords.slice(0, -2).map((_, index) => copyWords.slice(index, index + 3).join(" ")));
+  const sourceTrigrams = new Set(sourceWordList.slice(0, -2).map((_, index) => sourceWordList.slice(index, index + 3).join(" ")));
+  return overlap >= 0.7 || [...copyTrigrams].filter((trigram) => sourceTrigrams.has(trigram)).length >= 2;
+}
+
+function validateFinalDraftStrategyFidelity(draftText, { campaign, brandContext, selected_strategy: strategy }) {
+  const sections = extractDraftSections(draftText);
+  const reasons = [];
+  if (/\bEA\d{3,}\b/i.test(sections.concept || "")) reasons.push("Concept must not expose internal evidence-anchor IDs");
+  const source = `${campaign.goal}\n${brandContext || ""}`;
+  const approvedClaims = Array.isArray(strategy?.approved_claims) ? strategy.approved_claims : [];
+  if ([sections.hook, sections.cta, sections.caption].some((copy) => hasSubstantialSourceRepetition(copy, source, approvedClaims))) reasons.push("customer-facing copy substantially repeats supplied source wording");
+  const customerWords = new Set(meaningfulDraftWords(Object.values(sections).join(" ")));
+  const anchors = Array.isArray(strategy?.evidence_anchors) ? strategy.evidence_anchors : [];
+  if (anchors.length && !anchors.some((anchor) => meaningfulDraftWords(anchor).some((word) => customerWords.has(word)))) reasons.push("final draft does not materially realise the resolved selected evidence");
+  const selectedExecution = strategyExecutionText(strategy);
+  const executionWords = meaningfulDraftWords(selectedExecution).filter((word) => word.length >= 5);
+  if (executionWords.length >= 2 && !CATEGORY_DEFAULT_PATTERN.test(selectedExecution) && GENERIC_FILMING_PATTERN.test(sections["filming instructions"] || "")) reasons.push("generic filming instructions cannot replace richer selected platform execution");
+  return { ok: reasons.length === 0, reasons };
+}
+
 function validateSelectedStrategy(strategy, { campaign, variant, brandContext, candidates, selection_evidence: selectionEvidence }) {
   const source = `${campaign.goal}\n${brandContext || ""}`.toLowerCase();
   const reasons = validateStrategyCandidate(strategy, source, "selected_strategy");
@@ -288,8 +331,6 @@ class CampaignVariantGenerationService {
     if (!resolvedEvidence.ok) throw new CampaignStrategyValidationError(resolvedEvidence.reasons, { stage: "evidence_anchor_resolution", generationJobId: job.job_id });
     const strategyCheck = validateSelectedStrategy(resolvedEvidence.selected_strategy, { campaign, variant: target.variant, brandContext, candidates: resolvedEvidence.candidates, selection_evidence: generation.metadata?.selection_evidence });
     if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons, { stage: "selected_strategy_validation", generationJobId: job.job_id });
-    const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
-    if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons, { stage: "final_draft_execution_fidelity", generationJobId: job.job_id });
     const missingSections = findMissingSections(generation.text);
     if (missingSections.length > 0) {
       throw new GenerationIncompleteError({
@@ -303,6 +344,10 @@ class CampaignVariantGenerationService {
         },
       });
     }
+    const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
+    if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons, { stage: "final_draft_execution_fidelity", generationJobId: job.job_id });
+    const strategyFidelityCheck = validateFinalDraftStrategyFidelity(generation.text, { campaign, brandContext, selected_strategy: resolvedEvidence.selected_strategy });
+    if (!strategyFidelityCheck.ok) throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, { stage: "final_draft_strategy_fidelity", generationJobId: job.job_id });
     const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",
@@ -319,4 +364,4 @@ class CampaignVariantGenerationService {
   }
 }
 
-module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, deriveAllowableEvidenceAnchors, findVariant, renderEvidenceAnchorCatalog, resolveEvidenceAnchorReferences, validateDraftExecutionFidelity, validateSelectedStrategy };
+module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, deriveAllowableEvidenceAnchors, findVariant, renderEvidenceAnchorCatalog, resolveEvidenceAnchorReferences, validateDraftExecutionFidelity, validateFinalDraftStrategyFidelity, validateSelectedStrategy };

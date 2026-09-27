@@ -10,6 +10,7 @@ const {
   renderEvidenceAnchorCatalog,
   resolveEvidenceAnchorReferences,
   validateDraftExecutionFidelity,
+  validateFinalDraftStrategyFidelity,
   validateSelectedStrategy,
 } = require("../src/campaigns/generation");
 
@@ -306,7 +307,15 @@ describe("campaign generation prompt contract", () => {
         assert.doesNotMatch(prompt, /Lease Expert|Audi A3|Leasexpert|another brand secret/);
         const anchors = deriveAllowableEvidenceAnchors(objective, promptOptions.brandContext);
         const fonzoId = anchors.find((anchor) => anchor.exact_text === "Fonzo-only differentiator")?.id;
-        return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyMetadata(0, [fonzoId, fonzoId, fonzoId]) };
+        const fonzoDraft = COMPLETE_CAMPAIGN_DRAFT.replace(
+          "Concept: Use an evidence-backed comparison relevant to the audience.",
+          "Concept: Build the campaign around the Fonzo-only differentiator for this audience."
+        );
+
+        return {
+          text: fonzoDraft,
+          metadata: strategyMetadata(0, [fonzoId, fonzoId, fonzoId]),
+        };
       },
     });
 
@@ -468,6 +477,10 @@ describe("campaign generation prompt contract", () => {
     const escapedDraft = [
       "Hook: Dynamic close-up product shot.",
       "Script: Pour over ice, show fizz, then a sip and reaction.",
+      "Concept: A native audience-led comparison.",
+      "CTA: Explore the range.",
+      "Caption: A concise evidence-backed campaign caption.",
+      "Hashtags: #audience #comparison",
       "Filming instructions: End on a final pack shot.",
     ].join("\n");
     const { service, calls } = makeService({
@@ -487,6 +500,37 @@ describe("campaign generation prompt contract", () => {
     assert.equal(calls.billed, 1);
     assert.equal(calls.generations, 1);
     assert.equal(calls.saves, 0);
+  });
+
+  it("rejects a structurally complete but strategically weak draft at the Issue #139 gate", async () => {
+    const weakDraft = [
+      "Hook: Acquire trade buyers through a proof-led product comparison.",
+      "Concept: Commercial Opportunity (EA001).",
+      "Script: Present the campaign objective as written.",
+      "CTA: Acquire trade buyers through a proof-led product comparison.",
+      "Caption: Acquire trade buyers through a proof-led product comparison.",
+      "Hashtags: #tradebuyers #comparison",
+      "Filming instructions: Use a native audience-led document treatment.",
+    ].join("\n");
+    const { service, calls } = makeService({ scriptGenerator: async () => ({ text: weakDraft, metadata: strategyIdMetadata() }) });
+    await assert.rejects(
+      service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }),
+      (error) => {
+        assert.equal(error.stage, "final_draft_strategy_fidelity");
+        assert.ok(error.reasons.some((reason) => reason.includes("internal evidence-anchor IDs") || reason.includes("source wording")));
+        return true;
+      }
+    );
+    assert.equal(calls.saves, 0);
+  });
+
+  it("accepts complete evidence-specific, claim-safe execution through the new gate", () => {
+    const metadata = strategyIdMetadata();
+    const result = validateFinalDraftStrategyFidelity(
+      "Hook: Make the weekday lunch decision the story.\nConcept: Audience-led weekday choice — Introduce the new seasonal drink to people choosing a low-sugar option.\nScript: Contrast the audience choice through a native short-form comparison.\nCTA: Find a stockist nearby.\nCaption: A considered weekday refreshment.\nHashtags: #lowSugar #weekdayLunch\nFilming instructions: Use a native short-form comparison with the audience choice at the centre.",
+      { campaign: { goal: objective }, brandContext: "Audience:\nAdults choosing non-alcoholic drinks with less sugar.\nCTA preference:\nFind a stockist nearby.", selected_strategy: { ...metadata.selected_strategy, evidence_anchors: [objective] } }
+    );
+    assert.equal(result.ok, true);
   });
 
   it("accepts a final draft whose execution does not collapse beneath the selected strategy", () => {
