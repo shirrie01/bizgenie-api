@@ -113,7 +113,7 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
     },
     scriptGenerator: async (...args) => {
       calls.generations++;
-      const generate = scriptGenerator || (async () => ({ text: "Reviewable campaign draft", metadata: strategyIdMetadata() }));
+      const generate = scriptGenerator || (async () => ({ text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyIdMetadata() }));
       return generate(...args);
     },
     branding: { appName: "BizGenie" },
@@ -121,6 +121,16 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
   return { service, calls };
 }
 
+
+const COMPLETE_CAMPAIGN_DRAFT = [
+  "Hook: Make the weekday lunch decision the story.",
+  "Concept: Use an evidence-backed comparison relevant to the audience.",
+  "Script: Introduce the approved product truth and connect it directly to the campaign objective.",
+  "CTA: Explore the range.",
+  "Caption: A concise evidence-backed campaign caption.",
+  "Hashtags: #Campaign #Brand",
+  "Filming instructions: Use a native platform execution grounded in the selected strategy.",
+].join("\n");
 
 function strategyMetadata(selected = 0, anchors = [objective, "Botanical flavour with a crisp finish", "refreshing option for weekday lunches"]) {
   const strategy_candidates = [
@@ -233,7 +243,7 @@ describe("campaign generation prompt contract", () => {
       },
       scriptGenerator: async (userContext, { promptOptions }) => {
         finalPrompt = compilePrompt({ ...promptOptions, userContext });
-        return { text: "Reviewable campaign draft", metadata: strategyIdMetadata() };
+        return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyIdMetadata() };
       },
     });
 
@@ -296,7 +306,7 @@ describe("campaign generation prompt contract", () => {
         assert.doesNotMatch(prompt, /Lease Expert|Audi A3|Leasexpert|another brand secret/);
         const anchors = deriveAllowableEvidenceAnchors(objective, promptOptions.brandContext);
         const fonzoId = anchors.find((anchor) => anchor.exact_text === "Fonzo-only differentiator")?.id;
-        return { text: "Draft", metadata: strategyMetadata(0, [fonzoId, fonzoId, fonzoId]) };
+        return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyMetadata(0, [fonzoId, fonzoId, fonzoId]) };
       },
     });
 
@@ -326,7 +336,7 @@ describe("campaign generation prompt contract", () => {
         assert.match(prompt, /Use audience and voice details only when they are present/);
         assert.match(prompt, /never invent missing intelligence/);
         assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
-        return { text: "Draft", metadata: strategyMetadata(0, ["EA001", "EA001", "EA001"]) };
+        return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyMetadata(0, ["EA001", "EA001", "EA001"]) };
       },
     });
 
@@ -344,7 +354,7 @@ describe("campaign generation prompt contract", () => {
     let promptSeen;
     const { service, calls } = makeService({
       assertions: { onJob(args) { promptSeen = args.executionInput.compiled_prompt; } },
-      scriptGenerator: async () => ({ text: "Draft", metadata: strategyIdMetadata() }),
+      scriptGenerator: async () => ({ text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyIdMetadata() }),
     });
     await service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" });
     assert.match(promptSeen, /\[APPROVED EVIDENCE ANCHORS\]/);
@@ -374,6 +384,84 @@ describe("campaign generation prompt contract", () => {
     const result = validateSelectedStrategy(disguised, { ...base, candidates, selection_evidence: { selected_candidate_index: 0, criteria: ["platform_fit"], rationale: "Selected as a native short-form execution." } });
     assert.equal(result.ok, false);
     assert.match(result.reasons.join(" "), /category-default selected strategy/);
+  });
+
+  it("rejects a generated draft missing Hashtags before save_revision", async () => {
+    const incompleteDraft = [
+      "Hook: Make the weekday lunch decision the story.",
+      "Concept: Use an evidence-backed comparison relevant to the audience.",
+      "Script: Introduce the approved product truth and connect it directly to the campaign objective.",
+      "CTA: Explore the range.",
+      "Caption: A concise evidence-backed campaign caption.",
+      "Filming instructions: Use a native platform execution grounded in the selected strategy.",
+    ].join("\n");
+
+    const { service, calls } = makeService({
+      scriptGenerator: async () => ({
+        text: incompleteDraft,
+        metadata: strategyIdMetadata(),
+      }),
+    });
+
+    await assert.rejects(
+      service.generate({
+        authorization,
+        campaignId: "campaign_1",
+        variantId: "variant_1",
+        expectedCampaignVersion: 3,
+        idempotencyKey: "campaign-generation-1",
+      }),
+      (error) => {
+        assert.equal(error.name, "GenerationIncompleteError");
+        assert.equal(error.code, "GENERATION_INCOMPLETE");
+        assert.deepEqual(error.details.missing_sections, ["Hashtags"]);
+        assert.equal(error.details.retryable, true);
+        assert.equal(error.metadata.incomplete_reason, "MISSING_SECTIONS");
+        assert.equal(error.metadata.required_sections_complete, false);
+        return true;
+      }
+    );
+
+    assert.equal(calls.saves, 0);
+  });
+
+  it("rejects a generated draft missing multiple required sections before save_revision", async () => {
+    const incompleteDraft = [
+      "Hook: Make the weekday lunch decision the story.",
+      "Concept: Use an evidence-backed comparison relevant to the audience.",
+      "Script: Introduce the approved product truth and connect it directly to the campaign objective.",
+      "CTA: Explore the range.",
+      "Caption: A concise evidence-backed campaign caption.",
+    ].join("\n");
+
+    const { service, calls } = makeService({
+      scriptGenerator: async () => ({
+        text: incompleteDraft,
+        metadata: strategyIdMetadata(),
+      }),
+    });
+
+    await assert.rejects(
+      service.generate({
+        authorization,
+        campaignId: "campaign_1",
+        variantId: "variant_1",
+        expectedCampaignVersion: 3,
+        idempotencyKey: "campaign-generation-1",
+      }),
+      (error) => {
+        assert.equal(error.name, "GenerationIncompleteError");
+        assert.equal(error.code, "GENERATION_INCOMPLETE");
+        assert.deepEqual(error.details.missing_sections, [
+          "Hashtags",
+          "Filming instructions",
+        ]);
+        assert.equal(error.metadata.incomplete_reason, "MISSING_SECTIONS");
+        return true;
+      }
+    );
+
+    assert.equal(calls.saves, 0);
   });
 
   it("rejects a category-default final draft that escaped through non-generic selected-strategy metadata", async () => {

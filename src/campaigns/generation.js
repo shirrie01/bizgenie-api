@@ -1,6 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const { resolveBrandBrainContext } = require("../brand-brain");
 const { emptyContent } = require("./schema");
+const { GenerationIncompleteError, findMissingSections } = require("../generation");
 
 class CampaignStrategyValidationError extends Error {
   constructor(reasons, { stage = null, generationJobId = null } = {}) {
@@ -289,6 +290,19 @@ class CampaignVariantGenerationService {
     if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons, { stage: "selected_strategy_validation", generationJobId: job.job_id });
     const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
     if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons, { stage: "final_draft_execution_fidelity", generationJobId: job.job_id });
+    const missingSections = findMissingSections(generation.text);
+    if (missingSections.length > 0) {
+      throw new GenerationIncompleteError({
+        finishReason: generation.metadata?.finish_reason || null,
+        missingSections,
+        retryable: true,
+        metadata: {
+          ...generation.metadata,
+          incomplete_reason: "MISSING_SECTIONS",
+          required_sections_complete: false,
+        },
+      });
+    }
     const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",
