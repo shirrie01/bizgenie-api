@@ -40,7 +40,7 @@ function renderEvidenceAnchorCatalog(anchors) {
   if (!Array.isArray(anchors) || anchors.length === 0) return "";
   return [
     "[APPROVED EVIDENCE ANCHORS]",
-    "Use evidence_anchors as stable IDs from this list only. Never paraphrase, reconstruct, or invent an evidence anchor. Anchor IDs identify approved evidence; they do not permit broader factual claims.",
+    "Use evidence_anchors as stable IDs from this list only in strategy metadata. Never paraphrase, reconstruct, or invent an evidence anchor reference. Anchor IDs identify approved evidence; they do not permit broader factual claims. IDs such as EA001 are internal metadata: never place them in Hook, Concept, Script, CTA, Caption, Hashtags, or Filming instructions. Express the selected evidence's meaning in the final draft instead of printing its ID or copying its source text.",
     ...anchors.map(({ id, exact_text }) => id + " | " + exact_text),
   ].join("\n");
 }
@@ -235,8 +235,8 @@ const CAMPAIGN_CREATIVE_BRIEF = [
   "Changing only the hook, wording, shot order, platform treatment, or evidence anchor does not create a different route. Candidate angle labels must describe the genuinely different strategic premise so the candidates remain materially distinct under deterministic comparison.",
   "Return concise structured strategy metadata for verification: strategy_candidates (3-5 bounded candidate artefacts), selected_strategy (exactly one candidate), and selection_evidence with selected_candidate_index, one or more criteria from brand_truth/audience_relevance/differentiator/platform_fit, and a short reviewable rationale. Do not include hidden reasoning or chain-of-thought.",
   "Reject stock hooks and category-default concepts when the supplied intelligence supports a more specific angle; keep a generic execution only when it is genuinely the strongest supported choice.",
-  "Use the Concept section to name only the selected angle and its concise evidence anchor. Do not reveal or persist internal analysis or rejected angles.",
-  "Transform supplied non-claim source and Brand Brain intelligence into original customer-facing campaign expression. Hook, CTA, and Caption must not substantially repeat source prose. Approved factual/product claims are the exception and retain their exact approved wording when used.",
+  "Use the Concept section to name the selected angle and briefly express the customer truth behind its selected evidence in natural language. Evidence-anchor IDs (for example EA001) belong only in structured strategy metadata, never in final-draft sections. Do not paste the evidence catalog entry or reveal internal analysis or rejected angles.",
+  "Transform supplied non-claim campaign objective and Brand Brain prose into original customer-facing expression. For each Hook, CTA, and Caption, write a new customer-facing sentence grounded in the selected evidence, then check that it does not substantially repeat source clauses or simply rearrange their words. Approved factual/product claims are the exception: retain their exact approved wording when used.",
   "Treat approved claims as the complete allowlist for factual/product claims. Preserve approved wording verbatim; do not strengthen, qualify, quantify, broaden, or replace it with a synonym unless that alternative wording is separately approved. Omit a claim rather than paraphrase it when exact fidelity is not possible.",
   "Keep prohibited and unsupported claims out, including invented superlatives, guarantees, product properties, outcomes, health or performance claims, availability, pricing, awards, endorsements, and comparisons. Expressive creative language must not imply an unsupported fact.",
   "Produce a reviewable draft only. Do not imply approval, scheduling, or publication.",
