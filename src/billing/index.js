@@ -12,6 +12,7 @@ const postgres = require("./postgresRepository");
 const composition = require("./productionComposition");
 const paidBetaProvisioning = require("./paidBetaProvisioning");
 const paidBetaLaunchProof = require("./paidBetaLaunchProofRouter");
+const customerRouter = require("./customerRouter");
 
 module.exports = {
   ...errors,
@@ -22,6 +23,7 @@ module.exports = {
   ...composition,
   ...paidBetaProvisioning,
   ...paidBetaLaunchProof,
+  ...customerRouter,
   BillingRepository,
   BillingService,
   InMemoryBillingRepository,
