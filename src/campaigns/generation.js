@@ -97,7 +97,22 @@ function validateStrategyCandidate(strategy, source, label) {
   return reasons;
 }
 
-const CATEGORY_DEFAULT_PATTERN = /product shot|pack shot|close[- ]?up|pour|sip|fizz|effervescence|condensation|routine demo|product demo|generic|category default|launch announcement/;
+const CATEGORY_DEFAULT_DEVICES = [
+  /product shot/,
+  /pack shot/,
+  /close[- ]?up/,
+  /pour/,
+  /sip/,
+  /fizz/,
+  /effervescence/,
+  /condensation/,
+  /routine demo/,
+  /product demo/,
+  /generic/,
+  /category default/,
+  /launch announcement/,
+];
+const CATEGORY_DEFAULT_PATTERN = new RegExp(CATEGORY_DEFAULT_DEVICES.map((pattern) => pattern.source).join("|"));
 
 function strategyExecutionText(strategy) {
   return normalizeAngle([strategy?.angle, strategy?.specificity, strategy?.platform_execution].filter(Boolean).join(" "));
@@ -108,15 +123,22 @@ function evidenceSpecificity(strategy) {
   return new Set(anchors.map((anchor) => String(anchor || "").trim()).filter((anchor) => anchor.length >= 8)).size;
 }
 
+function categoryDefaultDeviceCount(value) {
+  const execution = normalizeAngle(value);
+  return CATEGORY_DEFAULT_DEVICES.filter((pattern) => pattern.test(execution)).length;
+}
+
 function validateDraftExecutionFidelity(draftText, strategy) {
   const reasons = [];
-  const draftExecution = normalizeAngle(draftText);
+  const sections = extractDraftSections(draftText);
+  const structuredExecution = [sections.script, sections["filming instructions"]].filter(Boolean).join(" ");
+  const draftExecution = normalizeAngle(structuredExecution || draftText);
   if (!draftExecution) {
     reasons.push("final draft execution is required");
     return { ok: false, reasons };
   }
   const selectedExecution = strategyExecutionText(strategy);
-  if (!CATEGORY_DEFAULT_PATTERN.test(selectedExecution) && CATEGORY_DEFAULT_PATTERN.test(draftExecution)) {
+  if (!CATEGORY_DEFAULT_PATTERN.test(selectedExecution) && categoryDefaultDeviceCount(draftExecution) >= 2) {
     reasons.push("final draft collapses into category-default execution not present in the selected strategy");
   }
   return { ok: reasons.length === 0, reasons };
