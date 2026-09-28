@@ -275,6 +275,11 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /changing only the hook, wording, shot order, platform treatment, or evidence anchor does not create a different route/i);
     assert.match(finalPrompt, /Reject stock hooks and category-default concepts/);
     assert.match(finalPrompt, /grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour/);
+    assert.match(finalPrompt, /Transform supplied non-claim source and Brand Brain intelligence into original customer-facing campaign expression/);
+    assert.match(finalPrompt, /Hook, CTA, and Caption must not substantially repeat source prose/);
+    assert.match(finalPrompt, /Approved factual\/product claims are the exception and retain their exact approved wording when used/);
+    assert.match(finalPrompt, /Final Filming instructions must concretely realise the selected strategy's platform_execution/);
+    assert.match(finalPrompt, /do not collapse it into generic professional, product, pack, logo, brand, stock-footage, or clean-business treatment/);
     assert.match(finalPrompt, /complete allowlist for factual\/product claims/);
     assert.match(finalPrompt, /Preserve approved wording verbatim/);
     assert.match(finalPrompt, /do not strengthen, qualify, quantify, broaden, or replace it with a synonym/);
