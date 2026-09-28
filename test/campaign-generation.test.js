@@ -275,9 +275,13 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /changing only the hook, wording, shot order, platform treatment, or evidence anchor does not create a different route/i);
     assert.match(finalPrompt, /Reject stock hooks and category-default concepts/);
     assert.match(finalPrompt, /grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour/);
-    assert.match(finalPrompt, /Transform supplied non-claim source and Brand Brain intelligence into original customer-facing campaign expression/);
-    assert.match(finalPrompt, /Hook, CTA, and Caption must not substantially repeat source prose/);
-    assert.match(finalPrompt, /Approved factual\/product claims are the exception and retain their exact approved wording when used/);
+    assert.match(finalPrompt, /Transform supplied non-claim campaign objective and Brand Brain prose into original customer-facing expression/);
+    assert.match(finalPrompt, /For each Hook, CTA, and Caption, write a new customer-facing sentence/);
+    assert.match(finalPrompt, /Approved factual\/product claims are the exception: retain their exact approved wording when used/);
+    assert.match(finalPrompt, /IDs such as EA001 are internal metadata: never place them in Hook, Concept, Script, CTA, Caption, Hashtags, or Filming instructions/);
+    assert.match(finalPrompt, /Concept section to name the selected angle and briefly express the customer truth behind its selected evidence/);
+    assert.match(finalPrompt, /For each Hook, CTA, and Caption, write a new customer-facing sentence grounded in the selected evidence/);
+    assert.match(finalPrompt, /does not substantially repeat source clauses or simply rearrange their words/);
     assert.match(finalPrompt, /Final Filming instructions must concretely realise the selected strategy's platform_execution/);
     assert.match(finalPrompt, /do not collapse it into generic professional, product, pack, logo, brand, stock-footage, or clean-business treatment/);
     assert.match(finalPrompt, /treat selected_strategy as the execution contract for the entire final draft/);
@@ -289,7 +293,7 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /do not strengthen, qualify, quantify, broaden, or replace it with a synonym/);
     assert.match(finalPrompt, /Keep prohibited and unsupported claims out/);
     assert.doesNotMatch(finalPrompt, /completely sugar-free|zero sugar/);
-    assert.match(finalPrompt, /Do not reveal or persist internal analysis or rejected angles/);
+    assert.match(finalPrompt, /Do not paste the evidence catalog entry or reveal internal analysis or rejected angles/);
     assert.doesNotMatch(finalPrompt, /\[INTENT RULES\]/);
     assert.equal(result.result.campaign_version, 4);
     assert.equal(result.campaign.version, 3);
@@ -540,6 +544,35 @@ describe("campaign generation prompt contract", () => {
       { campaign: { goal: objective }, brandContext: "Audience:\nAdults choosing non-alcoholic drinks with less sugar.\nCTA preference:\nFind a stockist nearby.", selected_strategy: { ...metadata.selected_strategy, evidence_anchors: [objective] } }
     );
     assert.equal(result.ok, true);
+  });
+
+  it("keeps evidence IDs internal and transforms source prose while retaining exact approved claims", () => {
+    const context = {
+      campaign: { goal: "Help local teams coordinate their weekly field visits" },
+      brandContext: "Audience:\nLocal teams planning a busy week of field visits.\n\nApproved claims:\nWorks offline on mobile.",
+      selected_strategy: { evidence_anchors: ["Local teams planning a busy week of field visits."], approved_claims: ["Works offline on mobile."] },
+    };
+    const draft = (concept, hook, cta, caption) => [
+      `Hook: ${hook}`, `Concept: ${concept}`, "Script: Follow the team as they plan their visits.",
+      `CTA: ${cta}`, `Caption: ${caption}`, "Hashtags: #fieldteams",
+      "Filming instructions: Show the team making decisions on a shared route.",
+    ].join("\n");
+    const original = draft("A team starts its week with a clear route for field visits.", "Start Monday knowing who goes where next.", "See how your team can map the next stop.", "Works offline on mobile. Give every visit a place in the plan.");
+    assert.equal(validateFinalDraftStrategyFidelity(original, context).ok, true);
+    const leaked = draft("A team starts its week with a clear route for field visits (EA001).", "Start Monday knowing who goes where next.", "See how your team can map the next stop.", "Give every visit a place in the plan.");
+    assert.ok(validateFinalDraftStrategyFidelity(leaked, context).reasons.includes("Concept must not expose internal evidence-anchor IDs"));
+    for (const section of ["hook", "cta", "caption"]) {
+      const fields = {
+        hook: "Local teams planning a busy week of field visits.",
+        cta: "Help local teams coordinate their weekly field visits.",
+        caption: "Local teams planning a busy week of field visits.",
+      };
+      const repeated = draft("A team starts its week with a clear route for field visits.",
+        section === "hook" ? fields.hook : "Start Monday knowing who goes where next.",
+        section === "cta" ? fields.cta : "See how your team can map the next stop.",
+        section === "caption" ? fields.caption : "Give every visit a place in the plan.");
+      assert.ok(validateFinalDraftStrategyFidelity(repeated, context).reasons.includes("customer-facing copy substantially repeats supplied source wording"), section);
+    }
   });
 
   it("accepts a final draft whose execution does not collapse beneath the selected strategy", () => {
