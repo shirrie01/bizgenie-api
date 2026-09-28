@@ -551,6 +551,45 @@ describe("campaign generation prompt contract", () => {
     assert.equal(result.ok, true);
   });
 
+  it("accepts distinctive selected-strategy execution with an incidental category-default device", () => {
+    const metadata = strategyIdMetadata();
+    const result = validateDraftExecutionFidelity(
+      [
+        "Hook: Make the weekday lunch decision the story.",
+        "Concept: Audience-led weekday choice.",
+        "Script: Contrast the audience decision through a native short-form comparison, using one close-up to support the comparison.",
+        "CTA: Explore the range.",
+        "Caption: Put the customer decision at the centre.",
+        "Hashtags: #weekdaychoice #comparison",
+        "Filming instructions: Keep the audience choice and native comparison as the organising execution.",
+      ].join("\n"),
+      metadata.selected_strategy
+    );
+    assert.equal(result.ok, true);
+  });
+
+  it("accepts distinctive non-drinks execution with an incidental category-default device", () => {
+    const selected = {
+      angle: "Appointment-anxiety myth check",
+      evidence_anchors: ["EA001"],
+      specificity: "Uses supplied audience evidence",
+      platform_execution: "Native short-form myth-versus-fact sequence",
+    };
+    const result = validateDraftExecutionFidelity(
+      [
+        "Hook: Start with the customer question.",
+        "Concept: Appointment-anxiety myth check.",
+        "Script: Resolve the concern through a myth-versus-fact sequence with one close-up during the evidence reveal.",
+        "CTA: Learn what to expect.",
+        "Caption: Put the customer question first.",
+        "Hashtags: #mythcheck #customerquestions",
+        "Filming instructions: Keep the myth-versus-fact sequence as the organising execution.",
+      ].join("\n"),
+      selected
+    );
+    assert.equal(result.ok, true);
+  });
+
   it("applies final-draft fidelity horizontally to non-drinks execution", () => {
     const selected = {
       angle: "Appointment-anxiety myth check",
