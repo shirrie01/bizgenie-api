@@ -280,6 +280,10 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /Approved factual\/product claims are the exception and retain their exact approved wording when used/);
     assert.match(finalPrompt, /Final Filming instructions must concretely realise the selected strategy's platform_execution/);
     assert.match(finalPrompt, /do not collapse it into generic professional, product, pack, logo, brand, stock-footage, or clean-business treatment/);
+    assert.match(finalPrompt, /treat selected_strategy as the execution contract for the entire final draft/);
+    assert.match(finalPrompt, /Carry its distinctive strategic premise, specificity, evidence grounding, and platform_execution through Hook, Concept, Script, CTA, Caption, and Filming instructions wherever relevant/);
+    assert.match(finalPrompt, /Do not introduce category-default hooks, scenes, demonstrations, visual devices, or creative patterns that are absent from selected_strategy/);
+    assert.match(finalPrompt, /Preserve the selected strategy's distinctiveness in customer-facing execution without copying strategy metadata verbatim/);
     assert.match(finalPrompt, /complete allowlist for factual\/product claims/);
     assert.match(finalPrompt, /Preserve approved wording verbatim/);
     assert.match(finalPrompt, /do not strengthen, qualify, quantify, broaden, or replace it with a synonym/);
