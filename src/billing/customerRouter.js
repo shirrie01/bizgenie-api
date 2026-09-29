@@ -1,11 +1,19 @@
 const express = require("express");
-const { AuthenticationRequiredError } = require("../authorization");
+const {
+  AuthenticationRequiredError,
+  AuthorizationDeniedError,
+} = require("../authorization");
 const { extractBearerToken } = require("../authentication");
 const { CreditAccountUnavailableError } = require("./errors");
 
 const AUTHENTICATION_ERROR = Object.freeze({
   code: "AUTHENTICATION_REQUIRED",
   message: "Customer authentication is required",
+});
+
+const RESOURCE_ERROR = Object.freeze({
+  code: "RESOURCE_NOT_AVAILABLE",
+  message: "The requested resource is not available",
 });
 
 function customerSubscription(entitlement) {
@@ -26,11 +34,14 @@ function customerSubscription(entitlement) {
 function createCustomerBillingRouter({
   repository,
   tokenVerifier,
+  authorizationService,
   now = () => new Date(),
   logger = console,
 }) {
-  if (!repository || !tokenVerifier) {
-    throw new TypeError("Customer billing routes require repository and token verification dependencies");
+  if (!repository || !tokenVerifier || !authorizationService) {
+    throw new TypeError(
+      "Customer billing routes require repository, token verification, and authorization dependencies"
+    );
   }
 
   const router = express.Router();
@@ -38,9 +49,16 @@ function createCustomerBillingRouter({
   router.get("/subscription", async (req, res) => {
     try {
       const accessToken = extractBearerToken(req.header("authorization"));
-      const actor = await tokenVerifier.verifyAccessToken(accessToken);
-      const tenantId = actor?.tenant_id;
-      if (!tenantId) throw new AuthenticationRequiredError();
+      const actor =
+        typeof tokenVerifier.verifyIdentityAccessToken === "function"
+          ? await tokenVerifier.verifyIdentityAccessToken(accessToken)
+          : await tokenVerifier.verifyAccessToken(accessToken);
+      const tenantAuthorization = await authorizationService.authorizeTenant({
+        actor,
+        tenantId: req.query.tenant_id,
+        action: "tenant:read",
+      });
+      const tenantId = tenantAuthorization.tenant_id;
 
       const entitlement = await repository.getActiveEntitlement(tenantId, now().toISOString());
       if (!entitlement) {
@@ -68,6 +86,9 @@ function createCustomerBillingRouter({
         });
         return res.status(401).json({ status: "failed", error: AUTHENTICATION_ERROR });
       }
+      if (error instanceof AuthorizationDeniedError) {
+        return res.status(404).json({ status: "failed", error: RESOURCE_ERROR });
+      }
 
       logger.error?.("customer billing state unavailable", {
         code: "BILLING_STATE_UNAVAILABLE",
@@ -86,4 +107,9 @@ function createCustomerBillingRouter({
   return router;
 }
 
-module.exports = { AUTHENTICATION_ERROR, createCustomerBillingRouter, customerSubscription };
+module.exports = {
+  AUTHENTICATION_ERROR,
+  RESOURCE_ERROR,
+  createCustomerBillingRouter,
+  customerSubscription,
+};
