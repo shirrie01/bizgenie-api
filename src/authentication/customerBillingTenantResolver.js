@@ -18,7 +18,10 @@ function createCustomerBillingTenantResolver({
     }
 
     const accessToken = extractBearerToken(req.header("authorization"));
-    const actor = await tokenVerifier.verifyAccessToken(accessToken);
+    const actor =
+      typeof tokenVerifier.verifyIdentityAccessToken === "function"
+        ? await tokenVerifier.verifyIdentityAccessToken(accessToken)
+        : await tokenVerifier.verifyAccessToken(accessToken);
     const body = req.body && typeof req.body === "object" ? req.body : {};
     const { tenant_id: tenantId, ...billingRequest } = body;
     const authorization = await authorizationService.authorizeTenant({
