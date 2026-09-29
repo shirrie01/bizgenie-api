@@ -3,18 +3,19 @@ const test = require("node:test");
 const request = require("supertest");
 const { createApp } = require("../index");
 const { InMemoryBillingRepository } = require("../src/billing");
-const { AuthenticationRequiredError } = require("../src/authorization");
+const {
+  AuthenticationRequiredError,
+  AuthorizationDeniedError,
+  createCustomerActorFromVerifiedIdentity,
+} = require("../src/authorization");
 
 const NOW = new Date("2026-09-29T00:00:00.000Z");
 const TENANT_A = "tenant_a";
 const TENANT_B = "tenant_b";
 
-function actor(tenantId) {
-  return Object.freeze({
-    auth_user_id: "11111111-1111-4111-8111-111111111111",
-    tenant_id: tenantId,
-    project_id: "project_a",
-    brand_id: "brand_a",
+function actor() {
+  return createCustomerActorFromVerifiedIdentity({
+    verifiedAuthUserId: "11111111-1111-4111-8111-111111111111",
   });
 }
 
@@ -45,23 +46,32 @@ function fixture({ tenantId = TENANT_A, entitlements = [entitlement()], entries 
     entries,
   });
   const customerTokenVerifier = {
-    async verifyAccessToken(token) {
+    async verifyIdentityAccessToken(token) {
       if (token !== "valid-token") throw new AuthenticationRequiredError();
-      return actor(tenantId);
+      return actor();
     },
   };
-  return request(createApp({ billingRepository, customerTokenVerifier }));
+  const authorizationService = {
+    async authorizeTenant({ actor: verifiedActor, tenantId: requestedTenantId, action }) {
+      assert.equal(verifiedActor.kind, "customer");
+      assert.equal(verifiedActor.trusted_scope, undefined);
+      assert.equal(action, "tenant:read");
+      if (requestedTenantId !== tenantId) throw new AuthorizationDeniedError();
+      return { actor: verifiedActor, tenant_id: requestedTenantId, action };
+    },
+  };
+  return request(createApp({ billingRepository, customerTokenVerifier, authorizationService }));
 }
 
 test("customer billing requires verified authentication", async () => {
-  const response = await fixture().get("/customer/billing/subscription");
+  const response = await fixture().get("/customer/billing/subscription?tenant_id=tenant_a");
   assert.equal(response.status, 401);
   assert.equal(response.body.error.code, "AUTHENTICATION_REQUIRED");
 });
 
 test("customer billing returns only customer-safe active entitlement state", async () => {
   const response = await fixture()
-    .get("/customer/billing/subscription")
+    .get("/customer/billing/subscription?tenant_id=tenant_a")
     .set("authorization", "Bearer valid-token");
   assert.equal(response.status, 200, JSON.stringify(response.body));
   assert.equal(response.body.status, "ready");
@@ -88,7 +98,7 @@ for (const state of [
 ]) {
   test(`customer billing represents serving ${state.status} entitlement truthfully`, async () => {
     const response = await fixture({ entitlements: [entitlement(state)] })
-      .get("/customer/billing/subscription")
+      .get("/customer/billing/subscription?tenant_id=tenant_a")
       .set("authorization", "Bearer valid-token");
     assert.equal(response.status, 200);
     assert.equal(response.body.subscription.entitlement_status, state.status);
@@ -98,7 +108,7 @@ for (const state of [
 test("inactive or cancelled entitlement is represented as not subscribed", async () => {
   for (const status of ["inactive", "cancelled"]) {
     const response = await fixture({ entitlements: [entitlement({ status })] })
-      .get("/customer/billing/subscription")
+      .get("/customer/billing/subscription?tenant_id=tenant_a")
       .set("authorization", "Bearer valid-token");
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, {
@@ -109,16 +119,12 @@ test("inactive or cancelled entitlement is represented as not subscribed", async
   }
 });
 
-test("customer billing does not accept browser tenant authority or reveal another tenant", async () => {
+test("customer billing treats tenant selector as a resource selector and sanitizes cross-tenant denial", async () => {
   const response = await fixture({ tenantId: TENANT_B })
     .get("/customer/billing/subscription?tenant_id=tenant_a")
     .set("authorization", "Bearer valid-token");
-  assert.equal(response.status, 200);
-  assert.deepEqual(response.body, {
-    status: "not_subscribed",
-    subscription: null,
-    available_credits: null,
-  });
+  assert.equal(response.status, 404);
+  assert.equal(response.body.error.code, "RESOURCE_NOT_AVAILABLE");
 });
 
 test("customer billing is read-only", async () => {
@@ -130,9 +136,16 @@ test("customer billing is read-only", async () => {
   const beforeEntries = repository.entries.length;
   const client = request(createApp({
     billingRepository: repository,
-    customerTokenVerifier: { async verifyAccessToken() { return actor(TENANT_A); } },
+    customerTokenVerifier: { async verifyIdentityAccessToken() { return actor(); } },
+    authorizationService: {
+      async authorizeTenant({ actor: verifiedActor, tenantId, action }) {
+        assert.equal(verifiedActor.trusted_scope, undefined);
+        assert.equal(action, "tenant:read");
+        return { actor: verifiedActor, tenant_id: tenantId, action };
+      },
+    },
   }));
-  const response = await client.get("/customer/billing/subscription").set("authorization", "Bearer valid-token");
+  const response = await client.get("/customer/billing/subscription?tenant_id=tenant_a").set("authorization", "Bearer valid-token");
   assert.equal(response.status, 200);
   assert.equal(repository.entries.length, beforeEntries);
 });

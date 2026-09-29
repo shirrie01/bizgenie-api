@@ -534,6 +534,7 @@ function createApp({
       createCustomerBillingRouter({
         repository: billingRepository,
         tokenVerifier: customerTokenVerifier,
+        authorizationService: resolvedAuthorizationService,
         logger,
       })
     );
