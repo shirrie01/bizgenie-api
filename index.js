@@ -107,6 +107,7 @@ const {
   createStripeBillingRouter,
   createStripeProductionComposition,
   createPaidBetaLaunchProofRouter,
+  createCustomerBillingRouter,
 } = require("./src/billing");
 
 function requireAdmin(req, res, next) {
@@ -284,6 +285,7 @@ function createApp({
   stripeSubscriptionService,
   paidBetaCaptureService,
   billing,
+  billingRepository,
   env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
@@ -525,6 +527,18 @@ function createApp({
     })
   );
 
+
+  if (billingRepository) {
+    app.use(
+      "/customer/billing",
+      createCustomerBillingRouter({
+        repository: billingRepository,
+        tokenVerifier: customerTokenVerifier,
+        logger,
+      })
+    );
+  }
+
   // Future bounded server-to-server execution seam. Customer generation is
   // currently executed in-process only after the mandatory job recorder
   // above succeeds; this route does not dispatch to Make or a provider.
@@ -726,6 +740,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       paidBetaCaptureService: paidBeta.service,
       billing,
+      billingRepository: billing.billingRepository,
       env,
       videoProvider: media.videoProvider,
       videoAssetStore: media.videoAssetStore,
