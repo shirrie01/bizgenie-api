@@ -12,7 +12,7 @@ const productionPatterns = [
 if (!target) {
   throw new Error("TARGET_URL is required");
 }
-const host = new URL(target).host;
+const host = target.replace(/^https?:\/\//i, "").split("/")[0];
 if (!allowProduction && productionPatterns.some((pattern) => pattern.test(host))) {
   throw new Error(
     "Refusing known production-looking target. Use an isolated candidate/load-test URL. " +
@@ -22,6 +22,7 @@ if (!allowProduction && productionPatterns.some((pattern) => pattern.test(host))
 
 const appErrors = new Rate("bg_app_errors");
 const profile = (__ENV.PROFILE || "smoke").toLowerCase();
+const authToken = __ENV.AUTH_TOKEN || "";
 
 const profiles = {
   smoke: [
@@ -52,7 +53,6 @@ if (!profiles[profile]) {
 
 export const options = {
   stages: profiles[profile],
-  gracefulRampDown: "30s",
   thresholds: {
     http_req_failed: [{ threshold: "rate<0.01", abortOnFail: true, delayAbortEval: "30s" }],
     http_req_duration: ["p(95)<1500"],
@@ -63,6 +63,7 @@ export const options = {
 
 function request(path, name) {
   const res = http.get(`${target}${path}`, {
+    headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
     tags: { name },
     timeout: "10s",
   });
