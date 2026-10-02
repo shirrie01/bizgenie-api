@@ -114,6 +114,78 @@ describe("generation response completion validation", () => {
     });
   });
 
+  it("accepts complete drafts with bounded markdown section headings", () => {
+    const markdownOutput = [
+      "## Hook",
+      "Stop scrolling and make planning work for you.",
+      "",
+      "## Concept",
+      "Show a simple plan becoming a finished post.",
+      "",
+      "## Script",
+      "Start with one clear goal, choose the next action, and publish consistently.",
+      "",
+      "## CTA",
+      "Try the planning workflow today.",
+      "",
+      "## Caption",
+      "A practical plan turns ideas into progress.",
+      "",
+      "## Hashtags",
+      "#Planning #Content #SmallBusiness",
+      "",
+      "## Filming instructions",
+      "- Open on a close-up of the written plan.",
+    ].join("\n");
+
+    const result = validateGenerationResponse(providerResponse({ text: markdownOutput }));
+    assert.equal(result.text, markdownOutput);
+    assert.equal(result.metadata.required_sections_complete, true);
+    assert.equal(result.metadata.incomplete_reason, null);
+  });
+
+  it("accepts complete drafts with bounded bold section labels", () => {
+    const boldOutput = [
+      "**Hook:** Stop scrolling and make planning work for you.",
+      "**Concept:** Show a simple plan becoming a finished post.",
+      "**Script:** Start with one clear goal, choose the next action, and publish consistently.",
+      "**CTA:** Try the planning workflow today.",
+      "**Caption:** A practical plan turns ideas into progress.",
+      "**Hashtags:** #Planning #Content #SmallBusiness",
+      "**Filming instructions:** Open on a close-up of the written plan.",
+    ].join("\n");
+
+    const result = validateGenerationResponse(providerResponse({ text: boldOutput }));
+    assert.equal(result.metadata.required_sections_complete, true);
+  });
+
+  it("still rejects a recognised markdown section heading with no content", () => {
+    const incomplete = [
+      "## Hook",
+      "Make planning simpler.",
+      "## Concept",
+      "Demonstrate one useful workflow.",
+      "## Script",
+      "Connect planning to execution.",
+      "## CTA",
+      "Try it today.",
+      "## Caption",
+      "Turn plans into progress.",
+      "## Hashtags",
+      "#Planning",
+      "## Filming instructions",
+    ].join("\n");
+
+    assert.throws(
+      () => validateGenerationResponse(providerResponse({ text: incomplete })),
+      (error) => {
+        assert.deepEqual(error.details.missing_sections, ["Filming instructions"]);
+        assert.equal(error.metadata.incomplete_reason, "MISSING_SECTIONS");
+        return true;
+      }
+    );
+  });
+
   it("rejects a max-token stop even when every required section is present", () => {
     assert.throws(
       () =>

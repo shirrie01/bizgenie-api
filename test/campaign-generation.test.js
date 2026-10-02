@@ -546,6 +546,45 @@ describe("campaign generation prompt contract", () => {
     assert.equal(result.ok, true);
   });
 
+  it("applies final-draft fidelity to bounded markdown section headings and multiline content", () => {
+    const metadata = strategyIdMetadata();
+    const draft = [
+      "## Hook",
+      "Make the weekday lunch decision the story.",
+      "",
+      "## Concept",
+      "Audience-led weekday choice — Introduce the new seasonal drink to people choosing a low-sugar option.",
+      "",
+      "## Script",
+      "Contrast the audience choice through a native short-form comparison.",
+      "",
+      "## CTA",
+      "Find a stockist nearby.",
+      "",
+      "## Caption",
+      "A considered weekday refreshment.",
+      "",
+      "## Hashtags",
+      "#lowSugar #weekdayLunch",
+      "",
+      "## Filming instructions",
+      "Use a native short-form comparison with the audience choice at the centre.",
+    ].join("\n");
+
+    const strategyResult = validateFinalDraftStrategyFidelity(draft, {
+      campaign: { goal: objective },
+      brandContext: "Audience:\nAdults choosing non-alcoholic drinks with less sugar.\nCTA preference:\nFind a stockist nearby.",
+      selected_strategy: { ...metadata.selected_strategy, evidence_anchors: [objective] },
+    });
+    const executionResult = validateDraftExecutionFidelity(
+      draft,
+      metadata.selected_strategy
+    );
+
+    assert.equal(strategyResult.ok, true);
+    assert.equal(executionResult.ok, true);
+  });
+
   it("keeps evidence IDs internal and transforms source prose while retaining exact approved claims", () => {
     const context = {
       campaign: { goal: "Help local teams coordinate their weekly field visits" },

@@ -87,9 +87,9 @@ function escapeRegExp(value) {
 }
 
 const SECTION_LABEL_PATTERN = new RegExp(
-  "^[ \\t]*(" +
+  "^[ \\t]*(?:#{1,6}[ \\t]+)?(?:\\*\\*|__)?(" +
     REQUIRED_SECTIONS.map(escapeRegExp).join("|") +
-    ")(?:[ \\t]*\\([^\\r\\n]*\\))?[ \\t]*(?::[ \\t]*(.*))?$",
+    ")(?:[ \\t]*\\([^\\r\\n]*\\))?[ \\t]*(?::)?(?:\\*\\*|__)?[ \\t]*(?::[ \\t]*(.*))?$",
   "gim"
 );
 
@@ -123,18 +123,17 @@ function assembleCandidateText(candidate) {
     .trim();
 }
 
-function findMissingSections(text) {
-  if (!text) {
-    return [...REQUIRED_SECTIONS];
-  }
-
+function extractSections(text) {
+  const source = String(text || "");
   const matches = [];
   SECTION_LABEL_PATTERN.lastIndex = 0;
 
-  for (const match of text.matchAll(SECTION_LABEL_PATTERN)) {
+  for (const match of source.matchAll(SECTION_LABEL_PATTERN)) {
     const section = REQUIRED_SECTIONS.find(
       (required) => required.toLowerCase() === match[1].toLowerCase()
     );
+    if (!section) continue;
+
     matches.push({
       section,
       index: match.index,
@@ -143,21 +142,33 @@ function findMissingSections(text) {
     });
   }
 
-  return REQUIRED_SECTIONS.filter((section) => {
-    const matchIndex = matches.findIndex((match) => match.section === section);
-    if (matchIndex === -1) {
-      return true;
-    }
+  const sections = {};
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const key = match.section.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(sections, key)) continue;
 
-    const match = matches[matchIndex];
-    const nextMatch = matches.find((candidate) => candidate.index > match.index);
-    const followingContent = text.slice(
+    const nextMatch = matches[index + 1];
+    const followingContent = source.slice(
       match.end,
-      nextMatch ? nextMatch.index : text.length
+      nextMatch ? nextMatch.index : source.length
     );
 
-    return !(match.inlineContent + "\n" + followingContent).trim();
-  });
+    sections[key] = (match.inlineContent + "\n" + followingContent).trim();
+  }
+
+  return sections;
+}
+
+function findMissingSections(text) {
+  if (!text) {
+    return [...REQUIRED_SECTIONS];
+  }
+
+  const sections = extractSections(text);
+  return REQUIRED_SECTIONS.filter(
+    (section) => !String(sections[section.toLowerCase()] || "").trim()
+  );
 }
 
 function safeTokenCount(value) {
@@ -317,6 +328,7 @@ module.exports = {
   STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS,
   assembleCandidateText,
   buildSystemInstruction,
+  extractSections,
   findMissingSections,
   generateScriptWithVertex,
   validateGenerationResponse,

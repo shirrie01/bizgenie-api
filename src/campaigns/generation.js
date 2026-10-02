@@ -1,7 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const { resolveBrandBrainContext } = require("../brand-brain");
 const { emptyContent } = require("./schema");
-const { GenerationIncompleteError, findMissingSections } = require("../generation");
+const { GenerationIncompleteError, extractSections, findMissingSections } = require("../generation");
 
 class CampaignStrategyValidationError extends Error {
   constructor(reasons, { stage = null, generationJobId = null } = {}) {
@@ -144,7 +144,6 @@ function validateDraftExecutionFidelity(draftText, strategy) {
   return { ok: reasons.length === 0, reasons };
 }
 
-const DRAFT_SECTION_PATTERN = /^(Hook|Concept|Script|CTA|Caption|Hashtags|Filming instructions):\s*(.+)$/gim;
 const COPY_STOP_WORDS = new Set("a an and are as at be by for from in is it of on or that the their this to with you your".split(" "));
 const GENERIC_FILMING_PATTERN = /\b(?:generic|professional|business|product|pack|logo|brand)\s+(?:graphics?|visuals?|shot|shots?|footage|b-?roll|animation|treatment)|\b(?:product|pack)\s+shot|\bstock\s+footage|\bclean\s+business\b/i;
 
@@ -153,9 +152,7 @@ function meaningfulDraftWords(value) {
 }
 
 function extractDraftSections(text) {
-  const sections = {};
-  for (const match of String(text || "").matchAll(DRAFT_SECTION_PATTERN)) sections[match[1].toLowerCase()] = match[2].trim();
-  return sections;
+  return extractSections(text);
 }
 
 function hasSubstantialSourceRepetition(copy, source, approvedClaims = []) {
