@@ -124,7 +124,14 @@ function assembleCandidateText(candidate) {
 }
 
 function extractSections(text) {
-  const source = String(text || "");
+  const originalSource = String(text || "");
+  const inlineBoundaryPattern = new RegExp(
+    "([ \\t]+)(?=(?:\\*\\*|__)?(?:" +
+      REQUIRED_SECTIONS.map(escapeRegExp).join("|") +
+      ")(?:[ \\t]*\\([^\\r\\n]*\\))?[ \\t]*:(?:\\*\\*|__)?[ \\t]*)",
+    "gi"
+  );
+  const source = originalSource.replace(inlineBoundaryPattern, "\n");
   const matches = [];
   SECTION_LABEL_PATTERN.lastIndex = 0;
 

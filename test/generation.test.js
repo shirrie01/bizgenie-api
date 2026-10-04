@@ -159,6 +159,44 @@ describe("generation response completion validation", () => {
     assert.equal(result.metadata.required_sections_complete, true);
   });
 
+  it("accepts complete drafts when bounded section labels are serialized inline", () => {
+    const inlineOutput =
+      "Hook: Stop scrolling and make planning work for you. " +
+      "Concept: Show a simple plan becoming a finished post. " +
+      "Script: Start with one clear goal, choose the next action, and publish consistently. " +
+      "CTA: Try the planning workflow today. " +
+      "Caption: A practical plan turns ideas into progress. " +
+      "Hashtags: #Planning #Content #SmallBusiness " +
+      "Filming instructions: Open on a close-up of the written plan.";
+
+    const result = validateGenerationResponse(providerResponse({ text: inlineOutput }));
+
+    assert.equal(result.text, inlineOutput);
+    assert.equal(result.metadata.required_sections_complete, true);
+    assert.equal(result.metadata.incomplete_reason, null);
+  });
+
+  it("does not manufacture complete sections from section-like words inside ordinary prose", () => {
+    const prose =
+      "Hook: Start with a clear trade proposition. " +
+      "The concept is deliberately simple and the script should stay concise. " +
+      "A buyer may ask about the CTA: but that reference is ordinary prose, " +
+      "not a complete structured campaign.";
+
+    assert.throws(
+      () => validateGenerationResponse(providerResponse({ text: prose })),
+      (error) => {
+        assert.equal(error.code, "GENERATION_INCOMPLETE");
+        assert.ok(error.details.missing_sections.includes("Concept"));
+        assert.ok(error.details.missing_sections.includes("Script"));
+        assert.ok(error.details.missing_sections.includes("Caption"));
+        assert.ok(error.details.missing_sections.includes("Hashtags"));
+        assert.ok(error.details.missing_sections.includes("Filming instructions"));
+        return true;
+      }
+    );
+  });
+
   it("still rejects a recognised markdown section heading with no content", () => {
     const incomplete = [
       "## Hook",
