@@ -151,6 +151,24 @@ describe("prompt compiler", () => {
     );
   });
 
+  it("binds structured campaign draft fidelity requirements into the final output contract", () => {
+    const prompt = compilePrompt(ALL_OPTIONS);
+    const outputContract = prompt.slice(position(prompt, "OUTPUT CONTRACT"));
+
+    assert.match(
+      outputContract,
+      /Hook, CTA, and Caption must be original customer-facing synthesis/
+    );
+    assert.match(
+      outputContract,
+      /Filming instructions must concretely execute selected_strategy\.platform_execution/
+    );
+    assert.match(
+      outputContract,
+      /do not replace it with generic professional, product, pack, logo, brand, stock-footage, or clean-business treatment/
+    );
+  });
+
   it("returns byte-for-byte deterministic output", () => {
     assert.equal(compilePrompt(ALL_OPTIONS), compilePrompt({ ...ALL_OPTIONS }));
   });

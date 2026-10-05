@@ -97,6 +97,8 @@ function compilePrompt({
             "Return one JSON object matching the provider response schema.",
             "Put the complete reviewable customer draft in draft_text.",
             "draft_text must include every normal required section: Hook, Concept, Script, CTA, Caption, Hashtags, and Filming instructions.",
+            "In draft_text, Hook, CTA, and Caption must be original customer-facing synthesis rather than substantial repetition or rearrangement of campaign objective or Brand Brain prose; exact approved claims may retain their approved wording.",
+            "In draft_text, Filming instructions must concretely execute selected_strategy.platform_execution; when that execution is richer, do not replace it with generic professional, product, pack, logo, brand, stock-footage, or clean-business treatment.",
             "Return strategy_candidates, selected_strategy, and selection_evidence as concise reviewable artefacts only; do not return chain-of-thought.",
           ]
         : outputContract
