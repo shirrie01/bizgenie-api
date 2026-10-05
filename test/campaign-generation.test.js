@@ -274,6 +274,7 @@ describe("campaign generation prompt contract", () => {
     assert.match(finalPrompt, /audience tension or decision context, product\/brand truth, differentiator, and channel behaviour/i);
     assert.match(finalPrompt, /changing only the hook, wording, shot order, platform treatment, or evidence anchor does not create a different route/i);
     assert.match(finalPrompt, /Reject stock hooks and category-default concepts/);
+    assert.match(finalPrompt, /do not choose a category-default strategy when another supported candidate is non-generic and at least equally grounded in approved evidence/);
     assert.match(finalPrompt, /grounded in available brand truth, campaign objective, audience insight, differentiator, and channel behaviour/);
     assert.match(finalPrompt, /Transform supplied non-claim campaign objective and Brand Brain prose into original customer-facing expression/);
     assert.match(finalPrompt, /For each Hook, CTA, and Caption, write a new customer-facing sentence/);
