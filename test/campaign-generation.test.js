@@ -235,10 +235,9 @@ describe("campaign generation prompt contract", () => {
     const { service, calls } = makeService({
       assertions: {
         onJob(args) {
-          assert.match(args.executionInput.compiled_prompt, /Campaign objective:/);
-          assert.match(args.executionInput.compiled_prompt, /native to the selected platform/);
-          assert.match(args.executionInput.compiled_prompt, /three to five materially different strategic angles/);
-          assert.match(args.executionInput.compiled_prompt, /Preserve approved wording verbatim/);
+          assert.doesNotMatch(args.executionInput.compiled_prompt, /Campaign objective:/);
+          assert.doesNotMatch(args.executionInput.compiled_prompt, /Lead with a specific product truth or customer reason/);
+          assert.match(args.executionInput.compiled_prompt, /\[APPROVED EVIDENCE ANCHORS\]/);
           assert.match(args.executionInput.additional_context, /Brand:\nNorthstar Beverage/);
         },
       },
@@ -258,6 +257,8 @@ describe("campaign generation prompt contract", () => {
 
     assert.match(finalPrompt, /\[PLATFORM RULES\][\s\S]*Instagram Reels/);
     assert.match(finalPrompt, /\[CAMPAIGN OBJECTIVE\]\nIntroduce the new seasonal drink/);
+    assert.equal((finalPrompt.match(/\[CAMPAIGN OBJECTIVE\]/g) || []).length, 1);
+    assert.equal((finalPrompt.match(/\[CAMPAIGN CREATIVE BRIEF\]/g) || []).length, 1);
     assert.match(finalPrompt, /\[CAMPAIGN CREATIVE BRIEF\]/);
     assert.match(finalPrompt, /specific product truth or customer reason to care/);
     assert.match(finalPrompt, /platform and placement/);
@@ -684,10 +685,10 @@ describe("campaign generation prompt contract", () => {
       brandContext: "[BRAND BRAIN]\nBrand: Northstar Beverage",
     });
 
-    assert.match(prompt, /Campaign objective:.*low-sugar option/);
+    assert.doesNotMatch(prompt, /Campaign objective:/);
     assert.match(prompt, /approved Brand Brain context/);
-    assert.match(prompt, /Lead with a specific product truth or customer reason/);
-    assert.match(prompt, /reviewable draft only/);
+    assert.doesNotMatch(prompt, /Lead with a specific product truth or customer reason/);
+    assert.match(prompt, /founder review/);
     assert.doesNotMatch(CAMPAIGN_CREATIVE_BRIEF, /Fonzo|Northstar Beverage/);
   });
 

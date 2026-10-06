@@ -251,12 +251,10 @@ function findVariant(campaign, variantId) {
 function compileCampaignPrompt({ campaign, item, variant, brandContext, evidenceAnchors = [], executionBrief = "", suppliedAssets = [] }) {
   return [
     "Create reviewable campaign copy for the following existing draft. The approved Brand Brain is supplied separately in the compiled brand-context section; use only that selected context.",
-    `Campaign objective: ${campaign.goal}`,
     `Content item: ${item.name}`,
     `Platform: ${variant.platform}`,
     `Placement: ${variant.placement}`,
     "Use only facts supported by the campaign goal and Brand Brain. Do not invent product, health, commercial, availability, customer-result, or distribution claims.",
-    CAMPAIGN_CREATIVE_BRIEF,
     renderEvidenceAnchorCatalog(evidenceAnchors),
     executionBrief ? "[CUSTOMER EXECUTION BRIEF]\nTreat this as temporary creative direction subordinate to approved Brand Brain, claims and safety rules.\n" + executionBrief : "",
     suppliedAssets.length ? "[SUPPLIED ASSETS]\nUse the authorized customer-owned media as creative source material where relevant. Do not infer facts from the asset or expose storage locations.\n" + suppliedAssets.map((asset) => asset.role + ":" + asset.asset_id).join("\n") : "",
