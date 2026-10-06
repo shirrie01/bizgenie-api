@@ -361,7 +361,7 @@ describe("Vertex generation configuration", () => {
   });
 });
 
-  it("carries structured campaign strategy metadata through the real provider adapter in one call", async () => {
+  it("carries structured campaign strategy metadata through the Stage A provider adapter", async () => {
     let calls = 0;
     let modelOptions;
     let requestBody;
@@ -373,7 +373,9 @@ describe("Vertex generation configuration", () => {
           async generateContent(body) {
             calls += 1;
             requestBody = body;
-            return { response: providerResponse({ text: JSON.stringify(strategyEnvelope()) }) };
+            const envelope = strategyEnvelope();
+            delete envelope.draft_text;
+            return { response: providerResponse({ text: JSON.stringify(envelope) }) };
           },
         };
       }
@@ -389,11 +391,11 @@ describe("Vertex generation configuration", () => {
         campaignObjective: "Launch a product",
         campaignInstructions: "Compare three to five strategies and select one.",
         brandContext: "approved context",
+        structuredMode: "strategy",
       },
     });
 
     assert.equal(calls, 1);
-    assert.equal(result.text, COMPLETE_OUTPUT);
     assert.deepEqual(result.metadata.strategy_candidates, strategyEnvelope().strategy_candidates);
     assert.deepEqual(result.metadata.selected_strategy, strategyEnvelope().selected_strategy);
     assert.deepEqual(result.metadata.selection_evidence, strategyEnvelope().selection_evidence);
@@ -403,6 +405,51 @@ describe("Vertex generation configuration", () => {
     assert.deepEqual(modelOptions.generationConfig.responseSchema, STRATEGY_RESPONSE_SCHEMA);
     assert.match(requestBody.contents[0].parts[0].text, /Return one JSON object matching the provider response schema/);
     assert.doesNotMatch(requestBody.contents[0].parts[0].text, /Return only plain text/);
+  });
+
+  it("extracts only the final draft through the Stage B provider adapter", async () => {
+    let calls = 0;
+    let modelOptions;
+
+    class FakeVertexAI {
+      getGenerativeModel(options) {
+        modelOptions = options;
+        return {
+          async generateContent() {
+            calls += 1;
+            return {
+              response: providerResponse({
+                text: JSON.stringify({ draft_text: COMPLETE_OUTPUT }),
+              }),
+            };
+          },
+        };
+      }
+    }
+
+    const result = await generateScriptWithVertex("validated selected strategy", {
+      branding: brandingConfig,
+      projectId: "test-project",
+      modelName: "gemini-test",
+      VertexAIClient: FakeVertexAI,
+      promptOptions: {
+        platform: "instagram",
+        campaignObjective: "Launch a product",
+        campaignInstructions: "Produce the final campaign draft only.",
+        brandContext: "approved context",
+        structuredMode: "draft",
+      },
+    });
+
+    assert.equal(calls, 1);
+    assert.equal(result.text, COMPLETE_OUTPUT);
+    assert.equal(result.metadata.strategy_candidates, undefined);
+    assert.equal(result.metadata.selected_strategy, undefined);
+    assert.equal(result.metadata.selection_evidence, undefined);
+    assert.equal(result.metadata.prompt_token_count, 800);
+    assert.equal(modelOptions.generationConfig.maxOutputTokens, STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS);
+    assert.equal(modelOptions.generationConfig.responseMimeType, "application/json");
+    assert.notDeepEqual(modelOptions.generationConfig.responseSchema, STRATEGY_RESPONSE_SCHEMA);
   });
 
 describe("generate-script completion contract", () => {
