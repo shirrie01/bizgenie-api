@@ -617,6 +617,35 @@ describe("campaign generation prompt contract", () => {
     }
   });
 
+  it("does not treat distributed Brand Brain vocabulary overlap as copied source wording", () => {
+    const context = {
+      campaign: { goal: "Win new independent retailers, wholesalers and distributors" },
+      brandContext: [
+        "Brand:\nFairway Brands & Distribution",
+        "Description:\nDistinctive drinks brands for retailers wholesalers and distribution partners.",
+        "Mission:\nBuild sustained demand and measurable commercial growth.",
+        "Audience:\nIndependent retailers wholesalers distributors and trade customers.",
+        "Audience goals:\nGrow beverage sales and strengthen customer relationships.",
+        "Differentiators:\nDistinctive beverage portfolio and commercial distribution expertise.",
+        "CTA preference:\nGrow the trade customer base through measurable commercial opportunities.",
+      ].join("\n\n"),
+      selected_strategy: { evidence_anchors: [] },
+    };
+    const draft = [
+      "Hook: Build stronger retail relationships through distinctive drinks and measurable growth opportunities.",
+      "Concept: Put the commercial decision at the centre of the story.",
+      "Script: Show how an independent retailer evaluates a new drinks range.",
+      "CTA: Start a conversation about the right range for your customers.",
+      "Caption: Give retailers a clearer reason to consider something new.",
+      "Hashtags: #independentretail #drinks",
+      "Filming instructions: Follow the retailer decision through a native document-style sequence.",
+    ].join("\n");
+
+    const result = validateFinalDraftStrategyFidelity(draft, context);
+    assert.equal(result.ok, true);
+    assert.ok(!result.reasons.includes("customer-facing copy substantially repeats supplied source wording"));
+  });
+
   it("accepts a final draft whose execution does not collapse beneath the selected strategy", () => {
     const metadata = strategyIdMetadata();
     const result = validateDraftExecutionFidelity(

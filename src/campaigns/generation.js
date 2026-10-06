@@ -159,13 +159,19 @@ function hasSubstantialSourceRepetition(copy, source, approvedClaims = []) {
   let boundedSource = String(source || "");
   for (const claim of approvedClaims) boundedSource = boundedSource.replace(new RegExp(String(claim).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
   const copyWords = meaningfulDraftWords(copy);
-  const sourceWords = new Set(meaningfulDraftWords(boundedSource));
-  if (copyWords.length < 5 || sourceWords.size < 5) return false;
-  const overlap = copyWords.filter((word) => sourceWords.has(word)).length / copyWords.length;
+  if (copyWords.length < 5) return false;
+  const sourceSegments = boundedSource
+    .split(/\n+/)
+    .map((segment) => meaningfulDraftWords(segment))
+    .filter((words) => words.length >= 5);
+  const hasLocalOverlap = sourceSegments.some((words) => {
+    const sourceWords = new Set(words);
+    return copyWords.filter((word) => sourceWords.has(word)).length / copyWords.length >= 0.7;
+  });
   const sourceWordList = meaningfulDraftWords(boundedSource);
   const copyTrigrams = new Set(copyWords.slice(0, -2).map((_, index) => copyWords.slice(index, index + 3).join(" ")));
   const sourceTrigrams = new Set(sourceWordList.slice(0, -2).map((_, index) => sourceWordList.slice(index, index + 3).join(" ")));
-  return overlap >= 0.7 || [...copyTrigrams].filter((trigram) => sourceTrigrams.has(trigram)).length >= 2;
+  return hasLocalOverlap || [...copyTrigrams].filter((trigram) => sourceTrigrams.has(trigram)).length >= 2;
 }
 
 function validateFinalDraftStrategyFidelity(draftText, { campaign, brandContext, selected_strategy: strategy }) {
