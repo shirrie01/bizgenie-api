@@ -261,6 +261,7 @@ describe("campaign generation prompt contract", () => {
     assert.equal((finalPrompt.match(/\[CAMPAIGN CREATIVE BRIEF\]/g) || []).length, 1);
     assert.match(finalPrompt, /\[CAMPAIGN CREATIVE BRIEF\]/);
     assert.match(finalPrompt, /specific product truth or customer reason to care/);
+    assert.match(finalPrompt, /concise reviewable rationale of 8-500 characters/);
     assert.match(finalPrompt, /platform and placement/);
     assert.match(finalPrompt, /\[BRAND BRAIN\][\s\S]*Brand:\nNorthstar Beverage/);
     assert.match(finalPrompt, /Adults choosing non-alcoholic drinks with less sugar/);
