@@ -20,7 +20,6 @@ const STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS = 8192;
 const STRATEGY_RESPONSE_SCHEMA = Object.freeze({
   type: "OBJECT",
   properties: {
-    draft_text: { type: "STRING" },
     strategy_candidates: {
       type: "ARRAY",
       minItems: 3,
@@ -61,7 +60,15 @@ const STRATEGY_RESPONSE_SCHEMA = Object.freeze({
       required: ["selected_candidate_index", "criteria", "rationale"],
     },
   },
-  required: ["draft_text", "strategy_candidates", "selected_strategy", "selection_evidence"],
+  required: ["strategy_candidates", "selected_strategy", "selection_evidence"],
+});
+
+const DRAFT_RESPONSE_SCHEMA = Object.freeze({
+  type: "OBJECT",
+  properties: {
+    draft_text: { type: "STRING" },
+  },
+  required: ["draft_text"],
 });
 
 const REQUIRED_SECTIONS = Object.freeze([
@@ -227,23 +234,34 @@ function isRetryable({ finishReason, promptBlockReason }) {
   );
 }
 
-function parseStrategyEnvelope(rawText) {
+function parseStructuredEnvelope(rawText, mode) {
   let envelope;
   try {
     envelope = JSON.parse(rawText);
   } catch {
     return null;
   }
-  if (!envelope || typeof envelope !== "object" || typeof envelope.draft_text !== "string") return null;
-  return envelope;
+  if (!envelope || typeof envelope !== "object") return null;
+
+  if (mode === "strategy") {
+    if (!Array.isArray(envelope.strategy_candidates) || !envelope.selected_strategy || !envelope.selection_evidence) return null;
+    return envelope;
+  }
+
+  if (mode === "draft") {
+    if (typeof envelope.draft_text !== "string") return null;
+    return envelope;
+  }
+
+  return null;
 }
 
-function validateGenerationResponse(response, { model = DEFAULT_MODEL_NAME, structuredStrategy = false } = {}) {
+function validateGenerationResponse(response, { model = DEFAULT_MODEL_NAME, structuredMode = null } = {}) {
   const candidate = response?.candidates?.[0];
   const rawText = assembleCandidateText(candidate);
-  const envelope = structuredStrategy ? parseStrategyEnvelope(rawText) : null;
-  const text = structuredStrategy ? (envelope?.draft_text || "") : rawText;
-  const missingSections = findMissingSections(text);
+  const envelope = structuredMode ? parseStructuredEnvelope(rawText, structuredMode) : null;
+  const text = structuredMode === "draft" ? (envelope?.draft_text || "") : structuredMode === "strategy" ? rawText : rawText;
+  const missingSections = structuredMode === "strategy" ? [] : findMissingSections(text);
   const metadata = normalizeCompletionMetadata(response, candidate, model);
   const reason = incompleteReason({
     finishReason: metadata.finish_reason,
@@ -252,9 +270,9 @@ function validateGenerationResponse(response, { model = DEFAULT_MODEL_NAME, stru
   });
 
   metadata.incomplete_reason = reason;
-  metadata.required_sections_complete = missingSections.length === 0;
+  metadata.required_sections_complete = structuredMode === "strategy" ? true : missingSections.length === 0;
 
-  if (structuredStrategy && envelope) {
+  if (structuredMode === "strategy" && envelope) {
     metadata.strategy_candidates = envelope.strategy_candidates;
     metadata.selected_strategy = envelope.selected_strategy;
     metadata.selection_evidence = envelope.selection_evidence;
@@ -294,7 +312,14 @@ async function generateScriptWithVertex(
   }
 
   const vertexAI = new VertexAIClient({ project: projectId, location });
-  const structuredStrategy = typeof promptOptions.campaignInstructions === "string" && Boolean(promptOptions.campaignInstructions.trim());
+  const structuredMode = promptOptions.structuredMode || (
+    typeof promptOptions.campaignInstructions === "string" && Boolean(promptOptions.campaignInstructions.trim())
+      ? "strategy"
+      : null
+  );
+  if (structuredMode && !["strategy", "draft"].includes(structuredMode)) {
+    throw new TypeError("Unsupported structured generation mode");
+  }
   const compiledPrompt = compilePrompt({
     ...promptOptions,
     appName: branding.appName,
@@ -306,8 +331,13 @@ async function generateScriptWithVertex(
       role: "system",
       parts: [{ text: buildSystemInstruction(branding) }],
     },
-    generationConfig: structuredStrategy
-      ? { ...GENERATION_CONFIG, maxOutputTokens: STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS, responseMimeType: "application/json", responseSchema: STRATEGY_RESPONSE_SCHEMA }
+    generationConfig: structuredMode
+      ? {
+          ...GENERATION_CONFIG,
+          maxOutputTokens: STRUCTURED_CAMPAIGN_MAX_OUTPUT_TOKENS,
+          responseMimeType: "application/json",
+          responseSchema: structuredMode === "strategy" ? STRATEGY_RESPONSE_SCHEMA : DRAFT_RESPONSE_SCHEMA,
+        }
       : GENERATION_CONFIG,
   });
 
@@ -320,7 +350,7 @@ async function generateScriptWithVertex(
     ],
   });
 
-  return validateGenerationResponse(result.response, { model: modelName, structuredStrategy });
+  return validateGenerationResponse(result.response, { model: modelName, structuredMode });
 }
 
 module.exports = {

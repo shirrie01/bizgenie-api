@@ -118,6 +118,24 @@ function strategyExecutionText(strategy) {
   return normalizeAngle([strategy?.angle, strategy?.specificity, strategy?.platform_execution].filter(Boolean).join(" "));
 }
 
+function renderSelectedStrategyExecutionContract(strategy) {
+  const anchors = Array.isArray(strategy?.evidence_anchors) ? strategy.evidence_anchors : [];
+  const claims = Array.isArray(strategy?.approved_claims) ? strategy.approved_claims : [];
+  return [
+    "[VALIDATED SELECTED STRATEGY]",
+    "This strategy has already been selected and validated. Execute it exactly; do not select, replace, broaden, or reinterpret it.",
+    `Angle: ${strategy?.angle || ""}`,
+    `Specificity: ${strategy?.specificity || ""}`,
+    `Platform execution: ${strategy?.platform_execution || ""}`,
+    "Resolved approved evidence:",
+    ...(anchors.length ? anchors.map((anchor) => `- ${anchor}`) : ["- None"]),
+    "Exact approved claims:",
+    ...(claims.length ? claims.map((claim) => `- ${claim}`) : ["- None"]),
+    "Write the final customer-facing draft from this contract. Transform evidence into original expression rather than copying source prose, except exact approved claims.",
+    "Filming instructions must concretely implement the Platform execution above rather than falling back to generic professional, product, pack, logo, brand, stock-footage, or clean-business treatment.",
+  ].join("\n");
+}
+
 function evidenceSpecificity(strategy) {
   const anchors = Array.isArray(strategy?.evidence_anchors) ? strategy.evidence_anchors : [];
   return new Set(anchors.map((anchor) => String(anchor || "").trim()).filter((anchor) => anchor.length >= 8)).size;
@@ -344,21 +362,110 @@ class CampaignVariantGenerationService {
     const generation = await this.generationBillingOrchestrator.execute({
       job,
       expectedExecutionClass: "text.standard",
-      operation: async () => this.scriptGenerator(compiledPrompt, {
-        branding: this.branding,
-        promptOptions: {
-          platform: target.variant.platform,
-          brandContext,
-          campaignObjective: campaign.goal,
-          campaignInstructions: CAMPAIGN_CREATIVE_BRIEF,
-          evidenceAnchorCatalog: renderEvidenceAnchorCatalog(evidenceAnchors),
-        },
-      }),
+      operation: async () => {
+        // Stage A: generate strategy only. Do not draft until the selected
+        // strategy has passed the existing evidence and strategy validators.
+        const strategyGeneration = await this.scriptGenerator(compiledPrompt, {
+          branding: this.branding,
+          promptOptions: {
+            platform: target.variant.platform,
+            brandContext,
+            campaignObjective: campaign.goal,
+            campaignInstructions: CAMPAIGN_CREATIVE_BRIEF,
+            evidenceAnchorCatalog: renderEvidenceAnchorCatalog(evidenceAnchors),
+            structuredMode: "strategy",
+          },
+        });
+
+        const resolvedEvidence = resolveEvidenceAnchorReferences(
+          strategyGeneration.metadata,
+          evidenceAnchors
+        );
+
+        if (!resolvedEvidence.ok) {
+          return {
+            strategy_rejection: {
+              reasons: resolvedEvidence.reasons,
+              stage: "evidence_anchor_resolution",
+            },
+            strategy_metadata: strategyGeneration.metadata,
+          };
+        }
+
+        const strategyCheck = validateSelectedStrategy(
+          resolvedEvidence.selected_strategy,
+          {
+            campaign,
+            variant: target.variant,
+            brandContext,
+            candidates: resolvedEvidence.candidates,
+            selection_evidence: strategyGeneration.metadata?.selection_evidence,
+          }
+        );
+
+        if (!strategyCheck.ok) {
+          return {
+            strategy_rejection: {
+              reasons: strategyCheck.reasons,
+              stage: "selected_strategy_validation",
+            },
+            strategy_metadata: strategyGeneration.metadata,
+          };
+        }
+
+        // Stage B: the provider receives one already-validated strategy as its
+        // execution contract. It is not asked to choose strategy again.
+        const executionContract = renderSelectedStrategyExecutionContract(
+          resolvedEvidence.selected_strategy
+        );
+
+        const draftGeneration = await this.scriptGenerator(
+          [compiledPrompt, executionContract].join("\n\n"),
+          {
+            branding: this.branding,
+            promptOptions: {
+              platform: target.variant.platform,
+              brandContext,
+              campaignObjective: campaign.goal,
+              campaignInstructions: [
+                "Produce the final campaign draft only.",
+                "The validated selected strategy in the user context is authoritative.",
+                "Do not generate or select alternative strategies.",
+                "Return every required campaign section and execute the validated strategy faithfully.",
+              ].join(" "),
+              structuredMode: "draft",
+            },
+          }
+        );
+
+        return {
+          text: draftGeneration.text,
+          metadata: {
+            ...draftGeneration.metadata,
+            strategy_candidates: resolvedEvidence.candidates,
+            selected_strategy: resolvedEvidence.selected_strategy,
+            selection_evidence: strategyGeneration.metadata?.selection_evidence,
+          },
+        };
+      },
     });
-    const resolvedEvidence = resolveEvidenceAnchorReferences(generation.metadata, evidenceAnchors);
-    if (!resolvedEvidence.ok) throw new CampaignStrategyValidationError(resolvedEvidence.reasons, { stage: "evidence_anchor_resolution", generationJobId: job.job_id });
-    const strategyCheck = validateSelectedStrategy(resolvedEvidence.selected_strategy, { campaign, variant: target.variant, brandContext, candidates: resolvedEvidence.candidates, selection_evidence: generation.metadata?.selection_evidence });
-    if (!strategyCheck.ok) throw new CampaignStrategyValidationError(strategyCheck.reasons, { stage: "selected_strategy_validation", generationJobId: job.job_id });
+
+    if (generation.strategy_rejection) {
+      throw new CampaignStrategyValidationError(
+        generation.strategy_rejection.reasons,
+        {
+          stage: generation.strategy_rejection.stage,
+          generationJobId: job.job_id,
+        }
+      );
+    }
+
+    const resolvedEvidence = {
+      ok: true,
+      candidates: generation.metadata.strategy_candidates,
+      selected_strategy: generation.metadata.selected_strategy,
+    };
+
     const missingSections = findMissingSections(generation.text);
     if (missingSections.length > 0) {
       throw new GenerationIncompleteError({
@@ -372,10 +479,32 @@ class CampaignVariantGenerationService {
         },
       });
     }
-    const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
-    if (!draftCheck.ok) throw new CampaignStrategyValidationError(draftCheck.reasons, { stage: "final_draft_execution_fidelity", generationJobId: job.job_id });
-    const strategyFidelityCheck = validateFinalDraftStrategyFidelity(generation.text, { campaign, brandContext, selected_strategy: resolvedEvidence.selected_strategy });
-    if (!strategyFidelityCheck.ok) throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, { stage: "final_draft_strategy_fidelity", generationJobId: job.job_id });
+
+    const draftCheck = validateDraftExecutionFidelity(
+      generation.text,
+      resolvedEvidence.selected_strategy
+    );
+    if (!draftCheck.ok) {
+      throw new CampaignStrategyValidationError(draftCheck.reasons, {
+        stage: "final_draft_execution_fidelity",
+        generationJobId: job.job_id,
+      });
+    }
+
+    const strategyFidelityCheck = validateFinalDraftStrategyFidelity(
+      generation.text,
+      {
+        campaign,
+        brandContext,
+        selected_strategy: resolvedEvidence.selected_strategy,
+      }
+    );
+    if (!strategyFidelityCheck.ok) {
+      throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, {
+        stage: "final_draft_strategy_fidelity",
+        generationJobId: job.job_id,
+      });
+    }
     const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",

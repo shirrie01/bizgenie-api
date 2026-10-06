@@ -242,8 +242,12 @@ describe("campaign generation prompt contract", () => {
         },
       },
       scriptGenerator: async (userContext, { promptOptions }) => {
-        finalPrompt = compilePrompt({ ...promptOptions, userContext });
-        return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyIdMetadata() };
+        const prompt = compilePrompt({ ...promptOptions, userContext });
+        if (promptOptions.structuredMode === "strategy") {
+          finalPrompt = prompt;
+          return { text: "", metadata: strategyIdMetadata() };
+        }
+        return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: {} };
       },
     });
 
@@ -304,7 +308,7 @@ describe("campaign generation prompt contract", () => {
     assert.deepEqual(calls.brandLookups, [["project_fonzo", "brand_fonzo"]]);
     assert.equal(calls.jobs, 1);
     assert.equal(calls.billed, 1);
-    assert.equal(calls.generations, 1);
+    assert.equal(calls.generations, 2);
     assert.equal(calls.saves, 1);
   });
 
@@ -356,12 +360,15 @@ describe("campaign generation prompt contract", () => {
       brandBrain: sparseBrain,
       scriptGenerator: async (userContext, { promptOptions }) => {
         const prompt = compilePrompt({ ...promptOptions, userContext });
+        if (promptOptions.structuredMode === "draft") {
+          return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: {} };
+        }
         assert.doesNotMatch(prompt, /\[AUDIENCE RULES\]|\[VOICE RULES\]|\[SCRIPT TYPE RULES\]|\[INTENT RULES\]/);
         assert.match(prompt, /\[CAMPAIGN OBJECTIVE\]/);
         assert.match(prompt, /Use audience and voice details only when they are present/);
         assert.match(prompt, /never invent missing intelligence/);
         assert.doesNotMatch(prompt, /\nAudience:\n|\nAudience goals:\n|\nDifferentiators:\n/);
-        return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyMetadata(0, ["EA001", "EA001", "EA001"]) };
+        return { text: "", metadata: strategyMetadata(0, ["EA001", "EA001", "EA001"]) };
       },
     });
 
@@ -514,7 +521,7 @@ describe("campaign generation prompt contract", () => {
       }
     );
     assert.equal(calls.billed, 1);
-    assert.equal(calls.generations, 1);
+    assert.equal(calls.generations, 2);
     assert.equal(calls.saves, 0);
   });
 
