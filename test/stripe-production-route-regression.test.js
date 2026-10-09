@@ -12,9 +12,9 @@ function stripeEnvironment(overrides = {}) {
     STRIPE_MODE: "live",
     STRIPE_SECRET_KEY: "sk_live_regression_not_real",
     STRIPE_WEBHOOK_SECRET: "whsec_regression_not_real",
-    STRIPE_SUCCESS_URL: "https://example.com/success",
-    STRIPE_CANCEL_URL: "https://example.com/cancel",
-    STRIPE_PRICE_STANDARD: "price_regression",
+    STRIPE_SUCCESS_URL: "https://example.com/billing/checkout/success",
+    STRIPE_CANCEL_URL: "https://example.com/billing/checkout/cancel",
+    STRIPE_PRICE_STANDARD: "price_Regression",
     STRIPE_POLICY_STANDARD: "policy_regression",
     ...overrides,
   };
