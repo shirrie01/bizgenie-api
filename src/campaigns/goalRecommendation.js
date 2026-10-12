@@ -137,7 +137,7 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
   const kind = goalKind(request.goal, context.brand_brain);
   const generatedAt = iso(now());
   const strategy = planRecommendation(request.goal, context.brand_brain);
-  const campaignName = strategy ? `${strategy.title} Campaign` : `${titleCase(request.goal)} Campaign`;
+  const campaignName = strategy ? strategy.title : `${titleCase(request.goal)} Campaign`;
   const suggestedItems = itemSet(kind, {
     goal: request.goal,
     brandBrain: context.brand_brain,
@@ -149,7 +149,7 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
       { name: "Consent-based appointment follow-up", format: "text", platform: "email", placement: "message", destination_label: "Email", reason: "" }
     );
   }
-  if (strategy) suggestedItems.forEach((item, index) => { if (strategy.reasons[index]) item.reason = "Recommended because " + strategy.reasons[index].charAt(0).toLowerCase() + strategy.reasons[index].slice(1); });
+  if (strategy) suggestedItems.forEach((item, index) => { if (strategy.reasons[index]) item.reason = strategy.reasons[index]; });
   const usableEvidence = Array.isArray(evidence) ? evidence.filter((row) =>
     row && row.tenant_id === context.tenant_id && row.project_id === context.project_id &&
     row.brand_id === request.brand_id && typeof row.metric === "string" &&
