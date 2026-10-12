@@ -1,3 +1,4 @@
+const { planRecommendation } = require("./recommendationStrategy");
 const { randomUUID } = require("node:crypto");
 const { Pool } = require("pg");
 const { z } = require("zod");
@@ -135,11 +136,13 @@ function itemSet(kind, { goal = "", brandBrain = {} } = {}) {
 function buildRecommendation({ context, request, now, idFactory, evidence = [] }) {
   const kind = goalKind(request.goal, context.brand_brain);
   const generatedAt = iso(now());
-  const campaignName = `${titleCase(request.goal)} Campaign`;
+  const strategy = planRecommendation(request.goal, context.brand_brain);
+  const campaignName = strategy ? `${strategy.title} Campaign` : `${titleCase(request.goal)} Campaign`;
   const suggestedItems = itemSet(kind, {
     goal: request.goal,
     brandBrain: context.brand_brain,
   });
+  if (strategy) suggestedItems.forEach((item, index) => { if (strategy.reasons[index]) item.reason = "Recommended because " + strategy.reasons[index].charAt(0).toLowerCase() + strategy.reasons[index].slice(1); });
   const usableEvidence = Array.isArray(evidence) ? evidence.filter((row) =>
     row && row.tenant_id === context.tenant_id && row.project_id === context.project_id &&
     row.brand_id === request.brand_id && typeof row.metric === "string" &&
@@ -160,12 +163,12 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
     display_timezone: request.display_timezone,
     campaign_name: campaignName,
     recommendation_kind: kind,
-    summary: "Start with one clear campaign and three reviewable items. You can edit everything before anything is scheduled or published.",
+    summary: strategy ? `${strategy.summary} Information to confirm: ${strategy.gaps}` : "Start with one clear campaign and three reviewable items. You can edit everything before anything is scheduled or published.",
     not_enough_data_yet: !hasLearningSignal,
     evidence_summary: evidenceSummary,
     explanation: hasLearningSignal
-      ? "Recommended with awareness of verified historical outcome evidence. BizGenie is not claiming causality or that one campaign caused the observed result."
-      : "Recommended because this is the first safe campaign shape for the stated goal; BizGenie does not have enough comparable verified performance history yet to claim a stronger signal.",
+      ? `${strategy ? strategy.explanation + " " : ""}Recommended with awareness of verified historical outcome evidence. BizGenie is not claiming causality or that one campaign caused the observed result.`
+      : strategy ? `${strategy.explanation} BizGenie does not yet have comparable verified performance history to claim outcomes.` : "Recommended because this is the first safe campaign shape for the stated goal; BizGenie does not have enough comparable verified performance history yet to claim a stronger signal.",
     next_action: { code: "create_campaign", label: "Create campaign" },
     create_campaign_payload: {
       tenant_id: context.tenant_id,
