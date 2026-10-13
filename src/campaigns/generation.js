@@ -432,6 +432,8 @@ class CampaignVariantGenerationService {
                 "The validated selected strategy in the user context is authoritative.",
                 "Do not generate or select alternative strategies.",
                 "Return every required campaign section and execute the validated strategy faithfully.",
+                "For Hook, CTA and Caption, transform campaign-goal and Brand Brain prose into genuinely new customer-facing language. Do not repeat a source sentence, concatenate source clauses, or merely reorder its words.",
+                "Before returning the final draft, compare Hook, CTA and Caption separately against the supplied campaign goal and Brand Brain. Rewrite any section with substantial source-word overlap or repeated source phrases, without inventing facts or changing exact approved claims.",
               ].join(" "),
               structuredMode: "draft",
             },
