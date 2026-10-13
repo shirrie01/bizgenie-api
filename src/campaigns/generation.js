@@ -440,7 +440,7 @@ class CampaignVariantGenerationService {
           }
         );
 
-        return {
+        const generation = {
           text: draftGeneration.text,
           metadata: {
             ...draftGeneration.metadata,
@@ -449,64 +449,49 @@ class CampaignVariantGenerationService {
             selection_evidence: strategyGeneration.metadata?.selection_evidence,
           },
         };
+        const missingSections = findMissingSections(generation.text);
+        if (missingSections.length > 0) {
+          throw new GenerationIncompleteError({
+            finishReason: generation.metadata?.finish_reason || null,
+            missingSections,
+            retryable: true,
+            metadata: {
+              ...generation.metadata,
+              incomplete_reason: "MISSING_SECTIONS",
+              required_sections_complete: false,
+            },
+          });
+        }
+        const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
+        if (!draftCheck.ok) {
+          throw new CampaignStrategyValidationError(draftCheck.reasons, {
+            stage: "final_draft_execution_fidelity",
+            generationJobId: job.job_id,
+          });
+        }
+        const strategyFidelityCheck = validateFinalDraftStrategyFidelity(generation.text, {
+          campaign,
+          brandContext,
+          selected_strategy: resolvedEvidence.selected_strategy,
+        });
+        if (!strategyFidelityCheck.ok) {
+          throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, {
+            stage: "final_draft_strategy_fidelity",
+            generationJobId: job.job_id,
+          });
+        }
+        return generation;
       },
     });
 
     if (generation.strategy_rejection) {
-      throw new CampaignStrategyValidationError(
-        generation.strategy_rejection.reasons,
-        {
-          stage: generation.strategy_rejection.stage,
-          generationJobId: job.job_id,
-        }
-      );
-    }
-
-    const resolvedEvidence = {
-      ok: true,
-      candidates: generation.metadata.strategy_candidates,
-      selected_strategy: generation.metadata.selected_strategy,
-    };
-
-    const missingSections = findMissingSections(generation.text);
-    if (missingSections.length > 0) {
-      throw new GenerationIncompleteError({
-        finishReason: generation.metadata?.finish_reason || null,
-        missingSections,
-        retryable: true,
-        metadata: {
-          ...generation.metadata,
-          incomplete_reason: "MISSING_SECTIONS",
-          required_sections_complete: false,
-        },
-      });
-    }
-
-    const draftCheck = validateDraftExecutionFidelity(
-      generation.text,
-      resolvedEvidence.selected_strategy
-    );
-    if (!draftCheck.ok) {
-      throw new CampaignStrategyValidationError(draftCheck.reasons, {
-        stage: "final_draft_execution_fidelity",
+      // A rejected Stage A strategy is not a billable successful execution.
+      throw new CampaignStrategyValidationError(generation.strategy_rejection.reasons, {
+        stage: generation.strategy_rejection.stage,
         generationJobId: job.job_id,
       });
     }
 
-    const strategyFidelityCheck = validateFinalDraftStrategyFidelity(
-      generation.text,
-      {
-        campaign,
-        brandContext,
-        selected_strategy: resolvedEvidence.selected_strategy,
-      }
-    );
-    if (!strategyFidelityCheck.ok) {
-      throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, {
-        stage: "final_draft_strategy_fidelity",
-        generationJobId: job.job_id,
-      });
-    }
     const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
     const result = await this.repository.executeCommand(campaignContext, {
       contract_version: "campaign-spine.v1",
