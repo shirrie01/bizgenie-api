@@ -383,13 +383,7 @@ class CampaignVariantGenerationService {
         );
 
         if (!resolvedEvidence.ok) {
-          return {
-            strategy_rejection: {
-              reasons: resolvedEvidence.reasons,
-              stage: "evidence_anchor_resolution",
-            },
-            strategy_metadata: strategyGeneration.metadata,
-          };
+          throw new CampaignStrategyValidationError(resolvedEvidence.reasons, { stage: "evidence_anchor_resolution", generationJobId: job.job_id });
         }
 
         const strategyCheck = validateSelectedStrategy(
@@ -404,13 +398,7 @@ class CampaignVariantGenerationService {
         );
 
         if (!strategyCheck.ok) {
-          return {
-            strategy_rejection: {
-              reasons: strategyCheck.reasons,
-              stage: "selected_strategy_validation",
-            },
-            strategy_metadata: strategyGeneration.metadata,
-          };
+          throw new CampaignStrategyValidationError(strategyCheck.reasons, { stage: "selected_strategy_validation", generationJobId: job.job_id });
         }
 
         // Stage B: the provider receives one already-validated strategy as its
@@ -484,13 +472,6 @@ class CampaignVariantGenerationService {
       },
     });
 
-    if (generation.strategy_rejection) {
-      // A rejected Stage A strategy is not a billable successful execution.
-      throw new CampaignStrategyValidationError(generation.strategy_rejection.reasons, {
-        stage: generation.strategy_rejection.stage,
-        generationJobId: job.job_id,
-      });
-    }
 
     const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
     const result = await this.repository.executeCommand(campaignContext, {
