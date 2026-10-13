@@ -232,6 +232,7 @@ describe("campaign generation prompt contract", () => {
 
   it("passes objective and approved Brand Brain intelligence into the compiled Instagram prompt", async () => {
     let finalPrompt;
+    let draftPrompt;
     const { service, calls } = makeService({
       assertions: {
         onJob(args) {
@@ -247,6 +248,7 @@ describe("campaign generation prompt contract", () => {
           finalPrompt = prompt;
           return { text: "", metadata: strategyIdMetadata() };
         }
+        draftPrompt = prompt;
         return { text: COMPLETE_CAMPAIGN_DRAFT, metadata: {} };
       },
     });
@@ -259,6 +261,9 @@ describe("campaign generation prompt contract", () => {
       idempotencyKey: "campaign-generation-1",
     });
 
+    assert.match(draftPrompt, /transform campaign-goal and Brand Brain prose into genuinely new customer-facing language/);
+    assert.match(draftPrompt, /compare Hook, CTA and Caption separately/);
+    assert.match(draftPrompt, /without inventing facts or changing exact approved claims/);
     assert.match(finalPrompt, /\[PLATFORM RULES\][\s\S]*Instagram Reels/);
     assert.match(finalPrompt, /\[CAMPAIGN OBJECTIVE\]\nIntroduce the new seasonal drink/);
     assert.equal((finalPrompt.match(/\[CAMPAIGN OBJECTIVE\]/g) || []).length, 1);
