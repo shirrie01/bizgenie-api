@@ -140,6 +140,7 @@ describe("committed revision recovery", () => {
     service.repository.findCommittedGenerationReceipt = async (_ctx, query) => {
       receiptReads++;
       assert.equal(query.expectedCampaignVersion, 3);
+      assert.equal(query.variantId, "variant_1");
       assert.equal(query.idempotencyKey, "campaign-generation-1");
       return receipt;
     };
