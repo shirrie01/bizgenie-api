@@ -104,6 +104,29 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     await s.cmd('confirm_manual_publication',{...attempt,published_at:NOW,attested_published:true});assert.equal((await s.variant(t)).workflow,'published');
   });
 
+  it("recovers only the exact committed generation receipt across repository instances", async () => {
+    const create = await repository.executeCommand(context, command("create_campaign", 0,
+      {brand_id:"brand_a",name:"Receipt Recovery",goal:"Launch",display_timezone:"Europe/London"},
+      undefined, "recovery_create_" + randomUUID()));
+    const item = await repository.executeCommand(context, command("create_content_item", 1,
+      {name:"Post",format:"text",platform:"instagram",placement:"feed",destination_label:"BizGenie",
+       initial_content:{title:null,body:"Initial draft.",caption:null,alt_text:null,asset_refs:[]}},
+      create.campaign_id, "recovery_item_" + randomUUID()));
+    const variantId = item.created_ids.variant_ids[0];
+    const key = "generation_recovery_" + randomUUID();
+    const saved = await repository.executeCommand(context, command("save_revision", 2,
+      {variant_id:variantId,content:{title:null,body:"Committed generation.",caption:null,alt_text:null,asset_refs:[]},
+       change_reason:"Generated draft for founder review"}, create.campaign_id, key));
+    const fresh = new PostgresCampaignRepository({pool});
+    const query = {campaignId:create.campaign_id,variantId,idempotencyKey:key,expectedCampaignVersion:2};
+    assert.deepEqual(await fresh.findCommittedGenerationReceipt(context,query),saved);
+    assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,idempotencyKey:"wrong"}),null);
+    assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,expectedCampaignVersion:1}),null);
+    assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,campaignId:randomUUID()}),null);
+    assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,variantId:randomUUID()}),null);
+    await assert.rejects(fresh.findCommittedGenerationReceipt({...context,actor:{kind:"customer",auth_user_id:AUTH_B}},query),CampaignResourceError);
+  });
+
   it("persists and reconstructs a campaign/item/revision across repository instances",async()=>{
     const create=command("create_campaign",0,{brand_id:"brand_a",name:"Launch",goal:"Launch",display_timezone:"Europe/London"},undefined,"create_1");
     const first=await repository.executeCommand(context,create);

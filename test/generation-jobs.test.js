@@ -258,3 +258,63 @@ describe("GenerationJobService.authorizeAndCreateJob", () => {
     assert.equal(repository.size(), 2);
   });
 });
+
+describe("GenerationJobService fingerprint-bound idempotent retry", () => {
+  const args = {
+    authorization: authorization(),
+    executionClass: "text.standard",
+    requestCorrelationId: "fingerprint_retry",
+    idempotencyKey: "fingerprint_retry",
+    allowedScopes: ["generation:execute"],
+  };
+  it("reuses the original job only for the same persisted request fingerprint", async () => {
+    const { service: jobs, repository } = service();
+    const fingerprint = "a".repeat(64);
+    const original = await jobs.authorizeAndCreateJob({
+      ...args, executionInput: { request_fingerprint: fingerprint, compiled_prompt: "original" },
+    });
+    const retry = await jobs.authorizeAndCreateJob({
+      ...args, executionInput: { request_fingerprint: fingerprint, compiled_prompt: "original" },
+    });
+    assert.equal(retry.job_id, original.job_id);
+    await assert.rejects(jobs.authorizeAndCreateJob({
+      ...args, executionInput: { request_fingerprint: "b".repeat(64), compiled_prompt: "changed" },
+    }), GenerationJobConflictError);
+    assert.equal(repository.size(), 1);
+  });
+  it("fails closed if persisted request identity is absent", async () => {
+    const { service: jobs } = service();
+    await jobs.authorizeAndCreateJob({ ...args, executionInput: { compiled_prompt: "legacy" } });
+    await assert.rejects(jobs.authorizeAndCreateJob({
+      ...args, executionInput: { request_fingerprint: "a".repeat(64) },
+    }), GenerationJobConflictError);
+  });
+});
+
+describe("GenerationJobService.requireExistingJob recovery", () => {
+  const args = {
+    authorization: authorization(), executionClass: "text.standard",
+    requestCorrelationId: "recovery_001", idempotencyKey: "recovery_001",
+    requestFingerprint: "a".repeat(64),
+    allowedScopes: ["generation:execute"],
+  };
+  it("fails closed when the original job is missing and never creates one", async () => {
+    const { service: jobs, repository } = service();
+    await assert.rejects(jobs.requireExistingJob(args), GenerationJobConflictError);
+    assert.equal(await repository.findByIdempotencyKey("tenant_a", "project_a", "recovery_001"), null);
+  });
+  it("retrieves the original job without replacing it", async () => {
+    const { service: jobs } = service();
+    const original = await jobs.authorizeAndCreateJob({...args, executionInput: {compiled_prompt:"Original", request_fingerprint:args.requestFingerprint}});
+    const recovered = await jobs.requireExistingJob(args);
+    assert.equal(recovered.job_id, original.job_id);
+    await assert.rejects(jobs.requireExistingJob({...args,requestFingerprint:"b".repeat(64)}),GenerationJobConflictError);
+  });
+  it("rejects a different verified owner for the same idempotency key", async () => {
+    const { service: jobs } = service();
+    await jobs.authorizeAndCreateJob({...args, executionInput:{request_fingerprint:args.requestFingerprint}});
+    await assert.rejects(jobs.requireExistingJob({...args,authorization:authorization({
+      actor:createCustomerActorFromVerifiedIdentity({verifiedAuthUserId:USER_B}),
+    })}),GenerationJobConflictError);
+  });
+});

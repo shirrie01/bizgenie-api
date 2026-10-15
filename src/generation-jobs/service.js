@@ -42,6 +42,43 @@ class GenerationJobService {
     this.now = now;
   }
 
+  async requireExistingJob({ authorization, executionClass, requestCorrelationId, idempotencyKey, allowedScopes, requestFingerprint }) {
+    if (!authorization || authorization.actor?.kind !== "customer" ||
+        authorization.action !== "generation:create" ||
+        typeof authorization.tenant_id !== "string" ||
+        typeof authorization.project_id !== "string") {
+      throw new TypeError("Verified customer generation:create authorization required");
+    }
+    const existing = await this.repository.findByIdempotencyKey(
+      authorization.tenant_id, authorization.project_id, idempotencyKey
+    );
+    if (!existing) throw new GenerationJobConflictError();
+    requireSameLogicalJob(existing, prospectiveOwnership({
+      tenantId: authorization.tenant_id, projectId: authorization.project_id,
+      brandId: authorization.brand_id, executionClass, requestCorrelationId,
+      actor: authorization.actor, allowedScopes,
+    }));
+    const content = await this.repository.getExecutionContent(existing.job_id);
+    if (!content || typeof requestFingerprint !== "string" ||
+        !/^[a-f0-9]{64}$/.test(requestFingerprint) ||
+        content.request_fingerprint !== requestFingerprint) {
+      throw new GenerationJobConflictError();
+    }
+    return existing;
+  }
+
+  async requireMatchingRequestFingerprint(existing, executionInput) {
+    const requested = executionInput?.request_fingerprint;
+    if (requested === undefined) return;
+    if (typeof requested !== "string" || !/^[a-f0-9]{64}$/.test(requested)) {
+      throw new GenerationJobConflictError();
+    }
+    const content = await this.repository.getExecutionContent(existing.job_id);
+    if (!content || content.request_fingerprint !== requested) {
+      throw new GenerationJobConflictError();
+    }
+  }
+
   // The only entry point into this module. It accepts the authorization
   // object already produced by AuthorizationService.authorizeProject /
   // authorizeProjectBrand (verified customer, verified tenant/project/brand
@@ -88,6 +125,7 @@ class GenerationJobService {
 
     if (existing) {
       requireSameLogicalJob(existing, prospective);
+      await this.requireMatchingRequestFingerprint(existing, executionInput);
       await this.repository.recordAttempt(existing.job_id);
       return existing;
     }
@@ -127,6 +165,7 @@ class GenerationJobService {
         throw error;
       }
       requireSameLogicalJob(racedExisting, prospective);
+      await this.requireMatchingRequestFingerprint(racedExisting, executionInput);
       await this.repository.recordAttempt(racedExisting.job_id);
       return racedExisting;
     }

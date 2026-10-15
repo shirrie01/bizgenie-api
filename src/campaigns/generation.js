@@ -1,4 +1,4 @@
-const { randomUUID } = require("node:crypto");
+const { randomUUID, createHash } = require("node:crypto");
 const { resolveBrandBrainContext } = require("../brand-brain");
 const { emptyContent } = require("./schema");
 const { GenerationIncompleteError, extractSections, findMissingSections } = require("../generation");
@@ -294,6 +294,11 @@ class CampaignVariantGenerationService {
   }
 
   async generate({ authorization, campaignId, variantId, expectedCampaignVersion, idempotencyKey, executionMode = "ai", executionBrief = "", suppliedAssets = [] }) {
+    // Bind retries to the immutable customer request, not just its owner.
+    const requestFingerprint = createHash("sha256").update(JSON.stringify({
+      campaignId, variantId, expectedCampaignVersion, executionMode,
+      executionBrief, suppliedAssets,
+    })).digest("hex");
     const campaignContext = {
       actor: authorization.actor,
       tenant_id: authorization.tenant_id,
@@ -303,8 +308,26 @@ class CampaignVariantGenerationService {
     };
     const campaign = await this.repository.getCampaign(campaignContext, campaignId);
     if (campaign.version !== expectedCampaignVersion) {
-      const { CampaignVersionError } = require("./errors");
-      throw new CampaignVersionError();
+      // Only a committed, owner-scoped save_revision receipt authorises a
+      // settlement-only replay. A stale version without that proof still fails.
+      const receipt = await this.repository.findCommittedGenerationReceipt?.(
+        campaignContext, { campaignId, variantId, idempotencyKey, expectedCampaignVersion }
+      );
+      if (!receipt || receipt.campaign_id !== campaignId ||
+          receipt.campaign_version !== expectedCampaignVersion + 1) {
+        const { CampaignVersionError } = require("./errors");
+        throw new CampaignVersionError();
+      }
+      const job = await this.generationJobService.requireExistingJob({
+        authorization, executionClass: "text.standard",
+        requestCorrelationId: idempotencyKey, idempotencyKey,
+        allowedScopes: ["generation:execute"], requestFingerprint,
+      });
+      // The billing orchestrator reconstructs the existing reservation from
+      // durable ledger state and settles it with its original debit key.
+      // Crucially, no script generator or save command is called here.
+      await this.generationBillingOrchestrator.settleSuccessfulExecution({ job });
+      return { result: receipt, campaign, generation_id: job.job_id };
     }
     const target = findVariant(campaign, variantId);
     if (!target || target.item.format !== "text") {
@@ -350,6 +373,7 @@ class CampaignVariantGenerationService {
       idempotencyKey,
       allowedScopes: ["generation:execute"],
       executionInput: {
+        request_fingerprint: requestFingerprint,
         compiled_prompt: compiledPrompt,
         platform: target.variant.platform,
         goal: campaign.goal,
@@ -383,13 +407,7 @@ class CampaignVariantGenerationService {
         );
 
         if (!resolvedEvidence.ok) {
-          return {
-            strategy_rejection: {
-              reasons: resolvedEvidence.reasons,
-              stage: "evidence_anchor_resolution",
-            },
-            strategy_metadata: strategyGeneration.metadata,
-          };
+          throw new CampaignStrategyValidationError(resolvedEvidence.reasons, { stage: "evidence_anchor_resolution", generationJobId: job.job_id });
         }
 
         const strategyCheck = validateSelectedStrategy(
@@ -404,13 +422,7 @@ class CampaignVariantGenerationService {
         );
 
         if (!strategyCheck.ok) {
-          return {
-            strategy_rejection: {
-              reasons: strategyCheck.reasons,
-              stage: "selected_strategy_validation",
-            },
-            strategy_metadata: strategyGeneration.metadata,
-          };
+          throw new CampaignStrategyValidationError(strategyCheck.reasons, { stage: "selected_strategy_validation", generationJobId: job.job_id });
         }
 
         // Stage B: the provider receives one already-validated strategy as its
@@ -432,13 +444,15 @@ class CampaignVariantGenerationService {
                 "The validated selected strategy in the user context is authoritative.",
                 "Do not generate or select alternative strategies.",
                 "Return every required campaign section and execute the validated strategy faithfully.",
+                "For Hook, CTA and Caption, transform campaign-goal and Brand Brain prose into genuinely new customer-facing language. Do not repeat a source sentence, concatenate source clauses, or merely reorder its words.",
+                "Before returning the final draft, compare Hook, CTA and Caption separately against the supplied campaign goal and Brand Brain. Rewrite any section with substantial source-word overlap or repeated source phrases, without inventing facts or changing exact approved claims.",
               ].join(" "),
               structuredMode: "draft",
             },
           }
         );
 
-        return {
+        const generation = {
           text: draftGeneration.text,
           metadata: {
             ...draftGeneration.metadata,
@@ -447,77 +461,54 @@ class CampaignVariantGenerationService {
             selection_evidence: strategyGeneration.metadata?.selection_evidence,
           },
         };
+        const missingSections = findMissingSections(generation.text);
+        if (missingSections.length > 0) {
+          throw new GenerationIncompleteError({
+            finishReason: generation.metadata?.finish_reason || null,
+            missingSections,
+            retryable: true,
+            metadata: {
+              ...generation.metadata,
+              incomplete_reason: "MISSING_SECTIONS",
+              required_sections_complete: false,
+            },
+          });
+        }
+        const draftCheck = validateDraftExecutionFidelity(generation.text, resolvedEvidence.selected_strategy);
+        if (!draftCheck.ok) {
+          throw new CampaignStrategyValidationError(draftCheck.reasons, {
+            stage: "final_draft_execution_fidelity",
+            generationJobId: job.job_id,
+          });
+        }
+        const strategyFidelityCheck = validateFinalDraftStrategyFidelity(generation.text, {
+          campaign,
+          brandContext,
+          selected_strategy: resolvedEvidence.selected_strategy,
+        });
+        if (!strategyFidelityCheck.ok) {
+          throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, {
+            stage: "final_draft_strategy_fidelity",
+            generationJobId: job.job_id,
+          });
+        }
+        const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
+        const result = await this.repository.executeCommand(campaignContext, {
+          contract_version: "campaign-spine.v1",
+          idempotency_key: idempotencyKey,
+          expected_campaign_version: expectedCampaignVersion,
+          command_type: "save_revision",
+          tenant_id: authorization.tenant_id,
+          project_id: authorization.project_id,
+          campaign_id: campaignId,
+          payload: { variant_id: variantId, content, change_reason: "Generated draft for founder review" },
+        });
+        return result;
       },
     });
 
-    if (generation.strategy_rejection) {
-      throw new CampaignStrategyValidationError(
-        generation.strategy_rejection.reasons,
-        {
-          stage: generation.strategy_rejection.stage,
-          generationJobId: job.job_id,
-        }
-      );
-    }
-
-    const resolvedEvidence = {
-      ok: true,
-      candidates: generation.metadata.strategy_candidates,
-      selected_strategy: generation.metadata.selected_strategy,
-    };
-
-    const missingSections = findMissingSections(generation.text);
-    if (missingSections.length > 0) {
-      throw new GenerationIncompleteError({
-        finishReason: generation.metadata?.finish_reason || null,
-        missingSections,
-        retryable: true,
-        metadata: {
-          ...generation.metadata,
-          incomplete_reason: "MISSING_SECTIONS",
-          required_sections_complete: false,
-        },
-      });
-    }
-
-    const draftCheck = validateDraftExecutionFidelity(
-      generation.text,
-      resolvedEvidence.selected_strategy
-    );
-    if (!draftCheck.ok) {
-      throw new CampaignStrategyValidationError(draftCheck.reasons, {
-        stage: "final_draft_execution_fidelity",
-        generationJobId: job.job_id,
-      });
-    }
-
-    const strategyFidelityCheck = validateFinalDraftStrategyFidelity(
-      generation.text,
-      {
-        campaign,
-        brandContext,
-        selected_strategy: resolvedEvidence.selected_strategy,
-      }
-    );
-    if (!strategyFidelityCheck.ok) {
-      throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, {
-        stage: "final_draft_strategy_fidelity",
-        generationJobId: job.job_id,
-      });
-    }
-    const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
-    const result = await this.repository.executeCommand(campaignContext, {
-      contract_version: "campaign-spine.v1",
-      idempotency_key: idempotencyKey,
-      expected_campaign_version: expectedCampaignVersion,
-      command_type: "save_revision",
-      tenant_id: authorization.tenant_id,
-      project_id: authorization.project_id,
-      campaign_id: campaignId,
-      payload: { variant_id: variantId, content, change_reason: "Generated draft for founder review" },
-    });
     const updated = await this.repository.getCampaign(campaignContext, campaignId);
-    return { result, campaign: updated, generation_id: job.job_id };
+    return { result: generation, campaign: updated, generation_id: job.job_id };
   }
 }
 

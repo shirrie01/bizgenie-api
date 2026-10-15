@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const { createHash } = require("node:crypto");
+const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { after, before, beforeEach, describe, it } = require("node:test");
@@ -795,6 +797,144 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     ]) {
       assert.equal(entries.filter((entry) => entry.entry_type === type).length, 1);
     }
+  });
+
+  it("settles a persisted result after debit outage with concurrent reconstructed PostgreSQL services", async () => {
+    await fund("tenant_a", 20, "debit_outage_recovery");
+    const job = jobObject("job_text");
+    let providerCalls = 0;
+    const outageService = {
+      createReservation: (input) => service.createReservation(input),
+      releaseReservation: (input) => service.releaseReservation(input),
+      async finalizeDebit() { throw new Error("simulated debit outage"); },
+    };
+    const original = new GenerationBillingOrchestrator({
+      billingService: outageService, logger: { error() {} },
+    });
+    await assert.rejects(original.execute({
+      job, expectedExecutionClass: "text.standard",
+      operation: async () => {
+        providerCalls += 1;
+        return { revision_id: "committed_revision" };
+      },
+    }), GenerationBillingUnavailableError);
+    const before = (await repository.listLedger("tenant_a")).filter(e => e.generation_id === job.job_id);
+    assert.equal(before.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(before.filter(e => e.entry_type === "debit").length, 0);
+    assert.equal(before.filter(e => e.entry_type === "reservation_release").length, 0);
+
+    const independent = () => new GenerationBillingOrchestrator({
+      billingService: new BillingService({
+        repository: new PostgresBillingRepository({ pool, now: () => new Date(NOW) }),
+        now: () => new Date(NOW),
+      }),
+      logger: { error() {} },
+    });
+    await Promise.all(Array.from({ length: 6 }, () =>
+      independent().settleSuccessfulExecution({ job })
+    ));
+    const after = (await repository.listLedger("tenant_a")).filter(e => e.generation_id === job.job_id);
+    assert.equal(providerCalls, 1);
+    assert.equal(after.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(after.filter(e => e.entry_type === "debit").length, 1);
+    assert.equal(after.filter(e => e.entry_type === "reservation_release").length, 0);
+    assert.equal((await repository.readBalance("tenant_a")).reserved_balance, 0);
+  });
+
+  it("converges independent Node processes on exactly one PostgreSQL settlement", async () => {
+    await fund("tenant_a", 30, "process_settlement_funding");
+    const debitJob = jobObject("job_text");
+    const releaseJob = jobObject("job_release");
+    const reservationKey = job => `generation:reserve:${createHash("sha256").update(`reserve\u0000${job.job_id}`).digest("hex")}`;
+    await reserve(debitJob.job_id, { idempotencyKey: reservationKey(debitJob) });
+    await reserve(releaseJob.job_id, { idempotencyKey: reservationKey(releaseJob) });
+
+    // Every worker is a separate OS process with its own pool, service and
+    // orchestrator. No shared JavaScript state can serialize these requests.
+    const worker = [
+      'const { Pool } = require("pg");',
+      'const { BillingService, PostgresBillingRepository } = require("./src/billing");',
+      'const { GenerationBillingOrchestrator } = require("./src/generation-billing");',
+      '(async () => {',
+      '  const pool = new Pool({ connectionString: process.env.BG_TEST_WORKER_DATABASE_URL, max: 2 });',
+      '  try {',
+      '    const service = new BillingService({ repository: new PostgresBillingRepository({ pool }), });',
+      '    const orchestrator = new GenerationBillingOrchestrator({ billingService: service, logger: { error() {} } });',
+      '    const job = JSON.parse(process.env.BG_TEST_WORKER_JOB);',
+      '    if (process.env.BG_TEST_WORKER_EFFECT === "debit") await orchestrator.settleSuccessfulExecution({ job });',
+      '    else await orchestrator.releaseFailedExecution({ job });',
+      '  } finally { await pool.end(); }',
+      '})().catch(error => { console.error(error.stack || error); process.exitCode = 1; });',
+    ].join("\n");
+
+    const runWorker = (effect, job) => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ["-e", worker], {
+        cwd: path.join(__dirname, ".."),
+        env: {
+          ...process.env,
+          BG_TEST_WORKER_DATABASE_URL: databaseUrl(testDatabase),
+          BG_TEST_WORKER_EFFECT: effect,
+          BG_TEST_WORKER_JOB: JSON.stringify(job),
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", chunk => { stderr += chunk.toString(); });
+      child.on("error", reject);
+      child.on("close", code => code === 0 ? resolve() : reject(new Error(`worker exited ${code}: ${stderr}`)));
+    });
+    await Promise.all([
+      ...Array.from({ length: 4 }, () => runWorker("debit", debitJob)),
+      ...Array.from({ length: 4 }, () => runWorker("release", releaseJob)),
+    ]);
+    const ledger = await repository.listLedger("tenant_a");
+    for (const [job, expectedEffect] of [[debitJob, "debit"], [releaseJob, "reservation_release"]]) {
+      const entries = ledger.filter(entry => entry.generation_id === job.job_id);
+      assert.equal(entries.filter(entry => entry.entry_type === "reservation").length, 1);
+      assert.equal(entries.filter(entry => entry.entry_type === expectedEffect).length, 1);
+      assert.equal(entries.filter(entry => ["debit", "reservation_release"].includes(entry.entry_type)).length, 1);
+    }
+    assert.equal((await repository.readBalance("tenant_a")).reserved_balance, 0);
+  });
+
+  it("recovers failed credit release after an outage without provider replay or debit", async () => {
+    await fund("tenant_a", 20, "release_outage_recovery");
+    const job = jobObject("job_release");
+    let providerCalls = 0;
+    const outageService = {
+      createReservation: (input) => service.createReservation(input),
+      finalizeDebit: (input) => service.finalizeDebit(input),
+      async releaseReservation() { throw new Error("simulated release outage"); },
+    };
+    const first = new GenerationBillingOrchestrator({
+      billingService: outageService, logger: { error() {} },
+    });
+    await assert.rejects(first.beginExecution({
+      job, expectedExecutionClass: "video.normal",
+      operation: async () => {
+        providerCalls += 1;
+        throw new Error("strategy rejected");
+      },
+    }), /strategy rejected/);
+    const pending = (await repository.listLedger("tenant_a")).filter(e => e.generation_id === job.job_id);
+    assert.equal(pending.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(pending.filter(e => e.entry_type === "reservation_release").length, 0);
+    assert.equal(pending.filter(e => e.entry_type === "debit").length, 0);
+    const fresh = () => new GenerationBillingOrchestrator({
+      billingService: new BillingService({
+        repository: new PostgresBillingRepository({ pool, now: () => new Date(NOW) }),
+        now: () => new Date(NOW),
+      }),
+      logger: { error() {} },
+    });
+    await Promise.all(Array.from({ length: 6 }, () => fresh().releaseFailedExecution({ job })));
+    const settled = (await repository.listLedger("tenant_a")).filter(e => e.generation_id === job.job_id);
+    assert.equal(providerCalls, 1);
+    assert.equal(settled.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(settled.filter(e => e.entry_type === "reservation_release").length, 1);
+    assert.equal(settled.filter(e => e.entry_type === "debit").length, 0);
+    assert.equal((await repository.readBalance("tenant_a")).reserved_balance, 0);
+    await assert.rejects(fresh().settleSuccessfulExecution({ job }));
   });
 
   it("does not rerun provider execution when a committed debit acknowledgement is lost", async () => {

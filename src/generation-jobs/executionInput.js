@@ -7,6 +7,7 @@
 // identity, all of which stay server-side and are never forwarded.
 const EXECUTION_INPUT_ALLOWED_KEYS = Object.freeze([
   "compiled_prompt",
+  "request_fingerprint",
   "platform",
   "script_type",
   "audience",

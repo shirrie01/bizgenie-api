@@ -155,6 +155,50 @@ class PostgresCampaignRepository extends CampaignRepository {
     }
   }
 
+  // Read-only, owner-authorised proof of a committed generation revision.
+  // Never infer success from the campaign version alone.
+  async findCommittedGenerationReceipt(context, { campaignId, variantId, idempotencyKey, expectedCampaignVersion }) {
+    if (typeof idempotencyKey !== "string" || !idempotencyKey ||
+        typeof campaignId !== "string" || !campaignId ||
+        typeof variantId !== "string" || !variantId ||
+        !Number.isInteger(expectedCampaignVersion) || expectedCampaignVersion < 0) {
+      throw new CampaignResourceError();
+    }
+    try {
+      const client = await this.pool.connect();
+      try {
+        await this._authorize(client, context, true);
+        const result = await client.query(`
+          select result from public.campaign_command_receipts
+           where namespace='campaign-spine.v1' and tenant_id=$1 and project_id=$2
+             and auth_user_id=$3 and idempotency_key=$4 and campaign_id=$5
+             and command_type='save_revision' and expected_campaign_version=$6
+              and exists (
+                select 1 from public.campaign_revisions revision
+                 where revision.campaign_id=campaign_command_receipts.campaign_id
+                   and revision.variant_id=$7
+                   and revision.revision_id::text=(campaign_command_receipts.result->'created_ids'->'revision_ids'->>0)
+              )
+           limit 1`, [context.tenant_id, context.project_id,
+            context.actor.auth_user_id, idempotencyKey, campaignId, expectedCampaignVersion, variantId]);
+        return result.rowCount === 1 ? clone(result.rows[0].result) : null;
+      } finally { client.release(); }
+    } catch (error) {
+      // Emit only PostgreSQL's structural diagnostic fields; never log SQL,
+      // bound values, identities, receipts, or customer content.
+      if (!(error instanceof CampaignError)) {
+        try { this.logger?.error?.("committed generation receipt lookup failed", {
+          pg_code: typeof error?.code === "string" ? error.code : null,
+          pg_constraint: typeof error?.constraint === "string" ? error.constraint : null,
+          pg_column: typeof error?.column === "string" ? error.column : null,
+          pg_data_type: typeof error?.dataType === "string" ? error.dataType : null,
+          pg_position: typeof error?.position === "string" ? error.position : null,
+        }); } catch {}
+      }
+      throw databaseError(error);
+    }
+  }
+
   async _captureBrandSnapshot(client, context, brandId) {
     const result = await client.query(`select b.* from public.brand_brains b join public.projects p on p.project_id=b.project_id and p.tenant_id=$1 where b.project_id=$2 and b.brand_id=$3 and b.status='approved' for share of b`, [context.tenant_id, context.project_id, brandId]);
     if (!result.rowCount) return null;
