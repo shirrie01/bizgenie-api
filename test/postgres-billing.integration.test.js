@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { after, before, beforeEach, describe, it } = require("node:test");
@@ -836,6 +837,61 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     assert.equal(after.filter(e => e.entry_type === "reservation").length, 1);
     assert.equal(after.filter(e => e.entry_type === "debit").length, 1);
     assert.equal(after.filter(e => e.entry_type === "reservation_release").length, 0);
+    assert.equal((await repository.readBalance("tenant_a")).reserved_balance, 0);
+  });
+
+  it("converges independent Node processes on exactly one PostgreSQL settlement", async () => {
+    await fund("tenant_a", 30, "process_settlement_funding");
+    const debitJob = jobObject("job_text");
+    const releaseJob = jobObject("job_release");
+    await service.createReservation(reservationInput(debitJob.job_id, { amount: 6 }));
+    await service.createReservation(reservationInput(releaseJob.job_id, { amount: 6 }));
+
+    // Every worker is a separate OS process with its own pool, service and
+    // orchestrator. No shared JavaScript state can serialize these requests.
+    const worker = [
+      'const { Pool } = require("pg");',
+      'const { BillingService, PostgresBillingRepository } = require("./src/billing");',
+      'const { GenerationBillingOrchestrator } = require("./src/generation-billing");',
+      '(async () => {',
+      '  const pool = new Pool({ connectionString: process.env.BG_TEST_WORKER_DATABASE_URL, max: 2 });',
+      '  try {',
+      '    const service = new BillingService({ repository: new PostgresBillingRepository({ pool }), });',
+      '    const orchestrator = new GenerationBillingOrchestrator({ billingService: service, logger: { error() {} } });',
+      '    const job = JSON.parse(process.env.BG_TEST_WORKER_JOB);',
+      '    if (process.env.BG_TEST_WORKER_EFFECT === "debit") await orchestrator.settleSuccessfulExecution({ job });',
+      '    else await orchestrator.releaseFailedExecution({ job });',
+      '  } finally { await pool.end(); }',
+      '})().catch(error => { console.error(error.stack || error); process.exitCode = 1; });',
+    ].join("\n");
+
+    const runWorker = (effect, job) => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ["-e", worker], {
+        cwd: path.join(__dirname, ".."),
+        env: {
+          ...process.env,
+          BG_TEST_WORKER_DATABASE_URL: databaseUrl(testDatabase),
+          BG_TEST_WORKER_EFFECT: effect,
+          BG_TEST_WORKER_JOB: JSON.stringify(job),
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", chunk => { stderr += chunk.toString(); });
+      child.on("error", reject);
+      child.on("close", code => code === 0 ? resolve() : reject(new Error(`worker exited ${code}: ${stderr}`)));
+    });
+    await Promise.all([
+      ...Array.from({ length: 4 }, () => runWorker("debit", debitJob)),
+      ...Array.from({ length: 4 }, () => runWorker("release", releaseJob)),
+    ]);
+    const ledger = await repository.listLedger("tenant_a");
+    for (const [job, expectedEffect] of [[debitJob, "debit"], [releaseJob, "reservation_release"]]) {
+      const entries = ledger.filter(entry => entry.generation_id === job.job_id);
+      assert.equal(entries.filter(entry => entry.entry_type === "reservation").length, 1);
+      assert.equal(entries.filter(entry => entry.entry_type === expectedEffect).length, 1);
+      assert.equal(entries.filter(entry => ["debit", "reservation_release"].includes(entry.entry_type)).length, 1);
+    }
     assert.equal((await repository.readBalance("tenant_a")).reserved_balance, 0);
   });
 
