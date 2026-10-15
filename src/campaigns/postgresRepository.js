@@ -183,7 +183,20 @@ class PostgresCampaignRepository extends CampaignRepository {
             context.actor.auth_user_id, idempotencyKey, campaignId, expectedCampaignVersion, variantId]);
         return result.rowCount === 1 ? clone(result.rows[0].result) : null;
       } finally { client.release(); }
-    } catch (error) { throw databaseError(error); }
+    } catch (error) {
+      // Emit only PostgreSQL's structural diagnostic fields; never log SQL,
+      // bound values, identities, receipts, or customer content.
+      if (!(error instanceof CampaignError)) {
+        try { this.logger?.error?.("committed generation receipt lookup failed", {
+          pg_code: typeof error?.code === "string" ? error.code : null,
+          pg_constraint: typeof error?.constraint === "string" ? error.constraint : null,
+          pg_column: typeof error?.column === "string" ? error.column : null,
+          pg_data_type: typeof error?.dataType === "string" ? error.dataType : null,
+          pg_position: typeof error?.position === "string" ? error.position : null,
+        }); } catch {}
+      }
+      throw databaseError(error);
+    }
   }
 
   async _captureBrandSnapshot(client, context, brandId) {
