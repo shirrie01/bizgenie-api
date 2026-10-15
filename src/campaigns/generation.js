@@ -306,7 +306,7 @@ class CampaignVariantGenerationService {
       // Only a committed, owner-scoped save_revision receipt authorises a
       // settlement-only replay. A stale version without that proof still fails.
       const receipt = await this.repository.findCommittedGenerationReceipt?.(
-        campaignContext, { campaignId, idempotencyKey, expectedCampaignVersion }
+        campaignContext, { campaignId, variantId, idempotencyKey, expectedCampaignVersion }
       );
       if (!receipt || receipt.campaign_id !== campaignId ||
           receipt.campaign_version !== expectedCampaignVersion + 1) {
