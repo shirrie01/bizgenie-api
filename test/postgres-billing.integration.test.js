@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const { createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
@@ -844,8 +845,9 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     await fund("tenant_a", 30, "process_settlement_funding");
     const debitJob = jobObject("job_text");
     const releaseJob = jobObject("job_release");
-    await reserve(debitJob.job_id);
-    await reserve(releaseJob.job_id);
+    const reservationKey = job => `generation:reserve:${createHash("sha256").update(`reserve\\0${job.job_id}`).digest("hex")}`;
+    await reserve(debitJob.job_id, { idempotencyKey: reservationKey(debitJob) });
+    await reserve(releaseJob.job_id, { idempotencyKey: reservationKey(releaseJob) });
 
     // Every worker is a separate OS process with its own pool, service and
     // orchestrator. No shared JavaScript state can serialize these requests.
