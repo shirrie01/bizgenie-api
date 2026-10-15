@@ -313,10 +313,10 @@ class CampaignVariantGenerationService {
         const { CampaignVersionError } = require("./errors");
         throw new CampaignVersionError();
       }
-      const job = await this.generationJobService.authorizeAndCreateJob({
+      const job = await this.generationJobService.requireExistingJob({
         authorization, executionClass: "text.standard",
         requestCorrelationId: idempotencyKey, idempotencyKey,
-        allowedScopes: ["generation:execute"], executionInput: {},
+        allowedScopes: ["generation:execute"],
       });
       // The billing orchestrator reconstructs the existing reservation from
       // durable ledger state and settles it with its original debit key.
