@@ -258,3 +258,29 @@ describe("GenerationJobService.authorizeAndCreateJob", () => {
     assert.equal(repository.size(), 2);
   });
 });
+
+describe("GenerationJobService.requireExistingJob recovery", () => {
+  const args = {
+    authorization: authorization(), executionClass: "text.standard",
+    requestCorrelationId: "recovery_001", idempotencyKey: "recovery_001",
+    allowedScopes: ["generation:execute"],
+  };
+  it("fails closed when the original job is missing and never creates one", async () => {
+    const { service: jobs, repository } = service();
+    await assert.rejects(jobs.requireExistingJob(args), GenerationJobConflictError);
+    assert.equal(await repository.findByIdempotencyKey("tenant_a", "project_a", "recovery_001"), null);
+  });
+  it("retrieves the original job without replacing it", async () => {
+    const { service: jobs } = service();
+    const original = await jobs.authorizeAndCreateJob({...args, executionInput: {compiled_prompt:"Original"}});
+    const recovered = await jobs.requireExistingJob(args);
+    assert.equal(recovered.job_id, original.job_id);
+  });
+  it("rejects a different verified owner for the same idempotency key", async () => {
+    const { service: jobs } = service();
+    await jobs.authorizeAndCreateJob(args);
+    await assert.rejects(jobs.requireExistingJob({...args,authorization:authorization({
+      actor:createCustomerActorFromVerifiedIdentity({verifiedAuthUserId:USER_B}),
+    })}),GenerationJobConflictError);
+  });
+});
