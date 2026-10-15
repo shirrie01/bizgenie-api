@@ -303,8 +303,26 @@ class CampaignVariantGenerationService {
     };
     const campaign = await this.repository.getCampaign(campaignContext, campaignId);
     if (campaign.version !== expectedCampaignVersion) {
-      const { CampaignVersionError } = require("./errors");
-      throw new CampaignVersionError();
+      // Only a committed, owner-scoped save_revision receipt authorises a
+      // settlement-only replay. A stale version without that proof still fails.
+      const receipt = await this.repository.findCommittedGenerationReceipt?.(
+        campaignContext, { campaignId, idempotencyKey, expectedCampaignVersion }
+      );
+      if (!receipt || receipt.campaign_id !== campaignId ||
+          receipt.campaign_version !== expectedCampaignVersion + 1) {
+        const { CampaignVersionError } = require("./errors");
+        throw new CampaignVersionError();
+      }
+      const job = await this.generationJobService.authorizeAndCreateJob({
+        authorization, executionClass: "text.standard",
+        requestCorrelationId: idempotencyKey, idempotencyKey,
+        allowedScopes: ["generation:execute"], executionInput: {},
+      });
+      // The billing orchestrator reconstructs the existing reservation from
+      // durable ledger state and settles it with its original debit key.
+      // Crucially, no script generator or save command is called here.
+      await this.generationBillingOrchestrator.settleSuccessfulExecution({ job });
+      return { result: receipt, campaign, generation_id: job.job_id };
     }
     const target = findVariant(campaign, variantId);
     if (!target || target.item.format !== "text") {
