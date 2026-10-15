@@ -412,6 +412,81 @@ describe("campaign generation prompt contract", () => {
     assert.equal(bad.calls.saves, 0);
   });
 
+
+  it("does not bill rejected strategies, incomplete drafts, or failed revisions", async () => {
+    const failures = [
+      { name: "stage A anchor rejection", scriptGenerator: async () => ({ text: COMPLETE_CAMPAIGN_DRAFT, metadata: strategyMetadata() }), stage: "evidence_anchor_resolution", generators: 1 },
+      { name: "stage B originality rejection", scriptGenerator: async (_input, { promptOptions }) => promptOptions.structuredMode === "strategy"
+        ? { text: "", metadata: strategyIdMetadata() }
+        : { text: [
+          "Hook: Local teams planning a busy week of field visits.",
+          "Concept: Build a distinctive evidence-backed comparison.",
+          "Script: Connect the selected audience truth to an actionable creative premise.",
+          "CTA: Explore the range.",
+          "Caption: A concise evidence-backed campaign caption.",
+          "Hashtags: #Campaign #Brand",
+          "Filming instructions: Show the audience choice through a native comparison.",
+        ].join("\\n"), metadata: {} }, stage: "final_draft_strategy_fidelity", generators: 2 },
+      { name: "missing sections", scriptGenerator: async (_input, { promptOptions }) => promptOptions.structuredMode === "strategy"
+        ? { text: "", metadata: strategyIdMetadata() }
+        : { text: "Hook: First impression.", metadata: {} }, stage: "incomplete", generators: 2 },
+    ];
+    for (const failure of failures) {
+      const fixture = makeService({ scriptGenerator: failure.scriptGenerator });
+      const events = [];
+      fixture.service.generationBillingOrchestrator = {
+        async execute({ operation }) {
+          events.push("reserve");
+          try {
+            const result = await operation();
+            events.push("debit");
+            return result;
+          } catch (error) {
+            events.push("release");
+            throw error;
+          }
+        },
+      };
+      await assert.rejects(
+        fixture.service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }),
+        (error) => failure.stage === "incomplete" ? error.code === "GENERATION_INCOMPLETE" : error.stage === failure.stage,
+        failure.name
+      );
+      assert.deepEqual(events, ["reserve", "release"], failure.name);
+      assert.equal(fixture.calls.saves, 0, failure.name);
+      assert.equal(fixture.calls.generations, failure.generators, failure.name);
+    }
+
+    const fixture = makeService();
+    const events = [];
+    fixture.service.repository.executeCommand = async () => { fixture.calls.saves++; events.push("save-failed"); throw new Error("simulated durable persistence failure"); };
+    fixture.service.generationBillingOrchestrator = {
+      async execute({ operation }) {
+        events.push("reserve");
+        try { const value = await operation(); events.push("debit"); return value; }
+        catch (error) { events.push("release"); throw error; }
+      },
+    };
+    await assert.rejects(fixture.service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" }), /simulated durable persistence failure/);
+    assert.deepEqual(events, ["reserve", "save-failed", "release"]);
+    assert.equal(fixture.calls.generations, 2);
+    assert.equal(fixture.calls.saves, 1);
+  });
+
+  it("persists the accepted revision before settlement", async () => {
+    const fixture = makeService();
+    const events = [];
+    const executeCommand = fixture.service.repository.executeCommand;
+    fixture.service.repository.executeCommand = async (...args) => { events.push("save"); return executeCommand(...args); };
+    fixture.service.generationBillingOrchestrator = {
+      async execute({ operation }) { events.push("reserve"); const value = await operation(); events.push("debit"); return value; },
+    };
+    const output = await fixture.service.generate({ authorization, campaignId: "campaign_1", variantId: "variant_1", expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" });
+    assert.deepEqual(events, ["reserve", "save", "debit"]);
+    assert.equal(output.result.campaign_version, 4);
+    assert.equal(fixture.calls.saves, 1);
+  });
+
   it("detects category-default execution outside the angle label", () => {
     const context = compileBrandContext(approvedBrain(), { generationContext: { platform: "instagram", mediaType: "text" } });
     const base = { campaign: { goal: objective }, variant: { platform: "instagram" }, brandContext: context };
