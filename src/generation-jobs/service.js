@@ -67,6 +67,18 @@ class GenerationJobService {
     return existing;
   }
 
+  async requireMatchingRequestFingerprint(existing, executionInput) {
+    const requested = executionInput?.request_fingerprint;
+    if (requested === undefined) return;
+    if (typeof requested !== "string" || !/^[a-f0-9]{64}$/.test(requested)) {
+      throw new GenerationJobConflictError();
+    }
+    const content = await this.repository.getExecutionContent(existing.job_id);
+    if (!content || content.request_fingerprint !== requested) {
+      throw new GenerationJobConflictError();
+    }
+  }
+
   // The only entry point into this module. It accepts the authorization
   // object already produced by AuthorizationService.authorizeProject /
   // authorizeProjectBrand (verified customer, verified tenant/project/brand
@@ -113,6 +125,7 @@ class GenerationJobService {
 
     if (existing) {
       requireSameLogicalJob(existing, prospective);
+      await this.requireMatchingRequestFingerprint(existing, executionInput);
       await this.repository.recordAttempt(existing.job_id);
       return existing;
     }
@@ -152,6 +165,7 @@ class GenerationJobService {
         throw error;
       }
       requireSameLogicalJob(racedExisting, prospective);
+      await this.requireMatchingRequestFingerprint(racedExisting, executionInput);
       await this.repository.recordAttempt(racedExisting.job_id);
       return racedExisting;
     }
