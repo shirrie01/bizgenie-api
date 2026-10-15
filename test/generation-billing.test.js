@@ -383,6 +383,40 @@ describe("generation credit orchestration", () => {
     ]);
   });
 
+  it("keeps a persisted result available for settlement retry without rerunning the provider", async () => {
+    const fixture = await billingFixture();
+    let executions = 0;
+    let saves = 0;
+    let attempts = 0;
+    const billingService = {
+      createReservation: (input) => fixture.billingService.createReservation(input),
+      releaseReservation: (input) => fixture.billingService.releaseReservation(input),
+      async finalizeDebit(input) {
+        attempts += 1;
+        if (attempts === 1) throw new Error("simulated debit outage after revision save");
+        return fixture.billingService.finalizeDebit(input);
+      },
+    };
+    const orchestrator = new GenerationBillingOrchestrator({ billingService });
+    const input = {
+      job: testJob(), expectedExecutionClass: "text.standard",
+      operation: async () => {
+        executions += 1;
+        saves += 1;
+        return { revision_id: "persisted_revision_1" };
+      },
+    };
+    await assert.rejects(orchestrator.execute(input), (error) => error.code === "GENERATION_BILLING_UNAVAILABLE");
+    assert.equal(saves, 1);
+    assert.deepEqual(ledgerTypes(fixture.repository), ["admin_adjustment", "reservation"]);
+    const recovered = await orchestrator.execute(input);
+    assert.deepEqual(recovered, { revision_id: "persisted_revision_1" });
+    assert.equal(executions, 1);
+    assert.equal(saves, 1);
+    assert.equal(attempts, 2);
+    assert.deepEqual(ledgerTypes(fixture.repository), ["admin_adjustment", "reservation", "debit"]);
+  });
+
   it("rejects execution-class and immutable-job authority changes", async () => {
     const fixture = await billingFixture();
     let calls = 0;
