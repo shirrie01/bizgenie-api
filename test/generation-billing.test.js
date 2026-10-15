@@ -554,6 +554,41 @@ describe("generation credit orchestration", () => {
   });
 });
 
+describe("restart-safe committed generation settlement", () => {
+  it("settles a durable reservation from a fresh orchestrator without provider replay", async () => {
+    const fixture = await billingFixture();
+    const job = testJob();
+    let providerCalls = 0;
+    const original = await fixture.orchestrator.beginExecution({
+      job, expectedExecutionClass: "text.standard",
+      operation: async () => { providerCalls++; return { revision_id: "persisted_revision" }; },
+    });
+    assert.equal(original.revision_id, "persisted_revision");
+    const restarted = new GenerationBillingOrchestrator({ billingService: fixture.billingService, logger: { error() {} } });
+    const settled = await Promise.all(Array.from({ length: 8 }, () =>
+      restarted.settleSuccessfulExecution({ job })
+    ));
+    assert.equal(settled.length, 8);
+    assert.equal(providerCalls, 1);
+    const entries = fixture.repository.listLedger("tenant_a").filter(e => e.generation_id === job.job_id);
+    assert.equal(entries.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(entries.filter(e => e.entry_type === "debit").length, 1);
+    assert.equal(entries.filter(e => e.entry_type === "reservation_release").length, 0);
+  });
+
+  it("does not debit a released reservation after restart", async () => {
+    const fixture = await billingFixture();
+    const job = testJob();
+    await assert.rejects(fixture.orchestrator.beginExecution({
+      job, expectedExecutionClass: "text.standard",
+      operation: async () => { throw new Error("rejected output"); },
+    }), /rejected output/);
+    const restarted = new GenerationBillingOrchestrator({ billingService: fixture.billingService, logger: { error() {} } });
+    await assert.rejects(restarted.settleSuccessfulExecution({ job }), GenerationBillingAuthorityError);
+    assert.equal(fixture.repository.listLedger("tenant_a").filter(e => e.generation_id === job.job_id && e.entry_type === "debit").length, 0);
+  });
+});
+
 describe("customer Text and Image billing boundary", () => {
   it("settles one debit for successful Text and Image while preserving responses", async () => {
     const fixture = await customerAppFixture();
