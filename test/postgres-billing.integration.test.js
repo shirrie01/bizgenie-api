@@ -844,8 +844,8 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     await fund("tenant_a", 30, "process_settlement_funding");
     const debitJob = jobObject("job_text");
     const releaseJob = jobObject("job_release");
-    await service.createReservation(reservationInput(debitJob.job_id, { amount: 6 }));
-    await service.createReservation(reservationInput(releaseJob.job_id, { amount: 6 }));
+    await reserve(debitJob.job_id);
+    await reserve(releaseJob.job_id);
 
     // Every worker is a separate OS process with its own pool, service and
     // orchestrator. No shared JavaScript state can serialize these requests.
