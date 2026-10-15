@@ -143,6 +143,15 @@ describe("committed revision recovery", () => {
       assert.equal(query.idempotencyKey, "campaign-generation-1");
       return receipt;
     };
+    // Recovery retrieves an already-authorised immutable job; no fresh
+    // compiled prompt or provider execution input is required.
+    service.generationJobService.authorizeAndCreateJob = async (args) => {
+      calls.jobs++;
+      assert.equal(args.idempotencyKey, "campaign-generation-1");
+      assert.equal(args.executionClass, "text.standard");
+      assert.deepEqual(args.executionInput, {});
+      return { job_id: "generation_job_1", execution_class: "text.standard" };
+    };
     let settled = 0;
     service.generationBillingOrchestrator.settleSuccessfulExecution = async ({ job }) => {
       settled++;
