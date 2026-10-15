@@ -468,24 +468,23 @@ class CampaignVariantGenerationService {
             generationJobId: job.job_id,
           });
         }
-        return generation;
+        const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
+        const result = await this.repository.executeCommand(campaignContext, {
+          contract_version: "campaign-spine.v1",
+          idempotency_key: idempotencyKey,
+          expected_campaign_version: expectedCampaignVersion,
+          command_type: "save_revision",
+          tenant_id: authorization.tenant_id,
+          project_id: authorization.project_id,
+          campaign_id: campaignId,
+          payload: { variant_id: variantId, content, change_reason: "Generated draft for founder review" },
+        });
+        return result;
       },
     });
 
-
-    const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
-    const result = await this.repository.executeCommand(campaignContext, {
-      contract_version: "campaign-spine.v1",
-      idempotency_key: idempotencyKey,
-      expected_campaign_version: expectedCampaignVersion,
-      command_type: "save_revision",
-      tenant_id: authorization.tenant_id,
-      project_id: authorization.project_id,
-      campaign_id: campaignId,
-      payload: { variant_id: variantId, content, change_reason: "Generated draft for founder review" },
-    });
     const updated = await this.repository.getCampaign(campaignContext, campaignId);
-    return { result, campaign: updated, generation_id: job.job_id };
+    return { result: generation, campaign: updated, generation_id: job.job_id };
   }
 }
 
