@@ -42,7 +42,7 @@ class GenerationJobService {
     this.now = now;
   }
 
-  async requireExistingJob({ authorization, executionClass, requestCorrelationId, idempotencyKey, allowedScopes }) {
+  async requireExistingJob({ authorization, executionClass, requestCorrelationId, idempotencyKey, allowedScopes, requestFingerprint }) {
     if (!authorization || authorization.actor?.kind !== "customer" ||
         authorization.action !== "generation:create" ||
         typeof authorization.tenant_id !== "string" ||
@@ -58,6 +58,12 @@ class GenerationJobService {
       brandId: authorization.brand_id, executionClass, requestCorrelationId,
       actor: authorization.actor, allowedScopes,
     }));
+    const content = await this.repository.getExecutionContent(existing.job_id);
+    if (!content || typeof requestFingerprint !== "string" ||
+        !/^[a-f0-9]{64}$/.test(requestFingerprint) ||
+        content.request_fingerprint !== requestFingerprint) {
+      throw new GenerationJobConflictError();
+    }
     return existing;
   }
 
