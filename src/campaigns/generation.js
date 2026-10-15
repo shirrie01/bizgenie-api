@@ -8,6 +8,7 @@ class CampaignStrategyValidationError extends Error {
     super("Generated strategy failed validation");
     this.name = "CampaignStrategyValidationError";
     this.reasons = reasons;
+    this.diagnostics = [];
     this.stage = stage;
     this.generationJobId = generationJobId;
   }
@@ -173,23 +174,44 @@ function extractDraftSections(text) {
   return extractSections(text);
 }
 
-function hasSubstantialSourceRepetition(copy, source, approvedClaims = []) {
+function sourceRepetitionDiagnostics(copy, source, approvedClaims = []) {
   let boundedSource = String(source || "");
   for (const claim of approvedClaims) boundedSource = boundedSource.replace(new RegExp(String(claim).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
   const copyWords = meaningfulDraftWords(copy);
-  if (copyWords.length < 5) return false;
-  const sourceSegments = boundedSource
-    .split(/\n+/)
-    .map((segment) => meaningfulDraftWords(segment))
+  if (copyWords.length < 5) {
+    return { rejected: false, overlap_ratio: 0, shared_trigrams: 0, rule: null };
+  }
+
+  const sourceSegments = boundedSource.split(/\n+/)
+    .map(meaningfulDraftWords)
     .filter((words) => words.length >= 5);
-  const hasLocalOverlap = sourceSegments.some((words) => {
+
+  const overlap = Math.max(0, ...sourceSegments.map((words) => {
     const sourceWords = new Set(words);
-    return copyWords.filter((word) => sourceWords.has(word)).length / copyWords.length >= 0.7;
-  });
-  const sourceWordList = meaningfulDraftWords(boundedSource);
-  const copyTrigrams = new Set(copyWords.slice(0, -2).map((_, index) => copyWords.slice(index, index + 3).join(" ")));
-  const sourceTrigrams = new Set(sourceWordList.slice(0, -2).map((_, index) => sourceWordList.slice(index, index + 3).join(" ")));
-  return hasLocalOverlap || [...copyTrigrams].filter((trigram) => sourceTrigrams.has(trigram)).length >= 2;
+    return copyWords.filter((word) => sourceWords.has(word)).length / copyWords.length;
+  }));
+
+  const trigrams = (words) => new Set(
+    words.slice(0, -2).map((_, i) => words.slice(i, i + 3).join(" "))
+  );
+  const sourceTrigrams = trigrams(meaningfulDraftWords(boundedSource));
+  const shared = [...trigrams(copyWords)]
+    .filter((trigram) => sourceTrigrams.has(trigram)).length;
+
+  const overlapRejected = overlap >= 0.7;
+  const trigramRejected = shared >= 2;
+
+  return {
+    rejected: overlapRejected || trigramRejected,
+    overlap_ratio: Number(overlap.toFixed(3)),
+    shared_trigrams: shared,
+    rule: overlapRejected ? "segment_overlap" :
+      trigramRejected ? "shared_trigrams" : null,
+  };
+}
+
+function hasSubstantialSourceRepetition(copy, source, approvedClaims = []) {
+  return sourceRepetitionDiagnostics(copy, source, approvedClaims).rejected;
 }
 
 function validateFinalDraftStrategyFidelity(draftText, { campaign, brandContext, selected_strategy: strategy }) {
@@ -198,14 +220,18 @@ function validateFinalDraftStrategyFidelity(draftText, { campaign, brandContext,
   if (/\bEA\d{3,}\b/i.test(sections.concept || "")) reasons.push("Concept must not expose internal evidence-anchor IDs");
   const source = `${campaign.goal}\n${brandContext || ""}`;
   const approvedClaims = Array.isArray(strategy?.approved_claims) ? strategy.approved_claims : [];
-  if ([sections.hook, sections.cta, sections.caption].some((copy) => hasSubstantialSourceRepetition(copy, source, approvedClaims))) reasons.push("customer-facing copy substantially repeats supplied source wording");
+  const diagnostics = ["hook", "cta", "caption"].map((section) => ({
+    section,
+    ...sourceRepetitionDiagnostics(sections[section], source, approvedClaims),
+  })).filter((result) => result.rejected);
+  if (diagnostics.length) reasons.push("customer-facing copy substantially repeats supplied source wording");
   const customerWords = new Set(meaningfulDraftWords(Object.values(sections).join(" ")));
   const anchors = Array.isArray(strategy?.evidence_anchors) ? strategy.evidence_anchors : [];
   if (anchors.length && !anchors.some((anchor) => meaningfulDraftWords(anchor).some((word) => customerWords.has(word)))) reasons.push("final draft does not materially realise the resolved selected evidence");
   const selectedExecution = strategyExecutionText(strategy);
   const executionWords = meaningfulDraftWords(selectedExecution).filter((word) => word.length >= 5);
   if (executionWords.length >= 2 && !CATEGORY_DEFAULT_PATTERN.test(selectedExecution) && GENERIC_FILMING_PATTERN.test(sections["filming instructions"] || "")) reasons.push("generic filming instructions cannot replace richer selected platform execution");
-  return { ok: reasons.length === 0, reasons };
+  return { ok: reasons.length === 0, reasons, diagnostics };
 }
 
 function validateSelectedStrategy(strategy, { campaign, variant, brandContext, candidates, selection_evidence: selectionEvidence }) {
@@ -487,10 +513,12 @@ class CampaignVariantGenerationService {
           selected_strategy: resolvedEvidence.selected_strategy,
         });
         if (!strategyFidelityCheck.ok) {
-          throw new CampaignStrategyValidationError(strategyFidelityCheck.reasons, {
+          const rejection = new CampaignStrategyValidationError(strategyFidelityCheck.reasons, {
             stage: "final_draft_strategy_fidelity",
             generationJobId: job.job_id,
           });
+          rejection.diagnostics = strategyFidelityCheck.diagnostics;
+          throw rejection;
         }
         const content = { ...emptyContent(), body: generation.text, asset_refs: authorizedAssets };
         const result = await this.repository.executeCommand(campaignContext, {
