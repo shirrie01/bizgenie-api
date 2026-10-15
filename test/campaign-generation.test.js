@@ -419,14 +419,14 @@ describe("campaign generation prompt contract", () => {
       { name: "stage B originality rejection", scriptGenerator: async (_input, { promptOptions }) => promptOptions.structuredMode === "strategy"
         ? { text: "", metadata: strategyIdMetadata() }
         : { text: [
-          "Hook: Local teams planning a busy week of field visits.",
+          "Hook: Introduce the new seasonal drink to people choosing a low-sugar option.",
           "Concept: Build a distinctive evidence-backed comparison.",
           "Script: Connect the selected audience truth to an actionable creative premise.",
           "CTA: Explore the range.",
           "Caption: A concise evidence-backed campaign caption.",
           "Hashtags: #Campaign #Brand",
           "Filming instructions: Show the audience choice through a native comparison.",
-        ].join("\\n"), metadata: {} }, stage: "final_draft_strategy_fidelity", generators: 2 },
+        ].join("\n"), metadata: {} }, stage: "final_draft_strategy_fidelity", generators: 2 },
       { name: "missing sections", scriptGenerator: async (_input, { promptOptions }) => promptOptions.structuredMode === "strategy"
         ? { text: "", metadata: strategyIdMetadata() }
         : { text: "Hook: First impression.", metadata: {} }, stage: "incomplete", generators: 2 },
