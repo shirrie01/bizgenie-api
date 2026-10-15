@@ -1,4 +1,4 @@
-const { randomUUID } = require("node:crypto");
+const { randomUUID, createHash } = require("node:crypto");
 const { resolveBrandBrainContext } = require("../brand-brain");
 const { emptyContent } = require("./schema");
 const { GenerationIncompleteError, extractSections, findMissingSections } = require("../generation");
@@ -294,6 +294,11 @@ class CampaignVariantGenerationService {
   }
 
   async generate({ authorization, campaignId, variantId, expectedCampaignVersion, idempotencyKey, executionMode = "ai", executionBrief = "", suppliedAssets = [] }) {
+    // Bind retries to the immutable customer request, not just its owner.
+    const requestFingerprint = createHash("sha256").update(JSON.stringify({
+      campaignId, variantId, expectedCampaignVersion, executionMode,
+      executionBrief, suppliedAssets,
+    })).digest("hex");
     const campaignContext = {
       actor: authorization.actor,
       tenant_id: authorization.tenant_id,
@@ -316,7 +321,7 @@ class CampaignVariantGenerationService {
       const job = await this.generationJobService.requireExistingJob({
         authorization, executionClass: "text.standard",
         requestCorrelationId: idempotencyKey, idempotencyKey,
-        allowedScopes: ["generation:execute"],
+        allowedScopes: ["generation:execute"], requestFingerprint,
       });
       // The billing orchestrator reconstructs the existing reservation from
       // durable ledger state and settles it with its original debit key.
@@ -368,6 +373,7 @@ class CampaignVariantGenerationService {
       idempotencyKey,
       allowedScopes: ["generation:execute"],
       executionInput: {
+        request_fingerprint: requestFingerprint,
         compiled_prompt: compiledPrompt,
         platform: target.variant.platform,
         goal: campaign.goal,
