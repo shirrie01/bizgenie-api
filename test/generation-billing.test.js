@@ -576,6 +576,39 @@ describe("restart-safe committed generation settlement", () => {
     assert.equal(entries.filter(e => e.entry_type === "reservation_release").length, 0);
   });
 
+  it("recovers a committed revision after a debit outage across fresh orchestrators without duplicate charge", async () => {
+    const fixture = await billingFixture();
+    const job = testJob();
+    let providerCalls = 0;
+    let debitAttempts = 0;
+    const interruptedBilling = {
+      createReservation: (input) => fixture.billingService.createReservation(input),
+      releaseReservation: (input) => fixture.billingService.releaseReservation(input),
+      async finalizeDebit(input) {
+        debitAttempts += 1;
+        throw new Error("debit backend unavailable");
+      },
+    };
+    const first = new GenerationBillingOrchestrator({ billingService: interruptedBilling, logger: { error() {} } });
+    await assert.rejects(first.execute({
+      job, expectedExecutionClass: "text.standard",
+      operation: async () => { providerCalls += 1; return { revision_id: "committed_revision" }; },
+    }), (error) => error.code === "GENERATION_BILLING_UNAVAILABLE");
+    const before = fixture.repository.listLedger("tenant_a").filter(e => e.generation_id === job.job_id);
+    assert.equal(before.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(before.filter(e => e.entry_type === "debit").length, 0);
+    assert.equal(before.filter(e => e.entry_type === "reservation_release").length, 0);
+    const second = new GenerationBillingOrchestrator({ billingService: fixture.billingService, logger: { error() {} } });
+    const third = new GenerationBillingOrchestrator({ billingService: fixture.billingService, logger: { error() {} } });
+    await Promise.all([second.settleSuccessfulExecution({ job }), third.settleSuccessfulExecution({ job })]);
+    const after = fixture.repository.listLedger("tenant_a").filter(e => e.generation_id === job.job_id);
+    assert.equal(providerCalls, 1);
+    assert.equal(debitAttempts, 1);
+    assert.equal(after.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(after.filter(e => e.entry_type === "debit").length, 1);
+    assert.equal(after.filter(e => e.entry_type === "reservation_release").length, 0);
+  });
+
   it("does not debit a released reservation after restart", async () => {
     const fixture = await billingFixture();
     const job = testJob();
