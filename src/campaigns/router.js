@@ -297,6 +297,11 @@ function sendCampaignError(error, res, logger) {
       generation_job_id: typeof error.generationJobId === "string" ? error.generationJobId : null,
       rejection_stage: typeof error.stage === "string" ? error.stage : null,
       reasons: Array.isArray(error.reasons) ? error.reasons : [],
+      originality_diagnostics: Array.isArray(error.diagnostics)
+        ? error.diagnostics.map(({ section, rule, overlap_ratio, shared_trigrams }) => ({
+            section, rule, overlap_ratio, shared_trigrams,
+          }))
+        : [],
     }));
     return res.status(422).json({ error: STRATEGY_VALIDATION_ERROR });
   }
