@@ -155,6 +155,30 @@ class PostgresCampaignRepository extends CampaignRepository {
     }
   }
 
+  // Read-only, owner-authorised proof of a committed generation revision.
+  // Never infer success from the campaign version alone.
+  async findCommittedGenerationReceipt(context, { campaignId, idempotencyKey, expectedCampaignVersion }) {
+    if (typeof idempotencyKey !== "string" || !idempotencyKey ||
+        typeof campaignId !== "string" || !campaignId ||
+        !Number.isInteger(expectedCampaignVersion) || expectedCampaignVersion < 0) {
+      throw new CampaignResourceError();
+    }
+    try {
+      const client = await this.pool.connect();
+      try {
+        await this._authorize(client, context, true);
+        const result = await client.query(`
+          select result from public.campaign_command_receipts
+           where namespace='campaign-spine.v1' and tenant_id=$1 and project_id=$2
+             and auth_user_id=$3 and idempotency_key=$4 and campaign_id=$5
+             and command_type='save_revision' and expected_campaign_version=$6
+           limit 1`, [context.tenant_id, context.project_id,
+            context.actor.auth_user_id, idempotencyKey, campaignId, expectedCampaignVersion]);
+        return result.rowCount === 1 ? clone(result.rows[0].result) : null;
+      } finally { client.release(); }
+    } catch (error) { throw databaseError(error); }
+  }
+
   async _captureBrandSnapshot(client, context, brandId) {
     const result = await client.query(`select b.* from public.brand_brains b join public.projects p on p.project_id=b.project_id and p.tenant_id=$1 where b.project_id=$2 and b.brand_id=$3 and b.status='approved' for share of b`, [context.tenant_id, context.project_id, brandId]);
     if (!result.rowCount) return null;
