@@ -118,11 +118,12 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
       {variant_id:variantId,content:{title:null,body:"Committed generation.",caption:null,alt_text:null,asset_refs:[]},
        change_reason:"Generated draft for founder review"}, create.campaign_id, key));
     const fresh = new PostgresCampaignRepository({pool});
-    const query = {campaignId:create.campaign_id,idempotencyKey:key,expectedCampaignVersion:2};
+    const query = {campaignId:create.campaign_id,variantId,idempotencyKey:key,expectedCampaignVersion:2};
     assert.deepEqual(await fresh.findCommittedGenerationReceipt(context,query),saved);
     assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,idempotencyKey:"wrong"}),null);
     assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,expectedCampaignVersion:1}),null);
     assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,campaignId:randomUUID()}),null);
+    assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,variantId:randomUUID()}),null);
     await assert.rejects(fresh.findCommittedGenerationReceipt({...context,actor:{kind:"customer",auth_user_id:AUTH_B}},query),CampaignResourceError);
   });
 
