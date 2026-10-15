@@ -123,6 +123,49 @@ function makeService({ brandBrain, scriptGenerator, assertions = {} } = {}) {
 }
 
 
+describe("committed revision recovery", () => {
+  const authorization = {
+    actor: { kind: "customer", auth_user_id: "owner_1" },
+    tenant_id: "tenant_fonzo", project_id: "project_fonzo",
+    brand_id: "brand_fonzo", membership_role: "owner", action: "generation:create",
+  };
+  const request = { authorization, campaignId: "campaign_1", variantId: "variant_1",
+    expectedCampaignVersion: 3, idempotencyKey: "campaign-generation-1" };
+
+  it("settles a proven committed revision without regenerating or saving", async () => {
+    const { service, calls } = makeService();
+    service.repository.getCampaign = async () => ({ ...campaignFixture(), version: 4 });
+    let receiptReads = 0;
+    const receipt = { campaign_id: "campaign_1", campaign_version: 4, created_ids: { revision_ids: ["revision_1"] } };
+    service.repository.findCommittedGenerationReceipt = async (_ctx, query) => {
+      receiptReads++;
+      assert.equal(query.expectedCampaignVersion, 3);
+      assert.equal(query.idempotencyKey, "campaign-generation-1");
+      return receipt;
+    };
+    let settled = 0;
+    service.generationBillingOrchestrator.settleSuccessfulExecution = async ({ job }) => {
+      settled++;
+      assert.equal(job.job_id, "generation_job_1");
+    };
+    const result = await service.generate(request);
+    assert.deepEqual(result.result, receipt);
+    assert.equal(receiptReads, 1);
+    assert.equal(settled, 1);
+    assert.equal(calls.generations, 0);
+    assert.equal(calls.saves, 0);
+  });
+
+  it("rejects stale versions without matching committed proof", async () => {
+    const { service, calls } = makeService();
+    service.repository.getCampaign = async () => ({ ...campaignFixture(), version: 4 });
+    service.repository.findCommittedGenerationReceipt = async () => null;
+    await assert.rejects(service.generate(request), (error) => error.name === "CampaignVersionError");
+    assert.equal(calls.jobs, 0);
+    assert.equal(calls.generations, 0);
+  });
+});
+
 const COMPLETE_CAMPAIGN_DRAFT = [
   "Hook: Make the weekday lunch decision the story.",
   "Concept: Use an evidence-backed comparison relevant to the audience.",
