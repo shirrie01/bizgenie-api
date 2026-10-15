@@ -157,9 +157,10 @@ class PostgresCampaignRepository extends CampaignRepository {
 
   // Read-only, owner-authorised proof of a committed generation revision.
   // Never infer success from the campaign version alone.
-  async findCommittedGenerationReceipt(context, { campaignId, idempotencyKey, expectedCampaignVersion }) {
+  async findCommittedGenerationReceipt(context, { campaignId, variantId, idempotencyKey, expectedCampaignVersion }) {
     if (typeof idempotencyKey !== "string" || !idempotencyKey ||
         typeof campaignId !== "string" || !campaignId ||
+        typeof variantId !== "string" || !variantId ||
         !Number.isInteger(expectedCampaignVersion) || expectedCampaignVersion < 0) {
       throw new CampaignResourceError();
     }
@@ -173,7 +174,7 @@ class PostgresCampaignRepository extends CampaignRepository {
              and auth_user_id=$3 and idempotency_key=$4 and campaign_id=$5
              and command_type='save_revision' and expected_campaign_version=$6
            limit 1`, [context.tenant_id, context.project_id,
-            context.actor.auth_user_id, idempotencyKey, campaignId, expectedCampaignVersion]);
+            context.actor.auth_user_id, idempotencyKey, campaignId, expectedCampaignVersion, variantId]);
         return result.rowCount === 1 ? clone(result.rows[0].result) : null;
       } finally { client.release(); }
     } catch (error) { throw databaseError(error); }
