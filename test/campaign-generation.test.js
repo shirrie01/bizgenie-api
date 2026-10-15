@@ -313,9 +313,13 @@ describe("campaign generation prompt contract", () => {
       idempotencyKey: "campaign-generation-1",
     });
 
-    assert.match(draftPrompt, /transform campaign-goal and Brand Brain prose into genuinely new customer-facing language/);
-    assert.match(draftPrompt, /compare Hook, CTA and Caption separately/);
-    assert.match(draftPrompt, /without inventing facts or changing exact approved claims/);
+    assert.match(draftPrompt, /Treat the campaign goal and Brand Brain as factual evidence/);
+    assert.match(draftPrompt, /Hook: open with a concrete audience situation/);
+    assert.match(draftPrompt, /CTA: request one specific, realistic next action/);
+    assert.match(draftPrompt, /Caption: explain why the selected strategy matters/);
+    assert.match(draftPrompt, /never invent margins, prices, distribution coverage/);
+    assert.match(draftPrompt, /check Hook, CTA and Caption separately/);
+    assert.match(draftPrompt, /preserving exact approved claims and the selected strategy/);
     assert.match(finalPrompt, /\[PLATFORM RULES\][\s\S]*Instagram Reels/);
     assert.match(finalPrompt, /\[CAMPAIGN OBJECTIVE\]\nIntroduce the new seasonal drink/);
     assert.equal((finalPrompt.match(/\[CAMPAIGN OBJECTIVE\]/g) || []).length, 1);
