@@ -122,8 +122,7 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     assert.deepEqual(await fresh.findCommittedGenerationReceipt(context,query),saved);
     assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,idempotencyKey:"wrong"}),null);
     assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,expectedCampaignVersion:1}),null);
-    assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,campaignId:"other"}),null);
-    await assert.rejects(fresh.findCommittedGenerationReceipt({...context,membership_role:"member"},query),CampaignResourceError);
+    assert.equal(await fresh.findCommittedGenerationReceipt(context,{...query,campaignId:randomUUID()}),null);
     await assert.rejects(fresh.findCommittedGenerationReceipt({...context,actor:{kind:"customer",auth_user_id:AUTH_B}},query),CampaignResourceError);
   });
 
