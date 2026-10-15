@@ -845,7 +845,7 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     await fund("tenant_a", 30, "process_settlement_funding");
     const debitJob = jobObject("job_text");
     const releaseJob = jobObject("job_release");
-    const reservationKey = job => `generation:reserve:${createHash("sha256").update(`reserve\\0${job.job_id}`).digest("hex")}`;
+    const reservationKey = job => `generation:reserve:${createHash("sha256").update(`reserve\u0000${job.job_id}`).digest("hex")}`;
     await reserve(debitJob.job_id, { idempotencyKey: reservationKey(debitJob) });
     await reserve(releaseJob.job_id, { idempotencyKey: reservationKey(releaseJob) });
 
