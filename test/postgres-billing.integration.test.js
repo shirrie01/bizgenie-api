@@ -797,6 +797,48 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
     }
   });
 
+  it("settles a persisted result after debit outage with concurrent reconstructed PostgreSQL services", async () => {
+    await fund("tenant_a", 20, "debit_outage_recovery");
+    const job = jobObject("job_text");
+    let providerCalls = 0;
+    const outageService = {
+      createReservation: (input) => service.createReservation(input),
+      releaseReservation: (input) => service.releaseReservation(input),
+      async finalizeDebit() { throw new Error("simulated debit outage"); },
+    };
+    const original = new GenerationBillingOrchestrator({
+      billingService: outageService, logger: { error() {} },
+    });
+    await assert.rejects(original.execute({
+      job, expectedExecutionClass: "text.standard",
+      operation: async () => {
+        providerCalls += 1;
+        return { revision_id: "committed_revision" };
+      },
+    }), GenerationBillingUnavailableError);
+    const before = (await repository.listLedger("tenant_a")).filter(e => e.generation_id === job.job_id);
+    assert.equal(before.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(before.filter(e => e.entry_type === "debit").length, 0);
+    assert.equal(before.filter(e => e.entry_type === "reservation_release").length, 0);
+
+    const independent = () => new GenerationBillingOrchestrator({
+      billingService: new BillingService({
+        repository: new PostgresBillingRepository({ pool, now: () => new Date(NOW) }),
+        now: () => new Date(NOW),
+      }),
+      logger: { error() {} },
+    });
+    await Promise.all(Array.from({ length: 6 }, () =>
+      independent().settleSuccessfulExecution({ job })
+    ));
+    const after = (await repository.listLedger("tenant_a")).filter(e => e.generation_id === job.job_id);
+    assert.equal(providerCalls, 1);
+    assert.equal(after.filter(e => e.entry_type === "reservation").length, 1);
+    assert.equal(after.filter(e => e.entry_type === "debit").length, 1);
+    assert.equal(after.filter(e => e.entry_type === "reservation_release").length, 0);
+    assert.equal((await repository.readBalance("tenant_a")).reserved_balance, 0);
+  });
+
   it("does not rerun provider execution when a committed debit acknowledgement is lost", async () => {
     const lostAck = new FailAfterCommitRepository({
       pool,
