@@ -42,6 +42,25 @@ class GenerationJobService {
     this.now = now;
   }
 
+  async requireExistingJob({ authorization, executionClass, requestCorrelationId, idempotencyKey, allowedScopes }) {
+    if (!authorization || authorization.actor?.kind !== "customer" ||
+        authorization.action !== "generation:create" ||
+        typeof authorization.tenant_id !== "string" ||
+        typeof authorization.project_id !== "string") {
+      throw new TypeError("Verified customer generation:create authorization required");
+    }
+    const existing = await this.repository.findByIdempotencyKey(
+      authorization.tenant_id, authorization.project_id, idempotencyKey
+    );
+    if (!existing) throw new GenerationJobConflictError();
+    requireSameLogicalJob(existing, prospectiveOwnership({
+      tenantId: authorization.tenant_id, projectId: authorization.project_id,
+      brandId: authorization.brand_id, executionClass, requestCorrelationId,
+      actor: authorization.actor, allowedScopes,
+    }));
+    return existing;
+  }
+
   // The only entry point into this module. It accepts the authorization
   // object already produced by AuthorizationService.authorizeProject /
   // authorizeProjectBrand (verified customer, verified tenant/project/brand
