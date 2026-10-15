@@ -173,6 +173,12 @@ class PostgresCampaignRepository extends CampaignRepository {
            where namespace='campaign-spine.v1' and tenant_id=$1 and project_id=$2
              and auth_user_id=$3 and idempotency_key=$4 and campaign_id=$5
              and command_type='save_revision' and expected_campaign_version=$6
+              and exists (
+                select 1 from public.campaign_revisions revision
+                 where revision.campaign_id=campaign_command_receipts.campaign_id
+                   and revision.variant_id=$7
+                   and revision.revision_id=(campaign_command_receipts.result->'created_ids'->'revision_ids'->>0)
+              )
            limit 1`, [context.tenant_id, context.project_id,
             context.actor.auth_user_id, idempotencyKey, campaignId, expectedCampaignVersion, variantId]);
         return result.rowCount === 1 ? clone(result.rows[0].result) : null;
