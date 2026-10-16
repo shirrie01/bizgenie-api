@@ -185,28 +185,32 @@ function sourceRepetitionDiagnostics(copy, source, approvedClaims = []) {
   const sourceSegments = boundedSource.split(/\n+/)
     .map(meaningfulDraftWords)
     .filter((words) => words.length >= 5);
-
   const overlap = Math.max(0, ...sourceSegments.map((words) => {
     const sourceWords = new Set(words);
     return copyWords.filter((word) => sourceWords.has(word)).length / copyWords.length;
   }));
 
-  const trigrams = (words) => new Set(
-    words.slice(0, -2).map((_, i) => words.slice(i, i + 3).join(" "))
-  );
-  const sourceTrigrams = trigrams(meaningfulDraftWords(boundedSource));
-  const shared = [...trigrams(copyWords)]
-    .filter((trigram) => sourceTrigrams.has(trigram)).length;
-
-  const overlapRejected = overlap >= 0.7;
-  const trigramRejected = shared >= 2;
-
+  // Short commercial terms and approved calls to action are not plagiarism.
+  // Block only a substantial contiguous copied passage, never a bag-of-words
+  // match or two commonplace three-word sequences scattered through a draft.
+  const sourceWords = meaningfulDraftWords(boundedSource);
+  const windowSize = 8;
+  const windows = new Set();
+  for (let i = 0; i + windowSize <= sourceWords.length; i++) {
+    windows.add(sourceWords.slice(i, i + windowSize).join(" "));
+  }
+  let copiedPassage = false;
+  for (let i = 0; i + windowSize <= copyWords.length; i++) {
+    if (windows.has(copyWords.slice(i, i + windowSize).join(" "))) {
+      copiedPassage = true;
+      break;
+    }
+  }
   return {
-    rejected: overlapRejected || trigramRejected,
+    rejected: copiedPassage,
     overlap_ratio: Number(overlap.toFixed(3)),
-    shared_trigrams: shared,
-    rule: overlapRejected ? "segment_overlap" :
-      trigramRejected ? "shared_trigrams" : null,
+    shared_trigrams: 0,
+    rule: copiedPassage ? "substantial_verbatim_passage" : null,
   };
 }
 
