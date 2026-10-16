@@ -763,7 +763,7 @@ describe("campaign generation prompt contract", () => {
   it("rejects substantial verbatim source copying but allows ordinary trade terminology", () => {
     const context = {
       campaign: { goal: "Win independent retailers and wholesale partners" },
-      brandContext: "Description:\\nFairway develops and supplies soft drinks to retailers wholesalers and distribution partners across the regional trade network.",
+      brandContext: "Description:\nFairway develops and supplies soft drinks to retailers wholesalers and distribution partners across the regional trade network.",
       selected_strategy: { evidence_anchors: [] },
     };
     const draft = (hook) => [
@@ -774,7 +774,7 @@ describe("campaign generation prompt contract", () => {
       "Caption: Explore a different approach to drinks distribution.",
       "Hashtags: #retail #wholesale",
       "Filming instructions: Present a buyer-led document carousel.",
-    ].join("\\n");
+    ].join("\n");
     const copied = validateFinalDraftStrategyFidelity(
       draft("Fairway develops and supplies soft drinks to retailers wholesalers and distribution partners across the regional trade network."), context);
     assert.ok(copied.reasons.includes("customer-facing copy substantially repeats supplied source wording"));
