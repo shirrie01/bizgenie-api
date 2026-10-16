@@ -756,8 +756,32 @@ describe("campaign generation prompt contract", () => {
         section === "hook" ? fields.hook : "Start Monday knowing who goes where next.",
         section === "cta" ? fields.cta : "See how your team can map the next stop.",
         section === "caption" ? fields.caption : "Give every visit a place in the plan.");
-      assert.ok(validateFinalDraftStrategyFidelity(repeated, context).reasons.includes("customer-facing copy substantially repeats supplied source wording"), section);
+      assert.equal(validateFinalDraftStrategyFidelity(repeated, context).ok, true, `short commercial overlap: ${section}`);
     }
+  });
+
+  it("rejects substantial verbatim source copying but allows ordinary trade terminology", () => {
+    const context = {
+      campaign: { goal: "Win independent retailers and wholesale partners" },
+      brandContext: "Description:\nFairway develops and supplies soft drinks to retailers wholesalers and distribution partners across the regional trade network.",
+      selected_strategy: { evidence_anchors: [] },
+    };
+    const draft = (hook) => [
+      "Hook: " + hook,
+      "Concept: Show the independent buyer decision.",
+      "Script: Contrast retailer range choices without unsupported claims.",
+      "CTA: Discuss a trade account with our team.",
+      "Caption: Explore a different approach to drinks distribution.",
+      "Hashtags: #retail #wholesale",
+      "Filming instructions: Present a buyer-led document carousel.",
+    ].join("\n");
+    const copied = validateFinalDraftStrategyFidelity(
+      draft("Fairway develops and supplies soft drinks to retailers wholesalers and distribution partners across the regional trade network."), context);
+    assert.ok(copied.reasons.includes("customer-facing copy substantially repeats supplied source wording"));
+    assert.equal(copied.diagnostics[0].rule, "substantial_verbatim_passage");
+    const original = validateFinalDraftStrategyFidelity(
+      draft("Independent retailers deserve a better reason to start a trade conversation."), context);
+    assert.equal(original.ok, true);
   });
 
   it("does not treat distributed Brand Brain vocabulary overlap as copied source wording", () => {
