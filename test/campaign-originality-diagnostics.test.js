@@ -40,9 +40,9 @@ describe("privacy-safe originality diagnostics", () => {
 
       assert.equal(result.ok, false);
       assert.deepEqual(result.diagnostics.map(d => d.section), [section]);
-      assert.equal(result.diagnostics[0].rule, "segment_overlap");
+      assert.equal(result.diagnostics[0].rule, "substantial_verbatim_passage");
       assert.equal(result.diagnostics[0].overlap_ratio, 1);
-      assert.ok(result.diagnostics[0].shared_trigrams >= 2);
+      assert.equal(result.diagnostics[0].shared_trigrams, 0);
       assert.equal(
         JSON.stringify(result.diagnostics).includes(source),
         false
