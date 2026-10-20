@@ -37,7 +37,7 @@ function createCustomerReferenceImageRouter({ tokenVerifier, authorizationServic
         actor, tenantId: tenant_id, projectId: project_id, brandId: brand_id,
         action: "project:write", requireApprovedBrand: true,
       });
-      if (!granted || granted.tenant_id !== tenant_id || granted.project_id !== project_id) {
+      if (!granted || granted.tenant_id !== tenant_id || granted.project_id !== project_id || granted.brand_id !== brand_id || granted.brand_status !== "approved") {
         return res.status(404).json({ error: { code: "RESOURCE_NOT_AVAILABLE" } });
       }
       if (!Buffer.isBuffer(req.body)) return res.status(415).json({ error: { code: "UNSUPPORTED_MEDIA_TYPE" } });
