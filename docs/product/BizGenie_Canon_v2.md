@@ -18,6 +18,16 @@ This document defines direction and decision principles. It does not itself appr
 
 BizGenie is an **AI Marketing Operating System**.
 
+### Locked public campaign tagline
+
+**Make. Launch. Learn what converts.**
+
+- **Approval authority:** Founder-approved public campaign tagline, agreed 1 September 2026 and reconfirmed 20 October 2026; exact wording, capitalisation and punctuation are locked (Mission Control DEC-011 / LOCK-017).
+- **Distinct from positioning:** **AI Marketing Operating System** is the broader product identity, not a replacement tagline.
+- **Meaning:** Create useful branded content, launch campaigns, measure outcomes and use Genie's learning intelligence to improve subsequent decisions and execution.
+- **Truth boundary:** The tagline describes the product proposition and learning direction. It does not certify that autonomous publishing, cross-platform attribution or every learning feature is active in production. Public capability claims remain subject to the frozen launch contract and verified release evidence.
+- **Change control:** Do not paraphrase, replace or repunctuate the approved tagline without a new founder-approved decision recorded in Mission Control.
+
 It is not merely a content generator, a collection of disconnected marketing tools or a thin interface over a model provider. It is the operating environment in which a business can understand its brand, decide what outcome it wants, plan marketing work, create and improve assets, coordinate specialist capabilities and learn from results.
 
 The operating-system identity means BizGenie should:
