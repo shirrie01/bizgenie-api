@@ -62,3 +62,24 @@ test("removes stored object when database insert fails", async () => {
   await assert.rejects(service.ingest({authority,data:png,mimeType:"image/png"}));
   assert.deepEqual(events.map(e=>e[0]),["put","create","delete"]);
 });
+
+
+test("rejects empty and over-limit images before scanner or storage", async () => {
+  let scans = 0;
+  const {service,events} = harness({scanner:async()=>{scans++;return true;}});
+  await assert.rejects(service.ingest({authority,data:Buffer.alloc(0),mimeType:"image/png"}));
+  const oversized = Buffer.alloc(10*1024*1024+1);
+  png.copy(oversized);
+  await assert.rejects(service.ingest({authority,data:oversized,mimeType:"image/png"}));
+  assert.equal(scans,0);
+  assert.equal(events.length,0);
+});
+
+test("does not allow client supplied brand or storage fields to override trusted scope", async () => {
+  const {service,events} = harness();
+  await service.ingest({authority,data:png,mimeType:"image/png",brand_id:"other-brand",storage_key:"public/evil",allowed_uses:["campaign.publish"]});
+  const asset=events.find(e=>e[0]==="create")[1];
+  assert.equal(asset.brand_id,authority.brand_id);
+  assert.notEqual(asset.storage_key,"public/evil");
+  assert.equal(asset.allowed_uses.includes("campaign.publish"),false);
+});
