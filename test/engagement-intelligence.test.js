@@ -47,3 +47,13 @@ test("missing outcomes cannot be silently interpreted as zero", () => {
   const observations = sample().filter(x => x.metric === "reach");
   assert.deepEqual(evaluateEngagement({ ...scope, observations }).reason_codes, ["MISSING_BUSINESS_OUTCOMES"]);
 });
+
+test("unrelated vanity clicks cannot be treated as qualified leads", () => {
+  const observations = sample().filter(x => x.metric === "reach").concat(
+    sample().filter(x => x.metric === "leads").map(x => ({ ...x, metric: "clicks" }))
+  );
+  assert.equal(evaluateEngagement({ ...scope, observations }).decision, DECISIONS.INSUFFICIENT_DATA);
+});
+test("unknown business objective fails closed", () => {
+  assert.deepEqual(evaluateEngagement({ ...scope, objective: "unknown_goal", observations: sample() }).reason_codes, ["UNSUPPORTED_OBJECTIVE"]);
+});
