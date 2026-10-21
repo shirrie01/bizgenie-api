@@ -10,7 +10,7 @@ const DECISIONS = Object.freeze({
 });
 const ALLOWED_SOURCES = new Set(["customer_attestation", "platform_verified"]);
 const VALID_METRICS = new Set(["reach", "impressions", "clicks", "enquiries", "leads", "conversions", "sales"]);
-const BUSINESS_METRICS = new Set(["enquiries", "leads", "conversions", "sales"]);
+const BUSINESS_METRICS = new Set(["enquiries", "leads", "conversions", "sales"]);\nconst OBJECTIVE_METRIC = Object.freeze({ retailer_leads: "leads", qualified_retailer_enquiries: "enquiries", wholesale_enquiries: "enquiries", bookings: "conversions", sales: "sales", awareness: "reach" });
 
 function evaluateEngagement({ tenant_id, project_id, brand_id, objective, observations = [], posts = [] } = {}) {
   const fail = (reason_codes, evidence_ids = []) => ({
@@ -24,6 +24,9 @@ function evaluateEngagement({ tenant_id, project_id, brand_id, objective, observ
   // Strict fail-closed scope: mixed-tenant input must never contribute evidence.
   if (observations.some(x => !x || x.tenant_id !== tenant_id || x.project_id !== project_id || x.brand_id !== brand_id)) return fail(["SCOPE_MISMATCH"]);
   if (posts.some(x => !x || x.tenant_id !== tenant_id || x.project_id !== project_id || x.brand_id !== brand_id)) return fail(["SCOPE_MISMATCH"]);
+  const expectedMetric = OBJECTIVE_METRIC[objective];
+  // Until objective-to-outcome mapping is verified, refuse a cadence conclusion.
+  if (!expectedMetric || expectedMetric === "reach") return fail(["UNSUPPORTED_OBJECTIVE"]);
   const valid = observations.filter(x => ALLOWED_SOURCES.has(x.evidence_kind) && VALID_METRICS.has(x.metric) &&
     Number.isFinite(x.value) && x.value >= 0 && typeof x.campaign_id === "string" &&
     typeof x.platform === "string" && typeof x.observed_at === "string" &&
@@ -44,7 +47,7 @@ function evaluateEngagement({ tenant_id, project_id, brand_id, objective, observ
     }
     const exposure = latest.get("reach") || latest.get("impressions");
     if (!exposure || exposure.value <= 0) continue;
-    const outcomes = [...latest.values()].filter(x => BUSINESS_METRICS.has(x.metric));
+    const outcomes = [...latest.values()].filter(x => x.metric === expectedMetric);
     comparable.push({ key, exposure: exposure.value, outcomes, ids: [...latest.values()].map(x => x.measurement_id), platform: rows[0].platform });
   }
   const evidence_ids = [...new Set(comparable.flatMap(x => x.ids))];
