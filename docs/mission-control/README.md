@@ -1,5 +1,19 @@
 # BizGenie Mission Control v1.0
 
+## Current operational checkpoint — 21 October 2026
+
+> This section is the current operational pointer. Older dated checkpoint tables below are retained as historical evidence, not current launch status.
+
+- **One operating register:** [#191](https://github.com/shirrie01/bizgenie-api/issues/191) is the authoritative cross-system index of scope, decisions, evidence, blockers, owners and acceptance. [#128](https://github.com/shirrie01/bizgenie-api/issues/128) governs launch acceptance; [#192](https://github.com/shirrie01/bizgenie-api/issues/192) social architecture; [#193–#202](https://github.com/shirrie01/bizgenie-api/issues/193) are 28-day execution lanes; [#203](https://github.com/shirrie01/bizgenie-api/issues/203) engagement policy implementation. Do not establish a second register in this README.
+- **Founder direction:** ambitious 21 Oct–18 Nov 2026 launch target, not a guarantee of third-party social platform approval. No quiet downgrades of pre-launch Brand/Learning Brain, Hybrid UGC, image/video/audio proof, social OAuth, publishing/analytics verification, billing and customer quality.
+- **Observed canonical heads at checkpoint:** API `ddcc26cb4111303f0c8fbf9745db5fed1e40ca6f`, web `e9e5a1f4f208787248fc9dd18ee8f5df1c60d05a`. Recheck heads before any new branch/PR. This document is not a replacement for live GitHub state.
+- **Active W04A work:** branch `bg-launch28-w04-engagement-intelligence`, initial docs commit `cde851eff7a5278a044b5d8874b87ad4cd59159a`. The [engagement MVP contract](../launch/ENGAGEMENT_INTELLIGENCE_MVP.md) is a draft; **code, tests, PR, CI, merge and runtime proof are outstanding**. Fonzo commercial first, Bubblo 4–6 weeks later; do not reward posting volume over meaningful outcomes.
+- **External access:** founder reports no BizGenie developer apps created for Meta/TikTok/LinkedIn/X/YouTube/Google Analytics. Cloud Scheduler API disabled, no Cloud Run Jobs listed in europe-west1, no Supabase Edge Functions in two inspected projects; other schedulers/platforms remain unverified. Do not equate missing inventory with proof of absence elsewhere.
+- **Required loop per task:** issue contract → named owner/lane → fresh-base isolated branch → tests/CI → PR/independent review → explicit human acceptance → authorised merge/deploy → runtime evidence → #191 update. A written issue or committed specification is not working software.
+- **Daily 28-day checkpoint:** each workstream reports source SHA, PR, test result, next action, blocker, external approval, actual spend, ETA/confidence and founder decision needed. Escalate conflicts, duplicate systems and critical-path slips immediately; do not silently move PRE-LAUNCH features to POST-LAUNCH.
+- **No implicit authority:** creating an issue/branch/PR does not authorise schema migrations, production traffic, paid provider calls, social posting, external developer-app submission or public pricing changes.
+
+
 ## Current campaign and paid-activation authority
 
 BG-ACT-001 / Issue #39 is **closed as completed**, following the
