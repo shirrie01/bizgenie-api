@@ -10,7 +10,8 @@ const DECISIONS = Object.freeze({
 });
 const ALLOWED_SOURCES = new Set(["customer_attestation", "platform_verified"]);
 const VALID_METRICS = new Set(["reach", "impressions", "clicks", "enquiries", "leads", "conversions", "sales"]);
-const BUSINESS_METRICS = new Set(["enquiries", "leads", "conversions", "sales"]);\nconst OBJECTIVE_METRIC = Object.freeze({ retailer_leads: "leads", qualified_retailer_enquiries: "enquiries", wholesale_enquiries: "enquiries", bookings: "conversions", sales: "sales", awareness: "reach" });
+const BUSINESS_METRICS = new Set(["enquiries", "leads", "conversions", "sales"]);
+const OBJECTIVE_METRIC = Object.freeze({ retailer_leads: "leads", qualified_retailer_enquiries: "enquiries", wholesale_enquiries: "enquiries", bookings: "conversions", sales: "sales", awareness: "reach" });
 
 function evaluateEngagement({ tenant_id, project_id, brand_id, objective, observations = [], posts = [] } = {}) {
   const fail = (reason_codes, evidence_ids = []) => ({
