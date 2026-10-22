@@ -1,6 +1,6 @@
 const assert = require("node:assert/strict");
 const { describe, it } = require("node:test");
-const { PostgresPreviewRegistry, hashIntent } = require("../src/campaigns");
+const { InMemoryPreviewRegistry, PostgresPreviewRegistry, hashIntent } = require("../src/campaigns");
 
 const AUTH_USER = "11111111-1111-4111-8111-111111111111";
 const CAMPAIGN_ID = "22222222-2222-4222-8222-222222222222";
@@ -119,5 +119,41 @@ describe("PostgresPreviewRegistry", () => {
     assert.equal(receipt.render_input_hash, undefined);
     assert.equal(receipt.profile_hash, undefined);
     assert.equal(calls.filter((sql) => /insert into public\.campaign_preview_render_receipts/i.test(sql)).length, 1);
+  });
+});
+
+
+describe("locked destination/media profile boundaries", () => {
+  const context = { tenant_id: "tenant_a", project_id: "project_a", actor: { kind: "customer", auth_user_id: AUTH_USER } };
+  const input = { variant_id: VARIANT_ID, revision_id: REVISION_ID, idempotency_key: "profile_boundary" };
+  for (const [platform, placement, format] of [
+    ["instagram", "feed", "image"], ["tiktok", "feed", "video"], ["youtube", "shorts", "video"],
+  ]) it(`renders the registered ${platform}/${placement}/${format} tuple`, async () => {
+    const c = campaign(); const item = c.items.get(ITEM_ID); item.format = format;
+    Object.assign(item.variants.get(VARIANT_ID), { platform, placement });
+    const result = await new InMemoryPreviewRegistry().renderPreview(context, c, input);
+    assert.equal(result.profile_id, `${platform}.${placement}.${format}`);
+  });
+  for (const [platform, placement, format] of [
+    ["instagram", "feed", "video"], ["instagram", "shorts", "video"], ["tiktok", "feed", "image"],
+  ]) it(`does not borrow another profile for ${platform}/${placement}/${format}`, async () => {
+    const c = campaign(); const item = c.items.get(ITEM_ID); item.format = format;
+    Object.assign(item.variants.get(VARIANT_ID), { platform, placement });
+    const registry = new InMemoryPreviewRegistry();
+    await assert.rejects(() => registry.renderPreview(context, c, input), { code: "PREVIEW_VERSION_UNAVAILABLE" });
+    assert.equal(registry.receipts.size, 0);
+  });
+  it("rejects foreign scope and stale revisions before issuing any receipt", async () => {
+    const registry = new InMemoryPreviewRegistry();
+    await assert.rejects(() => registry.renderPreview({ ...context, tenant_id: "foreign" }, campaign(), input), { code: "RESOURCE_NOT_AVAILABLE" });
+    await assert.rejects(() => registry.renderPreview(context, campaign(), { ...input, revision_id: RECEIPT_ID }), { code: "PREVIEW_REQUIRED" });
+    assert.equal(registry.receipts.size, 0);
+  });
+  it("does not reuse a previously rendered receipt after profile revocation", async () => {
+    const registry = new InMemoryPreviewRegistry();
+    await registry.renderPreview(context, campaign(), input);
+    registry.profiles.get("instagram.feed.text:1").status = "revoked";
+    await assert.rejects(() => registry.renderPreview(context, campaign(), input), { code: "PREVIEW_VERSION_UNAVAILABLE" });
+    assert.equal(registry.receipts.size, 1);
   });
 });
