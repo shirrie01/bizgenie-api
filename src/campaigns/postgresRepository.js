@@ -4,6 +4,7 @@ const { CampaignError, CampaignResourceError, CampaignPersistenceError, Campaign
 const { hashIntent, parseCommand } = require("./schema");
 const { CampaignRepository, InMemoryCampaignRepository } = require("./repository");
 const projection = require('./projection');
+const { mediaPreviewAsset } = require('./mediaPreviewAsset');
 const { authorization } = require('./schema');
 
 const RELATIONS = Object.freeze([
@@ -211,8 +212,8 @@ class PostgresCampaignRepository extends CampaignRepository {
     return projection.normalize(found.rows[0]) || { brand_snapshot_id: this.idFactory(), tenant_id: context.tenant_id, project_id: context.project_id, brand_id: brandId, source_version: row.version, source_updated_at: new Date(row.updated_at).toISOString(), source_schema_version: "brand-brain.v1", snapshot, snapshot_hash: snapshotHash, captured_at: this.now().toISOString() };
   }
 
-  async _resolveMedia(client,context,assetId,brandId) {
-    const result=await client.query(`select a.*,j.brand_id,j.job_id from public.media_assets a join public.generation_jobs j on j.job_id=a.generation_job_id and j.tenant_id=a.tenant_id and j.project_id=a.project_id where a.asset_id=$1 and a.tenant_id=$2 and a.project_id=$3 and j.brand_id=$4 and a.status='active' and a.source_kind='generated' and split_part(j.execution_class,'.',1)=a.media_kind for share of a,j`,[assetId,context.tenant_id,context.project_id,brandId]);
+  async _resolveMedia(client,context,assetId,brandId,lock=true) {
+    const result=await client.query(`select a.*,j.brand_id,j.job_id from public.media_assets a join public.generation_jobs j on j.job_id=a.generation_job_id and j.tenant_id=a.tenant_id and j.project_id=a.project_id where a.asset_id=$1 and a.tenant_id=$2 and a.project_id=$3 and j.brand_id=$4 and a.status='active' and a.source_kind='generated' and split_part(j.execution_class,'.',1)=a.media_kind ${lock ? 'for share of a,j' : ''}`,[assetId,context.tenant_id,context.project_id,brandId]);
     if(!result.rowCount)return null;
     const a=result.rows[0];
     return {...a,manifest:{asset_id:a.asset_id,mime_type:a.mime_type,width:a.width,height:a.height,duration_ms:a.duration_seconds===null?null:Math.round(Number(a.duration_seconds)*1000),byte_size:a.byte_size===null?null:Number(a.byte_size)}};
@@ -284,6 +285,12 @@ class PostgresCampaignRepository extends CampaignRepository {
     finally{client?.release();}
   }
   async getCampaign(context,campaignId){return this._read(context,async client=>projection.decorate(await this._loadCampaign(client,context,campaignId)));}
+  async getMediaPreviewAsset(context,campaignId,options) {
+    return this._read(context,async client=>mediaPreviewAsset({ ...options, context,
+      campaign:projection.decorate(await this._loadCampaign(client,context,campaignId)),
+      resolveMedia:(_context,assetId,brandId)=>this._resolveMedia(client,context,assetId,brandId,false),
+    }));
+  }
   async _list(client,context){const rows=await client.query(`select campaign_id from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id]);const campaigns=[];for(const row of rows.rows)campaigns.push(projection.decorate(await this._loadCampaign(client,context,row.campaign_id)));return campaigns;}
   async listCampaigns(context){return this._read(context,client=>this._list(client,context));}
   async listCampaignEvents(context,campaignId) { return (await this.getCampaign(context,campaignId)).events; }
