@@ -479,6 +479,24 @@ function createCustomerCampaignRouter({
     }
   });
 
+  router.get("/:campaignId/variants/:variantId/creative-preview", async (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    res.vary("Authorization");
+    try {
+      const query = parse(queryScope.extend({
+        revision_id: uuid,
+        expected_campaign_version: z.string().regex(/^(0|[1-9][0-9]*)$/).transform(Number).pipe(expectedVersion),
+      }).strict(), req.query);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: query.tenant_id, projectId: query.project_id, action: "project:read" });
+      const preview = await repository.getCreativePreview(context, campaignId, {
+        variantId, revisionId: query.revision_id, expectedVersion: query.expected_campaign_version,
+      });
+      return res.json({ preview });
+    } catch (error) { return sendCampaignError(error, res, logger); }
+  });
+
   router.post("/:campaignId/variants/:variantId/preview-renders", async (req, res) => {
     try {
       if (!previewRegistry) throw new CampaignPersistenceError();
