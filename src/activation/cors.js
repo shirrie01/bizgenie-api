@@ -55,15 +55,19 @@ function createCorsMiddleware({ config }) {
       .split(",")
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean);
+    const mediaDelivery = /^\/customer\/campaigns\/[a-f0-9-]{36}\/variants\/[a-f0-9-]{36}\/revisions\/[a-f0-9-]{36}\/assets\/[a-f0-9-]{36}\/preview$/.test(req.path);
+    const methods = mediaDelivery ? new Set(["GET", "HEAD", "OPTIONS"]) : allowedMethods;
+    const headers = mediaDelivery ? new Set([...allowedHeaders, "range"]) : allowedHeaders;
     if (
-      !allowedMethods.has(requestedMethod || req.method) ||
-      requestedHeaders.some((header) => !allowedHeaders.has(header))
+      !methods.has(requestedMethod || req.method) ||
+      requestedHeaders.some((header) => !headers.has(header))
     ) {
       return res.status(403).json({ error: "Forbidden" });
     }
     res.set("Access-Control-Allow-Origin", origin);
-    res.set("Access-Control-Allow-Methods", ALLOWED_METHODS);
-    res.set("Access-Control-Allow-Headers", ALLOWED_HEADERS);
+    res.set("Access-Control-Allow-Methods", mediaDelivery ? "GET,HEAD,OPTIONS" : ALLOWED_METHODS);
+    res.set("Access-Control-Allow-Headers", mediaDelivery ? ALLOWED_HEADERS + ",range" : ALLOWED_HEADERS);
+    if (mediaDelivery) res.set("Access-Control-Expose-Headers", "Content-Length,Content-Range,Accept-Ranges");
     res.set("Access-Control-Max-Age", "600");
     if (req.method === "OPTIONS") return res.status(204).end();
     return next();
