@@ -109,8 +109,10 @@ class ImageGenerationService {
         updated_at: this.timestamp(),
       });
 
+      const referenceBrandId = job ? job.brand_id : request.brand_id;
       const referenceAssets = (request.reference_assets || []).map((asset) => ({
         asset_id: asset.asset_id,
+        ...(referenceBrandId ? { brand_id: referenceBrandId } : {}),
         ...(job ? { tenant_id: job.tenant_id } : {}),
         project_id: request.project_id,
         requested_by_user_id: request.user_id,
