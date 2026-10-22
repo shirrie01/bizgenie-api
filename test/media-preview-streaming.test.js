@@ -60,3 +60,22 @@ test("per-storage concurrency rejects extra work before storage and releases slo
   for(const r of await Promise.all(pending))assert.equal(r.status,200);
   assert.equal((await request(app).head("/")).status,200);assert.equal(calls,5);
 });
+test("failed upstream validation must not wait forever for body cancellation",async()=>{
+  const storage={bucket:asset.bucket,async statPreview(){return {size:1024,mimeType:"video/mp4",generation:"42"};},async openPreview(){
+    return new Response(new ReadableStream({cancel(){return new Promise(()=>{});}}),{headers:{"content-type":"text/html","content-length":"1024"}});
+  }};
+  const r=await request(appFor(storage,20)).get("/").timeout({deadline:250});assert.equal(r.status,503);
+});
+test("an upstream response arriving after deadline is cancelled rather than orphaned",async()=>{
+  let release, cancelled=false;
+  const storage={bucket:asset.bucket,async statPreview(){return {size:1024,mimeType:"video/mp4",generation:"42"};},openPreview(){return new Promise(resolve=>{release=()=>resolve(new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{"content-type":"video/mp4","content-length":"1024"}}));});}};
+  assert.equal((await request(appFor(storage,20)).get("/")).status,503);
+  release();await new Promise(setImmediate);assert.equal(cancelled,true);
+});
+test("already disconnected requests start no storage work",async()=>{
+  const {EventEmitter}=require("node:events");let calls=0;
+  const req=Object.assign(new EventEmitter(),{aborted:true,header(){return undefined;}});
+  const res=Object.assign(new EventEmitter(),{destroyed:true,destroy(){},removeHeader(){}});
+  const storage={bucket:asset.bucket,async statPreview(){calls++;throw new Error("must not run");}};
+  await deliverPreview(req,res,asset,storage);assert.equal(calls,0);
+});

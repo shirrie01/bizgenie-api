@@ -27,15 +27,32 @@ function rangeFor(header, size, video) {
   if (start >= size || end - start + 1 > MAX_VIDEO_TRANSFER_BYTES) invalid();
   return { start, end, partial: true };
 }
-function abortable(promise, signal) {
+function cancelBody(response) {
+  try { Promise.resolve(response?.body?.cancel()).catch(() => {}); } catch {}
+}
+function abortable(operation, signal, onLateValue) {
   return new Promise((resolve, reject) => {
-    const abort = () => reject(unavailable());
+    let settled = false;
+    const abort = () => {
+      if (settled) return;
+      settled = true; signal.removeEventListener("abort", abort); reject(unavailable());
+    };
     if (signal.aborted) return abort();
     signal.addEventListener("abort", abort, { once: true });
-    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    Promise.resolve().then(() => {
+      if (signal.aborted) throw unavailable();
+      return operation();
+    }).then(value => {
+      if (settled) { onLateValue?.(value); return; }
+      settled = true; signal.removeEventListener("abort", abort); resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true; signal.removeEventListener("abort", abort); reject(error);
+    });
   });
 }
 async function deliverPreview(req, res, asset, storage, { timeoutMs = PREVIEW_TIMEOUT_MS } = {}) {
+  if (req.aborted || res.destroyed) return;
   if (!storage || storage.bucket !== asset.bucket) throw unavailable();
   if (req.header("if-range") !== undefined) throw new PreviewDeliveryError(400, "MEDIA_CONDITIONAL_REQUEST_UNSUPPORTED", "Conditional media ranges are not supported");
   const active = activePreviews.get(storage) || 0;
@@ -47,7 +64,7 @@ async function deliverPreview(req, res, asset, storage, { timeoutMs = PREVIEW_TI
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
-    const stat = await abortable(storage.statPreview({ key: asset.key, signal: controller.signal }), controller.signal);
+    const stat = await abortable(() => storage.statPreview({ key: asset.key, signal: controller.signal }), controller.signal);
     const max = asset.mediaKind === "video" ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
     if (!Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.mimeType !== asset.mimeType ||
         (asset.byteSize != null && Number(asset.byteSize) !== stat.size) || !/^[0-9]+$/.test(stat.generation)) throw unavailable();
@@ -57,7 +74,7 @@ async function deliverPreview(req, res, asset, storage, { timeoutMs = PREVIEW_TI
     catch (error) { if (error.status === 416) res.set("Content-Range", `bytes */${stat.size}`); throw error; }
     const length = range.end - range.start + 1;
     if (req.method !== "HEAD") {
-      response = await abortable(storage.openPreview({ key: asset.key, generation: stat.generation, range, signal: controller.signal }), controller.signal);
+      response = await abortable(() => storage.openPreview({ key: asset.key, generation: stat.generation, range, signal: controller.signal }), controller.signal, cancelBody);
       const h = response.headers;
       if (response.status !== (range.partial ? 206 : 200) || h.get("content-length") !== String(length) ||
           h.get("content-type") !== asset.mimeType || (h.get("content-encoding") && h.get("content-encoding") !== "identity") ||
@@ -78,7 +95,7 @@ async function deliverPreview(req, res, asset, storage, { timeoutMs = PREVIEW_TI
     }, flush(callback) { callback(bytes === length ? null : unavailable()); } });
     await pipeline(Readable.fromWeb(response.body), bound, res, { signal: controller.signal });
   } catch (error) {
-    try { await response?.body?.cancel(); } catch {}
+    cancelBody(response);
     if (res.headersSent || res.destroyed) { res.destroy(); return; }
     for (const header of ["Content-Length", "Content-Type", "Content-Disposition", "Accept-Ranges"]) res.removeHeader(header);
     if (error instanceof PreviewDeliveryError) throw error;
