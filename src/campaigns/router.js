@@ -1,4 +1,5 @@
 const express = require("express");
+const { deliverPreview, PreviewDeliveryError } = require("../media/previewDelivery");
 const { z } = require("zod");
 const {
   AuthenticationRequiredError,
@@ -332,6 +333,7 @@ function createCustomerCampaignRouter({
   previewRegistry,
   campaignGenerationService,
   measurementRegistry,
+  mediaPreviewStorage,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -493,6 +495,24 @@ function createCustomerCampaignRouter({
       });
       return res.json({ preview });
     } catch (error) { return sendCampaignError(error, res, logger); }
+  });
+
+  // Express also dispatches HEAD to this GET handler; HEAD checks authority and stats only.
+  router.get("/:campaignId/variants/:variantId/revisions/:revisionId/assets/:assetId/preview", async (req, res) => {
+    res.set("Cache-Control", "private, no-store"); res.vary("Authorization");
+    try {
+      const query = parse(queryScope.extend({ expected_campaign_version: z.string().regex(/^(0|[1-9][0-9]*)$/).transform(Number).pipe(expectedVersion) }).strict(), req.query);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: query.tenant_id, projectId: query.project_id, action: "project:read" });
+      const asset = await repository.getMediaPreviewAsset(context, campaignId, {
+        variantId: parse(uuid, req.params.variantId), revisionId: parse(uuid, req.params.revisionId), assetId: parse(uuid, req.params.assetId), expectedVersion: query.expected_campaign_version,
+      });
+      await deliverPreview(req, res, asset, mediaPreviewStorage);
+    } catch (error) {
+      if (res.destroyed || res.headersSent) return;
+      if (error instanceof PreviewDeliveryError) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+      return sendCampaignError(error, res, logger);
+    }
   });
 
   router.post("/:campaignId/variants/:variantId/preview-renders", async (req, res) => {
