@@ -288,6 +288,7 @@ function createApp({
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
   mediaAssetRepository = null,
+  mediaPreviewStorage = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   campaignGenerationService,
@@ -530,6 +531,7 @@ function createApp({
       authorizationService: resolvedAuthorizationService,
       campaignGenerationService: resolvedCampaignGenerationService,
       measurementRegistry: campaignMeasurementRegistry,
+      mediaPreviewStorage,
       logger,
     })
   );
@@ -773,6 +775,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       customerTokenVerifier,
       generationJobRepository,
       mediaAssetRepository: media.mediaAssetRepository,
+      mediaPreviewStorage: media.mediaPreviewStorage,
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
       imageProvider: media.imageProvider,
       videoGenerationRepository,
