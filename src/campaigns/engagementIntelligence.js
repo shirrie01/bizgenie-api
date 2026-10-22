@@ -67,6 +67,7 @@ function evaluateEngagement({ tenant_id, project_id, brand_id, objective, observ
     const periodStart = instant(row.period_start), periodEnd = instant(row.period_end);
     if (![periodStart, periodEnd].every(Number.isFinite) || periodStart < from || periodEnd > to ||
         periodStart >= periodEnd || periodEnd > observed) return fail(["INVALID_MEASUREMENT_PERIOD"]);
+    if (periodEnd <= instant(post.published_at)) return fail(["MEASUREMENT_BEFORE_PUBLICATION"]);
     if (row.unit !== "count" || !Number.isSafeInteger(row.value) || row.value < 0 || row.value > 1e15) return fail(["INCOMPATIBLE_METRIC"]);
     const snapshotKey = JSON.stringify([post.publication_id, row.metric, observed]);
     const snapshotValue = JSON.stringify([row.value, periodStart, periodEnd]);
@@ -82,7 +83,7 @@ function evaluateEngagement({ tenant_id, project_id, brand_id, objective, observ
   const comparable = [];
   for (const { post, latest } of byPost.values()) {
     const exposure = latest.get("reach") || latest.get("impressions");
-    if (!exposure || exposure.value <= 0) continue;
+    if (!exposure || exposure.value <= 0) return fail(["MISSING_COMPARABLE_EXPOSURE"]);
     const outcome = latest.get(expectedMetric);
     if (!outcome) return fail(["MISSING_BUSINESS_OUTCOMES"]);
     if (instant(exposure.observed_at) !== instant(outcome.observed_at) ||
@@ -97,9 +98,16 @@ function evaluateEngagement({ tenant_id, project_id, brand_id, objective, observ
   if (new Set(comparable.map(definition)).size !== 1) return fail(["INCOMPATIBLE_METRICS"], evidence_ids);
   if (comparable.reduce((sum, row) => sum + row.exposure.value, 0) < 300) return fail(["LOW_EXPOSURE"], evidence_ids);
   const totalActions = comparable.reduce((sum, row) => sum + row.outcome.value, 0);
-  // Cadence uses only measured publications inside this window, in publication order.
-  const recentPosts = comparable.map(row => row.post).filter(post => inWindow(instant(post.published_at)))
+  // Include unmeasured publications: missing outcomes cannot establish a zero-action cadence.
+  // Unknown objective/traffic metadata cannot be used to exclude a potentially relevant post.
+  const cohort = comparable[0].post;
+  const recentPosts = posts.filter(post => inWindow(instant(post.published_at)) && post.platform === platform &&
+      post.placement === cohort.placement && post.destination_key === cohort.destination_key &&
+      (!Object.hasOwn(OBJECTIVE_METRIC, post.objective) || post.objective === objective) &&
+      (!["organic", "paid"].includes(post.traffic_kind) || post.traffic_kind === cohort.traffic_kind))
     .sort((a, b) => instant(a.published_at) - instant(b.published_at) || a.publication_id.localeCompare(b.publication_id)).slice(-5);
+  const measuredIds = new Set(comparable.map(row => row.post.publication_id));
+  if (totalActions === 0 && recentPosts.some(post => !measuredIds.has(post.publication_id))) return fail(["MISSING_CADENCE_COVERAGE"], evidence_ids);
   const repeated = recentPosts.length === 5 && recentPosts.every(post => text(post.creative_family)) &&
     new Set(recentPosts.map(post => post.creative_family)).size === 1;
   return {

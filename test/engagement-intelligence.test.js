@@ -37,7 +37,7 @@ test("qualified actions still recommend controlled experiment, never scaling", (
   assert.equal(evaluateEngagement(sample({ actions: 4 })).decision, DECISIONS.EXPERIMENT);
 });
 test("zero and low exposure remain insufficient", () => {
-  insufficient(sample({ exposures: 0 }), "LOW_SAMPLE");
+  insufficient(sample({ exposures: 0 }), "MISSING_COMPARABLE_EXPOSURE");
   insufficient(sample({ exposures: 3 }), "LOW_EXPOSURE");
 });
 for (const source of ["observations", "posts"]) {
@@ -176,7 +176,7 @@ test("missing, future or mismatched measurement intervals cannot be compared", (
 });
 test("unmeasured repetitive posts and missing creative classification cannot trigger reduction", () => {
   const input = sample(); input.posts.push(...sample({ n: 5 }).posts.map(post => ({ ...post, publication_id: "unmeasured-" + post.publication_id })));
-  assert.equal(evaluateEngagement(input).decision, DECISIONS.EXPERIMENT);
+  insufficient(input, "MISSING_CADENCE_COVERAGE");
   const missing = sample({ n: 5 }); delete missing.posts[0].creative_family;
   assert.equal(evaluateEngagement(missing).decision, DECISIONS.EXPERIMENT);
 });
@@ -207,5 +207,46 @@ test("repetition uses the latest five publication times, never caller array orde
   assert.equal(evaluateEngagement(input).decision, DECISIONS.REDUCE_FREQUENCY);
   assert.deepEqual(evaluateEngagement({ ...input, posts: [...input.posts].reverse() }), evaluateEngagement(input));
   input.posts[5].creative_family = "latest-different";
+  assert.equal(evaluateEngagement(input).decision, DECISIONS.EXPERIMENT);
+});
+test("positive outcomes without a usable denominator cannot disappear behind zero-action posts", () => {
+  for (const exposure of ["missing", "zero"]) {
+    const input = sample({ n: 6 });
+    input.observations.find(row => row.publication_id === "post-5" && row.metric === "leads").value = 4;
+    if (exposure === "missing") input.observations = input.observations.filter(row => !(row.publication_id === "post-5" && row.metric === "reach"));
+    else input.observations.find(row => row.publication_id === "post-5" && row.metric === "reach").value = 0;
+    insufficient(input, "MISSING_COMPARABLE_EXPOSURE");
+  }
+});
+test("a newer unmeasured publication cannot be omitted from current cadence coverage", () => {
+  const input = sample({ n: 6 });
+  input.observations = input.observations.filter(row => row.publication_id !== "post-5");
+  insufficient(input, "MISSING_CADENCE_COVERAGE");
+  insufficient({ ...input, posts: [...input.posts].reverse(), observations: [...input.observations].reverse() }, "MISSING_CADENCE_COVERAGE");
+});
+test("measurement intervals wholly before effective publication are unusable even if observed later", () => {
+  const input = sample(); input.posts[0].published_at = "2026-10-20T11:30:00Z";
+  insufficient(input, "MEASUREMENT_BEFORE_PUBLICATION");
+});
+test("unknown objective or traffic on unmeasured current posts cannot hide missing cadence coverage", () => {
+  for (const [field, value] of [["objective", undefined], ["objective", "unknown_goal"], ["traffic_kind", undefined], ["traffic_kind", "combined"]]) {
+    const input = sample({ n: 6 });
+    input.observations = input.observations.filter(row => row.publication_id !== "post-5");
+    input.posts[5][field] = value;
+    insufficient(input, "MISSING_CADENCE_COVERAGE");
+  }
+});
+test("explicitly different objective or traffic cohort does not contaminate measured cadence", () => {
+  for (const patch of [{ objective: "sales" }, { traffic_kind: "paid" }]) {
+    const input = sample({ n: 6 });
+    input.observations = input.observations.filter(row => row.publication_id !== "post-5");
+    Object.assign(input.posts[5], patch);
+    assert.equal(evaluateEngagement(input).decision, DECISIONS.REDUCE_FREQUENCY);
+  }
+});
+test("half-open measurement periods must extend past effective publication", () => {
+  const input = sample(); input.posts[0].published_at = "2026-10-20T11:00:00Z";
+  insufficient(input, "MEASUREMENT_BEFORE_PUBLICATION");
+  input.posts[0].published_at = "2026-10-20T10:59:59Z";
   assert.equal(evaluateEngagement(input).decision, DECISIONS.EXPERIMENT);
 });

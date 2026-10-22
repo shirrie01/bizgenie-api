@@ -51,3 +51,23 @@ Tests cover tenant/project/brand separation for observations and publications, m
 ## Review boundary
 
 No new environment variables, dependencies or migrations. No merge, deployment, production traffic, live social publishing, paid generation, pricing, or spending. Docker/Buildpack artifact CI was not run locally for this pure-policy change. Fresh remote CI and PR/issue metadata updates depend on existing authorised access; do not infer success from a local commit or branch push. Google Sheets governance status has not been changed. Confidence is high for the executed pure-policy behaviours; runtime integration remains blocked on authoritative metadata and review.
+
+## Morning continuation — 22 October 2026
+
+Starting local and remote feature SHA both verified as `f0e4ee802569bdd117bfe4bdd5cf198e5cc1aca3`; remote main remains `ddcc26cb4111303f0c8fbf9745db5fed1e40ca6f`. Checkout was clean on the authorised isolated feature branch. The founder reported CI run [39692832016](https://github.com/shirrie01/bizgenie-api/actions/runs/39692832016) successful for that prior feature SHA. Fresh reads of PR #204 and that CI run still returned `Forbidden`; neither is independently verified.
+
+Independent review reproduced three defects with failing regression tests before changing code:
+
+1. Missing/zero exposure could silently exclude a positive business outcome while other posts supported reduction. The policy now returns `MISSING_COMPARABLE_EXPOSURE` instead of dropping that publication.
+2. Cadence examined only measured publications, hiding newer unmeasured posts. It now enumerates potentially relevant recent publications, including unknown objective/traffic classifications. Missing selected-publication coverage returns `MISSING_CADENCE_COVERAGE`. An explicitly supported different objective or known different traffic cohort remains separate.
+3. A measurement interval wholly before a corrected publication time was accepted if its observation timestamp was later. It now returns `MEASUREMENT_BEFORE_PUBLICATION` when the half-open period ends at or before effective publication.
+
+Six additional deterministic tests cover these regressions, reversed ordering, unknown metadata, explicit cohort separation and the publication/interval boundary. The new [minimum source-data contract and implementation plan](ENGAGEMENT_INTELLIGENCE_SOURCE_CONTRACT.md) identifies exact existing authorities and missing definitions, preserves customer-attested provenance, requires complete cohort enumeration and proposes reusing the repository's existing consistent read boundary. It does not create a new metadata authority or infer facts from notes/goals.
+
+Executed validation for the morning continuation:
+
+- `node --test test/engagement-intelligence.test.js`: 64 passed, 0 failed/skipped/cancelled.
+- `TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5433/postgres npm test`: 691 passed, 0 failed/skipped/cancelled, with real PostgreSQL 17 test fixtures.
+- JavaScript syntax checks of `index.js`, `src` and `test`, and `git diff --check`: passed.
+
+No dependency, environment-variable, runtime route or migration file changes. No application/shared database migrations, production changes or external calls to generation/publishing providers. Existing tests initialise disposable database fixtures. The prior validation above is historical evidence; these are the new results. Confidence is high in the executed pure-policy regressions; integration remains blocked on an approved authoritative source/qualification/interval/traffic contract. No launch readiness or governance acceptance is asserted.
