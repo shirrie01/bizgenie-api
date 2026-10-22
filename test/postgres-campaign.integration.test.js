@@ -4,6 +4,7 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { after, before, describe, it } = require("node:test");
 const { Pool } = require("pg");
+const { objectKey } = require("../src/media");
 const { PostgresCampaignRepository, CampaignIdempotencyError, CampaignResourceError } = require("../src/campaigns");
 const {regressionCases,scenario,previewReceipt,context:regressionContext,content:regressionContent,NOW}=require('./helpers/campaign-regressions');
 
@@ -94,7 +95,7 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     async function asset({tenant='tenant_a',project='project_a',brand='brand_a',status='active',kind='image',source='generated'}={}){
       const id=randomUUID(),job='job_'+randomUUID();
       await pool.query(`insert into public.generation_jobs(job_id,tenant_id,project_id,brand_id,execution_class,auth_user_id,request_correlation_id,idempotency_key,allowed_scopes) values($1,$2,$3,$4,$5,$6,$1,$1,'["generation:execute"]')`,[job,tenant,project,brand,kind+'.normal',tenant==='tenant_b'?AUTH_B:AUTH_A]);
-      await pool.query(`insert into public.media_assets(asset_id,tenant_id,project_id,generation_job_id,generation_id,source_kind,media_kind,storage_bucket,storage_key,mime_type,status,allowed_uses) values($1,$2,$3,$4,$4,$5,$6,'test-assets',$7,$8,$9,$10)`,[id,tenant,project,job,source,kind,`assets/${'a'.repeat(64)}/${'b'.repeat(64)}/${kind}/${id}.${kind==='image'?'png':'mp4'}`,kind==='image'?'image/png':'video/mp4',status,['campaign.preview','campaign.publish']]);return id;
+      await pool.query(`insert into public.media_assets(asset_id,tenant_id,project_id,generation_job_id,generation_id,source_kind,media_kind,storage_bucket,storage_key,mime_type,status,allowed_uses) values($1,$2,$3,$4,$4,$5,$6,'test-assets',$7,$8,$9,$10)`,[id,tenant,project,job,source,kind,objectKey({tenantId:tenant,projectId:project,mediaKind:kind,assetId:id,extension:kind==='image'?'png':'mp4'}),kind==='image'?'image/png':'video/mp4',status,['campaign.preview','campaign.publish']]);return id;
     }
     const s=await scenario(repository);
     for(const id of [await asset({tenant:'tenant_b',project:'project_b',brand:'brand_b'}),await asset({brand:null}),await asset({status:'revoked'}),await asset({kind:'video'}),await asset({source:'reference'})])await s.unchanged(()=>s.add('image',{...regressionContent,asset_refs:[{asset_id:id,role:'primary'}]}));
@@ -102,10 +103,18 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     const preview=await repository.getCreativePreview(context,s.id,{variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:(await s.get()).version});
     assert.equal(preview.media[0].source_kind,'generated');assert.equal(preview.media[0].reason,'PRIVATE_MEDIA_DELIVERY_UNAVAILABLE');assert.equal(preview.media[0].url,null);
     const a=await s.approve(t),attempt=await s.begin(a);
+    const beforeRead=await s.get();
+    const options={variantId:t.variant_id,revisionId:t.revision_id,assetId:id,expectedVersion:beforeRead.version};
+    const delivery=await repository.getMediaPreviewAsset(context,s.id,options);
+    assert.equal(delivery.mimeType,'image/png');assert.equal(delivery.bucket,'test-assets');
+    assert.deepEqual(await s.get(),beforeRead);
+    await assert.rejects(()=>repository.getMediaPreviewAsset(context,s.id,{...options,expectedVersion:0}),e=>e.code==='VERSION_CONFLICT');
+    await assert.rejects(()=>repository.getMediaPreviewAsset({...context,tenant_id:'tenant_b',project_id:'project_b',actor:{kind:'customer',auth_user_id:AUTH_B}},s.id,options),CampaignResourceError);
     const revision=(await s.variant(t)).revisions.get(t.revision_id);assert.equal(revision.generation_links[0].asset_id,id);assert.equal(revision.generation_links[0].generation_brand_snapshot_id,null);
     await pool.query("update public.media_assets set status='revoked' where asset_id=$1",[id]);
     const revoked=await repository.getCreativePreview(context,s.id,{variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:(await s.get()).version});
     assert.equal(revoked.media[0].reason,'ASSET_NOT_AVAILABLE');
+    await assert.rejects(()=>repository.getMediaPreviewAsset(context,s.id,options),CampaignResourceError);
     await s.cmd('confirm_manual_publication',{...attempt,published_at:NOW,attested_published:true});assert.equal((await s.variant(t)).workflow,'published');
   });
 

@@ -5,6 +5,7 @@ const { hashIntent, parseCommand } = require("./schema");
 const { CampaignRepository, InMemoryCampaignRepository } = require("./repository");
 const projection = require('./projection');
 const { creativePreview } = require('./creativePreview');
+const { mediaPreviewAsset } = require('./mediaPreviewAsset');
 const { authorization } = require('./schema');
 
 const RELATIONS = Object.freeze([
@@ -292,6 +293,12 @@ class PostgresCampaignRepository extends CampaignRepository {
       validatePreview:async(_context,preview)=>Boolean((await client.query(
         "select 1 from public.campaign_preview_profiles where profile_id=$1 and profile_version=$2 and profile_hash=$3 and status='active'",
         [preview.profile_id,preview.profile_version,preview.profile_hash])).rowCount),
+    }));
+  }
+  async getMediaPreviewAsset(context,campaignId,options) {
+    return this._read(context,async client=>mediaPreviewAsset({ ...options, context,
+      campaign:projection.decorate(await this._loadCampaign(client,context,campaignId)),
+      resolveMedia:(_context,assetId,brandId)=>this._resolveMedia(client,context,assetId,brandId,false),
     }));
   }
   async _list(client,context){const rows=await client.query(`select campaign_id from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id]);const campaigns=[];for(const row of rows.rows)campaigns.push(projection.decorate(await this._loadCampaign(client,context,row.campaign_id)));return campaigns;}
