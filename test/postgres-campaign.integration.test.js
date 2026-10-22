@@ -46,6 +46,23 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     await pool.query(`insert into public.brand_brains(brand_id,project_id,name,version,status,created_at,updated_at) values('brand_a','project_a','A',1,'approved',now(),now()),('brand_b','project_b','B',1,'approved',now(),now())`);
   });
   after(async()=>{await pool?.end();if(adminPool&&database){for(let i=0;i<20;i++){try{await adminPool.query(`drop database if exists ${database}`);break;}catch{await new Promise((resolve)=>setTimeout(resolve,25));}}}await adminPool?.end();});
+  it("keeps durable seeded profile hashes in parity and the proposed Instagram video tuple unavailable", async () => {
+    const { InMemoryPreviewRegistry, PostgresPreviewRegistry } = require("../src/campaigns");
+    const candidate = require("../docs/media/contracts/instagram-feed-video-preview.v1.proposed.json");
+    const memory = new InMemoryPreviewRegistry();
+    const rows = await pool.query("select * from public.campaign_preview_profiles order by profile_id");
+    assert.equal(rows.rowCount, memory.profiles.size);
+    for (const row of rows.rows) {
+      const expected = memory.profiles.get(`${row.profile_id}:${row.profile_version}`);
+      assert.ok(expected);
+      assert.equal(row.profile_hash, expected.profile_hash);
+      assert.equal(row.renderer_version, expected.renderer_version);
+    }
+    const registry = new PostgresPreviewRegistry({ pool });
+    const client = await pool.connect();
+    try { assert.equal(await registry.activeProfile(client, candidate.registry_identity), null); }
+    finally { client.release(); }
+  });
   it("initializes only when all fourteen relations are RLS-locked from direct roles",async()=>{await repository.initialize();});
   it('workspace calendar has SQL/projection parity, bounded pagination and transaction-authorized isolation',async()=>{
     const {parseQuery,page,memoryRows}=require('../src/campaigns/workspaceCalendar');
