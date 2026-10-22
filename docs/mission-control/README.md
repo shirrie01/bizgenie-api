@@ -55,6 +55,19 @@ Paid-beta capture is merged but disabled/unstaged per the current checkpoint.
 Staging and production are untouched by I-A. Migrations, customer APIs, preview registry,
 connectors, W4B complete-journey proof and activation remain subsequent bounded work.
 
+## Creative-preview engineering checkpoint — 2026-10-23
+
+[BG-STUDIO-007-BE contract and evidence](../media/BG-STUDIO-007-BE.md) continues
+#208 integration (`bf120509`) and #209 readiness (`6911ffc2`) on a separate branch.
+The proposed Instagram-feed video profile is **not provisionable**: current Meta
+specifications and trusted byte inspection remain unresolved. Default profiles,
+live databases and original PR branches are unchanged. See the report for pinned
+contract hashes, deterministic security/recovery tests, delivery-limit proof and
+Claude's supported/unsupported states. GitHub API/CI verification is blocked by
+`Forbidden`; local evidence is separate from deployed E2E. This is a repository
+engineering checkpoint, not founder acceptance or a write to the canonical
+[Google Sheets governance register](https://docs.google.com/spreadsheets/d/1N4Yf4hgi5a-ZB_VXZ7WSteLyTVWsX14wxmESvCzMtcc/edit).
+
 ## Purpose
 
 Mission Control is the operating layer for planning, building, verifying and continuously improving BizGenie. It exists to prevent architectural drift, uncontrolled scope, unverified completion and loss of strategic knowledge.
