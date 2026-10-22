@@ -98,10 +98,29 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     }
     const s=await scenario(repository);
     for(const id of [await asset({tenant:'tenant_b',project:'project_b',brand:'brand_b'}),await asset({brand:null}),await asset({status:'revoked'}),await asset({kind:'video'}),await asset({source:'reference'})])await s.unchanged(()=>s.add('image',{...regressionContent,asset_refs:[{asset_id:id,role:'primary'}]}));
-    const id=await asset(),t=await s.add('image',{...regressionContent,asset_refs:[{asset_id:id,role:'primary'}]}),a=await s.approve(t),attempt=await s.begin(a);
+    const id=await asset(),t=await s.add('image',{...regressionContent,asset_refs:[{asset_id:id,role:'primary'}]});
+    const preview=await repository.getCreativePreview(context,s.id,{variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:(await s.get()).version});
+    assert.equal(preview.media[0].source_kind,'generated');assert.equal(preview.media[0].reason,'PRIVATE_MEDIA_DELIVERY_UNAVAILABLE');assert.equal(preview.media[0].url,null);
+    const a=await s.approve(t),attempt=await s.begin(a);
     const revision=(await s.variant(t)).revisions.get(t.revision_id);assert.equal(revision.generation_links[0].asset_id,id);assert.equal(revision.generation_links[0].generation_brand_snapshot_id,null);
     await pool.query("update public.media_assets set status='revoked' where asset_id=$1",[id]);
+    const revoked=await repository.getCreativePreview(context,s.id,{variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:(await s.get()).version});
+    assert.equal(revoked.media[0].reason,'ASSET_NOT_AVAILABLE');
     await s.cmd('confirm_manual_publication',{...attempt,published_at:NOW,attested_published:true});assert.equal((await s.variant(t)).workflow,'published');
+  });
+
+  it("reads persisted creative in a scoped read-only snapshot with exact revision/version", async () => {
+    const s=await scenario(repository),t=await s.add();
+    const before=await s.get();
+    const options={variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:before.version};
+    const result=await repository.getCreativePreview(context,s.id,options);
+    assert.equal(result.copy.body,regressionContent.body);
+    assert.equal(result.platform_preview.status,"unrendered");
+    assert.equal(result.content_status,"available");
+    assert.deepEqual(await s.get(),before);
+    await assert.rejects(()=>repository.getCreativePreview(context,s.id,{...options,expectedVersion:0}),e=>e.code==="VERSION_CONFLICT");
+    await assert.rejects(()=>repository.getCreativePreview(context,s.id,{...options,revisionId:randomUUID()}),e=>e.code==="VERSION_CONFLICT");
+    await assert.rejects(()=>repository.getCreativePreview({...context,tenant_id:"tenant_b",project_id:"project_b",actor:{kind:"customer",auth_user_id:AUTH_B}},s.id,options),CampaignResourceError);
   });
 
   it("recovers only the exact committed generation receipt across repository instances", async () => {
