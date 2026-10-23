@@ -148,3 +148,49 @@ Validated implementation head **`b3af444beeb7f848d6471a89ec3f290462cf71b9`** was
 Draft creation against `bg-studio-008-be-video-inspection` returned **`Post "https://api.github.com/graphql": Forbidden`**. No draft PR number/URL is claimed. [Exact stacked comparison](https://github.com/shirrie01/bizgenie-api/compare/bg-studio-008-be-video-inspection...bg-studio-009-be-secure-video-runtime?expand=1); prepared body `/workspace/.onboarding/bg-studio-009-pr.md`. CI is **unverified**, not inferred from push success or the reported #211 run. An authorized owner should create the draft and verify exact final-head tests and canonical artifact jobs.
 
 Issue API reads and draft writes are forbidden; no #191/#197 issue update is claimed. Ready-to-post comments above carry this checkpoint and canonical governance reference. The existing repository engineering index is updated on this isolated branch; no external Mission Control sheet or competing register was created/modified. No source PR branch or main changed.
+
+## BG-STUDIO-009-BE-CI-REPAIR — 23 October 2026
+
+### Original failure and visibility
+
+PR #212 and `bg-studio-009-be-secure-video-runtime` were fetched and both verified at `4437d5f3ae36eeeae37e7b2b6464fcfee5b48c06` before repair. No newer branch head was observed. The founder reports run #349 / `39929032684` failed at **Run automated tests**. `gh pr view 212` returned GraphQL `Forbidden`; `gh run view 39929032684 --log-failed` failed while reading the run API with REST `Forbidden`. **The original run's exact failed assertions/logs cannot be confirmed here.** No broader credentials or permission bypass was attempted.
+
+### Confirmed reproduction versus CI hypothesis
+
+- Baseline exact CI command `TEST_DATABASE_URL=<disposable PostgreSQL 17 URL> npm test`, Node **22.23.3**, passed **772/772** with FFprobe installed.
+- Supplemental stress `TEST_DATABASE_URL=<same URL> taskset -c 0 node --test --test-concurrency=16` passed **772/772** in ~40 seconds. This did not reproduce a timing failure and is not claimed to match CI resources.
+- Closest available official Node container: **22.23.4**, npm **10.9.9**, Debian 12/x86_64, with no FFprobe. Running the unchanged scoped-inspection tests through a read-only source mount, no network and bounded tmpfs reproduced **31 passes / 3 failures / 0 skips**:
+
+| Test in `test/scoped-video-inspection.test.js` | Reproduced assertion |
+| --- | --- |
+| `scoped real byte inspection pins generation and digest, returns no storage authority and mutates nothing`, line 30 | actual `unavailable`, expected `measured` |
+| `actual malformed MP4 bytes return invalid, never an approval`, line 102 | actual `unavailable`, expected `invalid` |
+| `per-instance request and reserved-byte budgets do not silently refund failed reads`, line 132 | actual `unavailable`, expected `measured` |
+
+Container command: `docker run --rm --network none --read-only --tmpfs /tmp:rw,size=256m --mount type=bind,src=/workspace/bizgenie-api,dst=/app,readonly --workdir /app bizgenie-api:bg-studio-008-offline-evidence node --test test/scoped-video-inspection.test.js`.
+
+**Confirmed root cause of this reproduction:** the tests require a real FFprobe, while the container lacks it. The workflow previously installed Node packages only, relying on ambient runner OS tools. #211's real-byte tests treated absent FFprobe as optional; #212 introduced mandatory scoped/PostgreSQL positive inspection tests. A Node dependency install does not provide FFprobe/prlimit. **Missing tools in the actual GitHub run remain a hypothesis until its logs are available**; the container is a controlled reproduction of the dependency gap, not a claimed copy of the Ubuntu runner. Runtime resource/security checks behaved correctly by returning unavailable.
+
+### Fix and unchanged safeguards
+
+The existing Node 22 test job now explicitly installs the test-only `ffmpeg` and `util-linux` packages from the runner distribution repositories and executes `scripts/check-video-test-toolchain.js` before the unchanged `npm test` step. The preflight checks executable FFprobe/prlimit versions with bounded subprocess calls and reports them in CI; absence fails with an actionable message. Two new tests check availability and explicit missing-tool failure.
+
+This is prerequisite setup, **not skipping, weakening or concealing assertions**. No `continue-on-error`, retry masking, test exclusion, success coercion or reduced test selection was added. No runtime modules, sandbox limits, authorization, retrieval, revocation, digest, billing, approval or publishing code changed. CI test-package availability is not approved runtime packaging, sandbox acceptance or activation. No sandbox privileges/capabilities, IAM, app dependencies, Dockerfile or database schema were changed by this repair. Existing runtime/provisioning readiness gates remain open.
+
+### Repair validation
+
+| Command under Node 22.23.3 | Result |
+| --- | --- |
+| `node scripts/check-video-test-toolchain.js` | FFprobe 7.1.5-0+deb13u1 and util-linux prlimit 2.41.5 available |
+| `node --test test/video-test-toolchain.test.js test/scoped-video-inspection.test.js test/video-inspection.test.js test/container-build-contract.test.js` | **63 passed**, 0 failed/skipped |
+| `TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5433/postgres npm test` | **774 passed**, 0 failed/cancelled/skipped |
+| Same disposable local URL, `npm run test:billing:postgres` | **24 passed**, 0 failed/skipped |
+| Same disposable local URL, `npm run test:campaign:postgres` | **25 passed**, 0 failed/skipped |
+| `node scripts/check-container-build-contract.js` | Passed |
+| Syntax and diff whitespace checks | Passed |
+
+No shared/application schema migrations were applied; existing PostgreSQL tests use disposable fixtures. The CI package-install step itself cannot be executed/observed in GitHub from this session. Original canonical Docker/network/buildpack blockers are not relabelled resolved. Logs: `/workspace/.onboarding/bg-studio-009-repair-{baseline,stress-before,missing-tool,focused,full,billing,campaign}.log`.
+
+### Verification boundary
+
+Repair is on the existing branch/PR #212 only; no duplicate PR is requested. Exact repair commit and final published head are recorded in the following checkpoint. New exact-head GitHub Actions must complete successfully before calling this gate GREEN. Until verified, the original CI root cause remains unconfirmed and remote repair status remains **UNVERIFIED**, regardless of local passes. BG-STUDIO-010-BE is not started.
