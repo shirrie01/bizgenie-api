@@ -194,3 +194,5 @@ No shared/application schema migrations were applied; existing PostgreSQL tests 
 ### Verification boundary
 
 Repair is on the existing branch/PR #212 only; no duplicate PR is requested. Exact repair commit and final published head are recorded in the following checkpoint. New exact-head GitHub Actions must complete successfully before calling this gate GREEN. Until verified, the original CI root cause remains unconfirmed and remote repair status remains **UNVERIFIED**, regardless of local passes. BG-STUDIO-010-BE is not started.
+
+Repair implementation SHA: **`566a2de962a31ff7c4f211f871718735d6605b96`**, parent `4437d5f3ae36eeeae37e7b2b6464fcfee5b48c06`. The following evidence-only commit records this SHA without changing tested workflow/scripts/tests. Both commits are pushed together to the existing `bg-studio-009-be-secure-video-runtime` branch for #212. This documentation is not a GREEN CI verdict; verify the final published head at [PR #212 checks](https://github.com/shirrie01/bizgenie-api/pull/212/checks). No BG-STUDIO-010-BE work began.
