@@ -1,0 +1,13 @@
+.git
+node_modules
+.env
+.env.*
+!.env.example
+.aws
+.config
+.onboarding
+attachments
+npm-debug.log*
+.npmrc
+.netrc
+.ssh

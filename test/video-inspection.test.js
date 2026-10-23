@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const { before, after, test } = require("node:test");
 const { readFileSync, existsSync } = require("node:fs");
-const { mkdtemp, writeFile, rm, readdir } = require("node:fs/promises");
+const { mkdtemp, writeFile, rm } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
@@ -88,13 +88,14 @@ test("pre-aborted inspection does no work", async () => {
   assert.equal((await createVideoInspector()(silent, { signal: c.signal })).reason, "CANCELLED");
 });
 test("timeout kills stalled subprocess, releases slot, and cleans private directory", async () => {
-  const executable = await tool("stall", "setInterval(() => {}, 1000);");
-  const inspect = createVideoInspector({ executable, timeoutMs: 100 });
-  const before = new Set((await readdir(tmpdir())).filter(n => n.startsWith("bg-video-inspect-")));
+  const captured = path.join(directory, "timed-out-directories.txt");
+  const executable = await tool("stall", `require('fs').appendFileSync(${JSON.stringify(captured)}, process.cwd()+"\\n"); setInterval(() => {}, 1000);`);
+  const inspect = createVideoInspector({ executable, timeoutMs: 500 });
   assert.equal((await inspect(silent)).reason, "INSPECTION_TIMEOUT");
   assert.equal((await inspect(silent)).reason, "INSPECTION_TIMEOUT");
-  const added = (await readdir(tmpdir())).filter(n => n.startsWith("bg-video-inspect-") && !before.has(n));
-  assert.deepEqual(added, []);
+  const ownedDirectories = readFileSync(captured, "utf8").trim().split("\n");
+  assert.equal(ownedDirectories.length, 2);
+  for (const owned of ownedDirectories) assert.equal(existsSync(owned), false);
 });
 test("stdout amplification is bounded and sanitized", async () => {
   const executable = await tool("flood", 'process.stdout.write("x".repeat(1048576)); setInterval(() => {}, 1000);');
@@ -157,4 +158,28 @@ test("missing video duration is not fabricated from container duration", async (
   const output = { format: { size: String(silent.length), duration: "4" }, streams: [{ codec_type: "video", codec_name: "h264", width: 1280, height: 720, sample_aspect_ratio: "1:1", avg_frame_rate: "24/1" }] };
   const executable = await tool("missing-video-duration", `process.stdout.write(${JSON.stringify(JSON.stringify(output))});`);
   assert.deepEqual(await createVideoInspector({ executable })(silent), { status: "unsupported", reason: "INCOMPLETE_STREAM_METADATA" });
+});
+
+test("cleanup failure poisons the inspector instead of accumulating orphaned input files", () => {
+  const { spawnSync } = require("node:child_process");
+  const source = `
+    const io = require('node:fs/promises');
+    const fs = require('node:fs');
+    const originalRm = io.rm, originalMkdtemp = io.mkdtemp, dirs = [];
+    io.mkdtemp = async (...args) => { const d = await originalMkdtemp(...args); dirs.push(d); return d; };
+    io.rm = async () => { throw new Error('private-temp-path'); };
+    const inspect = require('./src/media/videoInspection').createVideoInspector({ executable: '/missing/fixture-tool' });
+    (async () => {
+      try {
+        const b = fs.readFileSync('test/fixtures/video-inspection/silent-h264.mp4');
+        const a = await inspect(b), c = await inspect(b);
+        console.log(JSON.stringify({ a, c, directories: dirs.length }));
+      } finally { for (const d of dirs) await originalRm(d, { recursive: true, force: true }); }
+    })().catch(() => { process.exitCode = 1; });
+  `;
+  const child = spawnSync(process.execPath, ["-e", source], { cwd: path.join(__dirname, ".."), encoding: "utf8", timeout: 5000 });
+  assert.equal(child.status, 0);
+  const r = JSON.parse(child.stdout);
+  assert.equal(r.a.reason, "INSPECTION_CLEANUP_UNAVAILABLE"); assert.equal(r.c.reason, "INSPECTION_CLEANUP_UNAVAILABLE");
+  assert.equal(r.directories, 1);
 });

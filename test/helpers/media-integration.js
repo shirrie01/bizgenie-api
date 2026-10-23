@@ -77,6 +77,6 @@ async function integrationFixture({ kind = "image", allowedOrigins = ["https://s
   const deliveryPath=`/customer/campaigns/${s.id}/variants/${target.variant_id}/revisions/${target.revision_id}/assets/${assetId}/preview`;
   state.storage=[];
   return {app,s,target,assetId,referenceId,job,storage,state,repository,registry,mediaRepository,metadataPath,deliveryPath,
-    scope:{tenant_id:"tenant_a",project_id:"project_a"},context,PNG};
+    scope:{tenant_id:"tenant_a",project_id:"project_a"},context,PNG,authorizationRepository:auth};
 }
 module.exports={integrationFixture};

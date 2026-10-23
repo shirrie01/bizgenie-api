@@ -1,9 +1,10 @@
 // Isolated local byte inspection. Not wired into routes, profile registration or approval.
 const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { mkdtemp, writeFile, rm } = require("node:fs/promises");
+const { mkdtemp, writeFile, chmod, rm } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
+const toolchain = require("../../runtime/video-inspection-toolchain.v1.json");
 const candidate = require("../../docs/media/contracts/instagram-feed-video-preview.v1.proposed.json");
 const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_OUTPUT = 256 * 1024;
@@ -19,7 +20,8 @@ function freeze(value) {
   if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 }
-function parseProbe(probe, bytes) {
+function parseProbe(probe, bytes, expectedVersion) {
+  if (expectedVersion && probe?.program_version?.version !== expectedVersion) return result("unavailable", "INSPECTION_TOOL_VERSION_UNAPPROVED");
   if (!probe || !Array.isArray(probe.streams) || probe.streams.length > 8 || !probe.format || number(probe.format.size) !== bytes.length) return result("invalid", "INVALID_CONTAINER");
   const video = probe.streams.filter(s => s.codec_type === "video");
   const audio = probe.streams.filter(s => s.codec_type === "audio");
@@ -55,10 +57,11 @@ function parseProbe(probe, bytes) {
 }
 
 // Tool path is operator configuration, never a request field; no shell is involved.
-function createVideoInspector({ executable = "/usr/bin/ffprobe", timeoutMs = 5000 } = {}) {
-  if (!path.isAbsolute(executable) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) throw new TypeError("Invalid inspection configuration");
-  let active = 0;
+function createVideoInspector({ executable = "/usr/bin/ffprobe", timeoutMs = 5000, isolation = "local" } = {}) {
+  if (!["local", "bubblewrap"].includes(isolation) || (isolation === "bubblewrap" && executable !== "/usr/bin/ffprobe") || !path.isAbsolute(executable) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) throw new TypeError("Invalid inspection configuration");
+  let active = 0, cleanupUnavailable = false;
   return async function inspectVideo(bytes, { signal } = {}) {
+    if (cleanupUnavailable) return result("unavailable", "INSPECTION_CLEANUP_UNAVAILABLE");
     if (!Buffer.isBuffer(bytes) || bytes.length < 16) return result("invalid", "INVALID_BYTES");
     if (bytes.length > MAX_BYTES) return result("unsupported", "OBJECT_TOO_LARGE");
     if (signal?.aborted) return result("unavailable", "CANCELLED");
@@ -78,18 +81,29 @@ function createVideoInspector({ executable = "/usr/bin/ffprobe", timeoutMs = 500
       directory = await mkdtemp(path.join(tmpdir(), "bg-video-inspect-"));
       const filename = path.join(directory, "asset.mp4");
       await writeFile(filename, bytes, { flag: "wx", mode: 0o600 });
+      // The 0700 parent remains private on the host; the isolated nobody uid gets a readonly bind of this file only.
+      if (isolation === "bubblewrap") await chmod(filename, 0o444);
       if (signal?.aborted) return result("unavailable", "CANCELLED");
       const execution = await new Promise(resolve => {
-        let child, chunks = [], length = 0, stopReason;
+        let child, chunks = [], length = 0, stopReason, diagnostic = "";
         const stop = reason => { stopReason ||= reason; child?.kill("SIGKILL"); };
         const cancel = () => stop("CANCELLED");
         const timer = setTimeout(() => stop("INSPECTION_TIMEOUT"), timeoutMs);
         try {
-          child = spawn("/usr/bin/prlimit", ["--as=1073741824", "--cpu=5", "--nofile=64", "--core=0", "--", executable, "-v", "error", "-max_alloc", "16777216", "-threads", "1",
+          const inputPath = isolation === "bubblewrap" ? "/input/asset.mp4" : filename;
+          const probeArgs = ["-v", "error", "-max_alloc", "16777216", "-threads", "1",
             "-protocol_whitelist", "file", "-format_whitelist", "mov", "-enable_drefs", "0", "-use_absolute_path", "0",
-            "-probesize", String(MAX_BYTES), "-analyzeduration", "5000000", "-i", filename,
-            "-show_format", "-show_streams", "-of", "json"],
-          { shell: false, cwd: directory, env: { LANG: "C", LC_ALL: "C" }, stdio: ["ignore", "pipe", "ignore"] });
+            "-probesize", String(MAX_BYTES), "-analyzeduration", "5000000", "-i", inputPath,
+            "-show_program_version", "-show_format", "-show_streams", "-of", "json"];
+          const command = isolation === "bubblewrap" ? ["/usr/bin/bwrap", "--unshare-all", "--unshare-net", "--unshare-user", "--disable-userns", "--assert-userns-disabled", "--die-with-parent", "--new-session",
+            "--cap-drop", "ALL", "--uid", "65534", "--gid", "65534", "--ro-bind", "/usr", "/usr", "--ro-bind", "/lib", "/lib",
+            "--ro-bind", "/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev", "--size", "1048576", "--tmpfs", "/tmp", "--dir", "/input",
+            "--ro-bind", filename, inputPath, "--chdir", "/input", "--clearenv", "--setenv", "LANG", "C", "--setenv", "LC_ALL", "C",
+            "--", executable, ...probeArgs] : [executable, ...probeArgs];
+          child = spawn("/usr/bin/prlimit", ["--as=1073741824", "--cpu=5", "--nofile=64", "--core=0", "--", ...command],
+            { shell: false, cwd: directory, env: { LANG: "C", LC_ALL: "C" }, stdio: ["ignore", "pipe", "pipe"] });
+          // Read at most a small diagnostic prefix only to distinguish sandbox setup failure; never expose it.
+          child.stderr.on("data", chunk => { if (diagnostic.length < 4096) diagnostic += chunk.toString("utf8").slice(0, 4096 - diagnostic.length); });
         } catch { clearTimeout(timer); resolve({ failure: "INSPECTION_TOOL_UNAVAILABLE" }); return; }
         signal?.addEventListener("abort", cancel, { once: true });
         if (signal?.aborted) cancel();
@@ -100,19 +114,20 @@ function createVideoInspector({ executable = "/usr/bin/ffprobe", timeoutMs = 500
         });
         child.on("error", () => { stopReason ||= "INSPECTION_TOOL_UNAVAILABLE"; });
         child.on("close", (code, terminationSignal) => {
+          if (isolation === "bubblewrap" && /(?:bwrap:|prlimit:)/.test(diagnostic)) stopReason ||= "INSPECTION_SANDBOX_UNAVAILABLE";
           clearTimeout(timer); signal?.removeEventListener("abort", cancel);
           resolve(stopReason ? { failure: stopReason } : code === 127 ? { failure: "INSPECTION_TOOL_UNAVAILABLE" } : terminationSignal ? { failure: "INSPECTION_RESOURCE_LIMIT" } : code !== 0 ? { invalid: true } : { json: Buffer.concat(chunks).toString("utf8") });
         });
       });
       if (execution.failure) return result("unavailable", execution.failure);
       if (execution.invalid) return result("invalid", "INVALID_CONTAINER");
-      try { return parseProbe(JSON.parse(execution.json), bytes); }
+      try { return parseProbe(JSON.parse(execution.json), bytes, isolation === "bubblewrap" ? toolchain.ffprobe_version : null); }
       catch { return result("invalid", "INVALID_INSPECTION_OUTPUT"); }
     } catch { return result("unavailable", "INSPECTION_IO_UNAVAILABLE"); }
     finally {
       let cleanupFailed = false;
       try { if (directory) await rm(directory, { recursive: true, force: true }); }
-      catch { cleanupFailed = true; }
+      catch { cleanupFailed = true; cleanupUnavailable = true; }
       active--;
       if (cleanupFailed) return result("unavailable", "INSPECTION_CLEANUP_UNAVAILABLE");
     }
@@ -134,4 +149,7 @@ function assessInstagramVideoCandidate(inspection) {
   return freeze({ ...base, status: reasons.length ? "unsupported" : "candidate_constraints_met", reasons,
     unresolved: ["META_REQUIREMENTS", "FULL_DECODE_AND_BROWSER_PROOF", "RENDERER_AND_OWNER_ACCEPTANCE"] });
 }
-module.exports = { createVideoInspector, assessInstagramVideoCandidate, MAX_BYTES };
+function createHardenedVideoInspector({ timeoutMs = 5000 } = {}) {
+  return createVideoInspector({ timeoutMs, isolation: "bubblewrap" });
+}
+module.exports = { createVideoInspector, createHardenedVideoInspector, assessInstagramVideoCandidate, MAX_BYTES };
