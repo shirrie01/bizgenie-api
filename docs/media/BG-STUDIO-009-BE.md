@@ -140,3 +140,11 @@ For **#191** (engineering index, cross-reference #128/#197):
 For **#197** (Studio integration):
 
 > Backend BG-STUDIO-009-BE adds an internal authenticated inspection service with brand/campaign/revision/asset binding, bounded pinned-range retrieval, digest checks and post-inspection revocation/version rejection. Existing frontend endpoints/DTOs are unchanged: Claude must not expect inspection fields or treat measurements as acknowledgement/approval. Instagram remains non-provisionable. See the versioned report for supported/failure states, 32 MiB budget, runtime/network isolation blockers and deployment readiness matrix. Local synthetic playback and PostgreSQL rights-race proofs pass; real GCS/staging/mobile/Meta and toolchain packaging remain open. No deployment or frontend-branch changes authorized. Canonical governance remains the DEC-015 Google Sheets register.
+
+## Publication checkpoint
+
+Validated implementation head **`b3af444beeb7f848d6471a89ec3f290462cf71b9`** was pushed to `bg-studio-009-be-secure-video-runtime`, exact parent/base **`fb9edce8c17e363a3bf13c77dc5ffa00231fe302`**. The subsequent publication-evidence-only commit leaves tested code, tests, runtime pins and Docker inputs unchanged.
+
+Draft creation against `bg-studio-008-be-video-inspection` returned **`Post "https://api.github.com/graphql": Forbidden`**. No draft PR number/URL is claimed. [Exact stacked comparison](https://github.com/shirrie01/bizgenie-api/compare/bg-studio-008-be-video-inspection...bg-studio-009-be-secure-video-runtime?expand=1); prepared body `/workspace/.onboarding/bg-studio-009-pr.md`. CI is **unverified**, not inferred from push success or the reported #211 run. An authorized owner should create the draft and verify exact final-head tests and canonical artifact jobs.
+
+Issue API reads and draft writes are forbidden; no #191/#197 issue update is claimed. Ready-to-post comments above carry this checkpoint and canonical governance reference. The existing repository engineering index is updated on this isolated branch; no external Mission Control sheet or competing register was created/modified. No source PR branch or main changed.
