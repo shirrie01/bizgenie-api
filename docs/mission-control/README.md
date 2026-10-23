@@ -55,6 +55,18 @@ Paid-beta capture is merged but disabled/unstaged per the current checkpoint.
 Staging and production are untouched by I-A. Migrations, customer APIs, preview registry,
 connectors, W4B complete-journey proof and activation remain subsequent bounded work.
 
+## Video inspection engineering checkpoint — 2026-10-23
+
+[BG-STUDIO-008-BE implementation and evidence](../media/BG-STUDIO-008-BE.md)
+continues #208 → #209 → #210 on `bg-studio-008-be-video-inspection`.
+Actual local byte inspection, adversarial resource tests and synthetic Chromium
+H.264 playback are implemented; the Instagram candidate remains non-provisionable.
+Meta specifications, runtime packaging/isolation, scoped inspection orchestration
+and aggregate egress controls remain blockers. GitHub API authority/CI reads are
+Forbidden. Under DEC-015 the external Google Sheets Mission Control remains the
+sole operational authority; #191 and this repository record engineering evidence,
+not launch acceptance. No source PR branch, live profile or deployment changed.
+
 ## Creative-preview engineering checkpoint — 2026-10-23
 
 [BG-STUDIO-007-BE contract and evidence](../media/BG-STUDIO-007-BE.md) continues

@@ -9,7 +9,7 @@ const { InMemoryAuthorizationRepository, AuthenticationRequiredError, createCust
 const { scenario, context, content, NOW } = require("./campaign-regressions");
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5XkAAAAASUVORK5CYII=", "base64");
 const OTHER = "22222222-2222-4222-8222-222222222222";
-async function integrationFixture({ kind = "image", allowedOrigins = ["https://studio.example"], platform, previewProfiles } = {}) {
+async function integrationFixture({ kind = "image", allowedOrigins = ["https://studio.example"], platform, previewProfiles, videoBytes } = {}) {
   const bucket = "private-media-integration", referenceId = randomUUID(), jobId = "integration_job_" + randomUUID();
   const state = { objects: new Map(), storage: [], providerCalls: 0, generations: 100, onStat: null, jobBrand: "brand_a" };
   const referenceKey = objectKey({tenantId:"tenant_a",projectId:"project_a",mediaKind:"image",assetId:referenceId,extension:"png"});
@@ -47,7 +47,7 @@ async function integrationFixture({ kind = "image", allowedOrigins = ["https://s
     result=await service.generate({execution_id:"execution_image",generation_id:lineage.generation_id,user_id:context.actor.auth_user_id,project_id:job.project_id,brand_id:job.brand_id,topic:"Synthetic fixture",image_purpose:"Integration test",aspect_ratio:"1:1",reference_assets:[{asset_id:referenceId}]},{job});
   }else{
     const outputKey="provider-outputs/fixture.mp4";
-    state.objects.set(outputKey,{data:Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from("ftypisom"),Buffer.alloc(52)]),mime:"video/mp4",generation:"98"});
+    state.objects.set(outputKey,{data:videoBytes ?? Buffer.concat([Buffer.from([0,0,0,24]),Buffer.from("ftypisom"),Buffer.alloc(52)]),mime:"video/mp4",generation:"98"});
     let operation;
     const provider=new GoogleVertexVeoProvider({projectId:"bizgenie-test-123",outputStorageUri:`gs://${bucket}/provider-outputs/`,transport:{async post(url,body){
       if(url.endsWith(":predictLongRunning")){state.providerCalls++;operation="projects/bizgenie-test-123/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/fixture";return {name:operation};}
