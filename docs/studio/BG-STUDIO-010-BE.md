@@ -118,3 +118,11 @@ Local evidence is not GitHub CI or deployed frontend/staging E2E. Exact-head pub
 4. Frontend owns actual chooser/onboarding UI, refresh/restart and multi-tab/accessibility QA in its separate branch. Draft recovery after lost membership and privacy retention remain explicit decisions. Recommendation channels remain optional future contract work, not silently added to current requests.
 
 No frontend repository code, existing source PR branch, main, entitlements, campaign approval or media-runtime flow was edited. This is a reviewable implementation and migration proposal, not launch acceptance.
+
+## Publication checkpoint
+
+Implementation/test SHA **`e1fec0480433ea86c5d0af16edda65e8d42d1636`**, parent **`ddcc26cb4111303f0c8fbf9745db5fed1e40ca6f`**, was pushed on `bg-studio-010-be-persistent-onboarding`. A subsequent evidence-only commit records this checkpoint without changing tested code, tests or SQL proposal.
+
+Draft creation targeting **main** returned `Post "https://api.github.com/graphql": Forbidden`. No PR number or created draft is claimed. [Exact independent comparison](https://github.com/shirrie01/bizgenie-api/compare/main...bg-studio-010-be-persistent-onboarding?expand=1); prepared draft body `/workspace/.onboarding/bg-studio-010-pr.md`.
+
+GitHub exact-head CI is **unverified**, not assumed green from local tests or #212's separately verified result. The CI workflow requires a PR event for this feature branch; push alone does not establish a run. An authorized owner should create the draft and verify final-head checks. Existing PRs/main are unchanged; no shared schema, provider, production traffic or video-runtime change occurred. Canonical external Mission Control was not modified.
