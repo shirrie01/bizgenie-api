@@ -55,6 +55,16 @@ Paid-beta capture is merged but disabled/unstaged per the current checkpoint.
 Staging and production are untouched by I-A. Migrations, customer APIs, preview registry,
 connectors, W4B complete-journey proof and activation remain subsequent bounded work.
 
+## Secure inspection engineering checkpoint — 2026-10-23
+
+[BG-STUDIO-009-BE evidence](../media/BG-STUDIO-009-BE.md) continues #211 on
+`bg-studio-009-be-secure-video-runtime`: scoped generation-pinned inspection,
+final rights/version rechecks, bounded request/byte/concurrency controls and a
+fail-closed namespace-runtime candidate. Canonical Docker is digest/lock pinned
+but local npm installation still fails; sandbox setup is blocked, not accepted.
+No routes, profiles or live resources activated. DEC-015 leaves the Google Sheets
+register as sole operational authority; this and #191 are engineering evidence.
+
 ## Video inspection engineering checkpoint — 2026-10-23
 
 [BG-STUDIO-008-BE implementation and evidence](../media/BG-STUDIO-008-BE.md)

@@ -135,6 +135,36 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     await s.cmd('confirm_manual_publication',{...attempt,published_at:NOW,attested_published:true});assert.equal((await s.variant(t)).workflow,'published');
   });
 
+  it("scoped video inspection uses real PostgreSQL authority and rejects a rights change before return", async () => {
+    const { AuthorizationService, PostgresAuthorizationRepository } = require("../src/authorization");
+    const { createScopedVideoInspectionService } = require("../src/media/scopedVideoInspection");
+    const { createVideoInspector } = require("../src/media/videoInspection");
+    const data = fs.readFileSync(path.join(__dirname, "fixtures/video-inspection/silent-h264.mp4"));
+    const id = randomUUID(), job = "job_" + randomUUID();
+    await pool.query(`insert into public.generation_jobs(job_id,tenant_id,project_id,brand_id,execution_class,auth_user_id,request_correlation_id,idempotency_key,allowed_scopes) values($1,'tenant_a','project_a','brand_a','video.normal',$2,$1,$1,'["generation:execute"]')`, [job, AUTH_A]);
+    await pool.query(`insert into public.media_assets(asset_id,tenant_id,project_id,generation_job_id,generation_id,source_kind,media_kind,storage_bucket,storage_key,mime_type,status,allowed_uses,byte_size) values($1,'tenant_a','project_a',$2,$2,'generated','video','test-assets',$3,'video/mp4','active',$4,$5)`,
+      [id, job, objectKey({ tenantId: "tenant_a", projectId: "project_a", mediaKind: "video", assetId: id, extension: "mp4" }), ["campaign.preview"], data.length]);
+    const s = await scenario(repository), target = await s.add("video", { ...regressionContent, asset_refs: [{ asset_id: id, role: "primary" }] });
+    let reads = 0;
+    const storage = { bucket: "test-assets", async statPreview() { return { size: data.length, generation: "123", mimeType: "video/mp4" }; },
+      async openPreview({ generation, range }) { reads++; assert.equal(generation, "123"); return new Response(data.subarray(range.start, range.end + 1), { status: 206, headers: { "content-type": "video/mp4", "content-length": String(range.end - range.start + 1), "content-range": `bytes ${range.start}-${range.end}/${data.length}` } }); } };
+    const config = { repository, storage, tokenVerifier: { async verifyAccessToken() { return context.actor; } },
+      authorizationService: new AuthorizationService({ repository: new PostgresAuthorizationRepository({ pool }) }), inspect: createVideoInspector() };
+    const input = { accessToken: "synthetic", tenantId: "tenant_a", projectId: "project_a", brandId: "brand_a", campaignId: s.id,
+      variantId: target.variant_id, revisionId: target.revision_id, assetId: id, expectedVersion: (await s.get()).version };
+    const before = await s.get();
+    assert.equal((await createScopedVideoInspectionService(config).inspect(input)).status, "measured");
+    assert.equal(reads, 1); assert.deepEqual(await s.get(), before);
+    const local = createVideoInspector();
+    const revoking = createScopedVideoInspectionService({ ...config, inspect: async (bytes, options) => {
+      const result = await local(bytes, options); await pool.query("update public.media_assets set status='revoked' where asset_id=$1", [id]); return result;
+    } });
+    assert.equal((await revoking.inspect(input)).status, "unavailable");
+    const priorReads = reads;
+    assert.equal((await revoking.inspect(input)).status, "unavailable"); assert.equal(reads, priorReads);
+    assert.deepEqual(await s.get(), before);
+  });
+
   it("reads persisted creative in a scoped read-only snapshot with exact revision/version", async () => {
     const s=await scenario(repository),t=await s.add();
     const before=await s.get();
