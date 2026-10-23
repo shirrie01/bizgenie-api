@@ -97,6 +97,12 @@ const {
   PostgresCustomerWorkspaceRepository,
   createCustomerWorkspaceRouter,
 } = require("./src/customer-workspace");
+const {
+  InMemoryWorkspaceOnboardingRepository,
+  PostgresWorkspaceOnboardingRepository,
+  WorkspaceOnboardingService,
+  createWorkspaceOnboardingRouter,
+} = require("./src/workspace-onboarding");
 
 // The single scope this task defines. A future task may add narrower,
 // per-execution-class scopes; for now every generation job authorizes
@@ -274,6 +280,8 @@ function createApp({
   authorizationService,
   customerWorkspaceRepository = new InMemoryCustomerWorkspaceRepository(),
   customerWorkspaceService,
+  workspaceOnboardingRepository = new InMemoryWorkspaceOnboardingRepository(),
+  workspaceOnboardingService,
   customerScopeProvisioner,
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
@@ -302,6 +310,13 @@ function createApp({
       repository: customerWorkspaceRepository,
       brandBrainRepository,
       scopeProvisioner: customerScopeProvisioner,
+    });
+  const resolvedWorkspaceOnboardingService =
+    workspaceOnboardingService ||
+    new WorkspaceOnboardingService({
+      repository: workspaceOnboardingRepository,
+      workspaceRepository: customerWorkspaceRepository,
+      brandBrainRepository,
     });
   const resolvedGenerationJobService =
     generationJobService ||
@@ -514,8 +529,18 @@ function createApp({
       recommendationRegistry: goalRecommendationRegistry,
       measurementRegistry: campaignMeasurementRegistry,
       brandBrainRepository,
+      onboardingRepository: workspaceOnboardingRepository,
       tokenVerifier: customerTokenVerifier,
       authorizationService: resolvedAuthorizationService,
+      logger,
+    })
+  );
+
+  app.use(
+    "/customer/workspace/onboarding",
+    createWorkspaceOnboardingRouter({
+      service: resolvedWorkspaceOnboardingService,
+      tokenVerifier: customerTokenVerifier,
       logger,
     })
   );
@@ -671,6 +696,9 @@ async function createProductionApp({ env = process.env, logger = console } = {})
   const customerWorkspaceRepository = new PostgresCustomerWorkspaceRepository({
     pool: brandBrainRepository.pool,
   });
+  const workspaceOnboardingRepository = new PostgresWorkspaceOnboardingRepository({
+    pool: brandBrainRepository.pool,
+  });
   const customerScopeProvisioner = createCustomerScopeProvisionerFromEnv({
     env,
   });
@@ -728,6 +756,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       authorizationRepository,
       brandBrainRepository,
       customerWorkspaceRepository,
+      workspaceOnboardingRepository,
       customerScopeProvisioner,
       customerTokenVerifier,
       generationJobRepository,
@@ -755,6 +784,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     authorizationRepository,
     brandBrainRepository,
     customerWorkspaceRepository,
+    workspaceOnboardingRepository,
     customerScopeProvisioner,
     customerTokenVerifier,
     generationJobRepository,

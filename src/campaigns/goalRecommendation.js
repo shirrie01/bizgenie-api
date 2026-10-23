@@ -150,6 +150,13 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
     );
   }
   if (strategy) suggestedItems.forEach((item, index) => { if (strategy.reasons[index]) item.reason = strategy.reasons[index]; });
+  // Saved channel preferences (completed onboarding only) put preferred channels first. This never adds,
+  // removes or rewrites an item, so nothing is fabricated for a channel the engine has no format for.
+  const preferred = context.onboarding_preferences?.channels;
+  if (Array.isArray(preferred) && preferred.length) {
+    const rank = (item) => { const at = preferred.indexOf(item.platform); return at === -1 ? preferred.length : at; };
+    suggestedItems.sort((a, b) => rank(a) - rank(b));
+  }
   const usableEvidence = Array.isArray(evidence) ? evidence.filter((row) =>
     row && row.tenant_id === context.tenant_id && row.project_id === context.project_id &&
     row.brand_id === request.brand_id && typeof row.metric === "string" &&
