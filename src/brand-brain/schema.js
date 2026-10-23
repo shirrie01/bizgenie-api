@@ -33,6 +33,7 @@ const brandBrainStatuses = ["draft", "approved", "archived"];
 const IdentitySchema = z
   .object({
     description: prose.optional(),
+    sector: z.string().trim().min(1).max(200).nullable().optional(),
     mission: prose.optional(),
     vision: prose.optional(),
     values: list.optional(),
@@ -64,6 +65,8 @@ const CommercialSchema = z
   .object({
     differentiators: list.optional(),
     primary_cta: prose.optional(),
+    preferred_channels: z.array(z.enum(["instagram", "tiktok", "facebook", "linkedin", "email", "website", "youtube", "other"]))
+      .max(8).refine(items => new Set(items).size === items.length, "Duplicate channels are not allowed").optional(),
     approved_claims: governanceList.optional(),
     prohibited_claims: governanceList.optional(),
   })

@@ -90,6 +90,61 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
       const fresh=new PostgresCampaignRepository({pool});const rows=await fresh.listCalendarEntries(context,{from:'2026-09-04T00:00:00Z',to:'2026-09-05T00:00:00Z'});assert.equal(rows.find(r=>r.campaign_id===s.id).occurrence_at,'2026-09-04T10:00:00.000Z');assert.equal((await fresh.verifyCampaignProjection(context,s.id)).valid,true);
     }finally{repository.now=prior;}
   });
+  it("persists sector and planning channels in existing Brand Brain JSON across repository recreation", async () => {
+    const { PostgresBrandBrainRepository } = require("../src/brand-brain");
+    const first = new PostgresBrandBrainRepository({ pool });
+    const original = await first.getByProjectAndBrand("project_a", "brand_a");
+    const value = { ...original, identity: { ...original.identity, sector: "Vehicle leasing" },
+      commercial: { ...original.commercial, preferred_channels: ["instagram", "website"] },
+      metadata: { ...original.metadata, version: original.metadata.version + 1 } };
+    await first.upsert(value);
+    const read = await new PostgresBrandBrainRepository({ pool }).getByProjectAndBrand("project_a", "brand_a");
+    assert.equal(read.identity.sector, "Vehicle leasing"); assert.deepEqual(read.commercial.preferred_channels, ["instagram", "website"]);
+    assert.equal(read.metadata.status, original.metadata.status);
+  });
+
+  it("onboarding proposal is absent by default, then persists private CAS drafts in the disposable fixture only", async () => {
+    const { PostgresCustomerWorkspaceRepository, CustomerOnboardingConflictError, CustomerWorkspacePersistenceError, CustomerWorkspaceService } = require("../src/customer-workspace");
+    const { PostgresBrandBrainRepository } = require("../src/brand-brain");
+    const first = new PostgresCustomerWorkspaceRepository({ pool });
+    await assert.rejects(() => first.getOnboardingDraft(AUTH_A), CustomerWorkspacePersistenceError);
+    assert.ok((await first.listWorkspacesForAuthUserId(AUTH_A)).length);
+    await pool.query(fs.readFileSync(path.join(__dirname, "../docs/studio/migrations/BG-STUDIO-010-onboarding-drafts.proposed.sql"), "utf8"));
+    const newUser = randomUUID();
+    await pool.query("insert into auth.users(id) values($1)", [newUser]);
+    await first.saveOnboardingDraft({ auth_user_id: newUser, expected_version: 0, draft: { workspace: null, step: "identity", answers: { business_name: "" } } });
+    assert.equal((await new PostgresCustomerWorkspaceRepository({ pool }).getOnboardingDraft(newUser)).version, 1);
+    assert.equal((await pool.query("select 1 from public.customer_profiles where auth_user_id=$1", [newUser])).rowCount, 0);
+    const draft = { workspace: null, step: "channels", answers: { sector_choice: "Leasing", preferred_channels: ["website"], goal: "More enquiries" } };
+    const results = await Promise.allSettled([first.saveOnboardingDraft({ auth_user_id: AUTH_A, expected_version: 0, draft }),
+      new PostgresCustomerWorkspaceRepository({ pool }).saveOnboardingDraft({ auth_user_id: AUTH_A, expected_version: 0, draft })]);
+    assert.equal(results.filter(r => r.status === "fulfilled").length, 1);
+    assert.ok(results.find(r => r.status === "rejected").reason instanceof CustomerOnboardingConflictError);
+    const recreated = new PostgresCustomerWorkspaceRepository({ pool });
+    assert.deepEqual((await recreated.getOnboardingDraft(AUTH_A)).draft, draft);
+    assert.equal(await recreated.getOnboardingDraft(AUTH_B), null);
+    const changed = { ...draft, answers: { goal: "Changed goal" } };
+    assert.equal((await recreated.saveOnboardingDraft({ auth_user_id: AUTH_A, expected_version: 1, draft: changed })).version, 2);
+    await assert.rejects(() => recreated.saveOnboardingDraft({ auth_user_id: AUTH_A, expected_version: 1, draft }), CustomerOnboardingConflictError);
+    const bound = { ...draft, workspace: { tenant_id: "tenant_a", project_id: "project_a", brand_id: "brand_a" } };
+    await recreated.saveOnboardingDraft({ auth_user_id: AUTH_A, expected_version: 2, draft: bound });
+    const service = new CustomerWorkspaceService({ repository: recreated, brandBrainRepository: new PostgresBrandBrainRepository({ pool }) });
+    await pool.query("update public.tenant_memberships set role='member' where tenant_id='tenant_a' and auth_user_id=$1", [AUTH_A]);
+    try {
+      await assert.rejects(() => service.getOnboardingDraft({ actor: context.actor }));
+      await assert.rejects(() => recreated.saveOnboardingDraft({ auth_user_id: AUTH_A, expected_version: 3, draft: bound }));
+      assert.equal((await recreated.getOnboardingDraft(AUTH_A)).version, 3);
+    } finally { await pool.query("update public.tenant_memberships set role='owner' where tenant_id='tenant_a' and auth_user_id=$1", [AUTH_A]); }
+    const table = await pool.query("select relrowsecurity from pg_class where oid='public.customer_onboarding_drafts'::regclass");
+    assert.equal(table.rows[0].relrowsecurity, true);
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const client = await pool.connect();
+      try { await client.query("begin"); await client.query(`set local role ${role}`);
+        await assert.rejects(() => client.query("select * from public.customer_onboarding_drafts"), /permission denied/);
+      } finally { await client.query("rollback"); client.release(); }
+    }
+  });
+
   it('validates generated media tenant/project/brand/kind and preserves truthful resolution after revocation',async()=>{
     async function asset({tenant='tenant_a',project='project_a',brand='brand_a',status='active',kind='image',source='generated'}={}){
       const id=randomUUID(),job='job_'+randomUUID();

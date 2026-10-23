@@ -1,4 +1,5 @@
-const { CustomerWorkspacePersistenceError } = require("./errors");
+const { CustomerWorkspacePersistenceError, CustomerWorkspaceValidationError, CustomerOnboardingConflictError } = require("./errors");
+const { OnboardingDraftSchema } = require("./schema");
 const {
   CustomerWorkspaceRepository,
   additionalWorkspaceIds,
@@ -51,6 +52,46 @@ class PostgresCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
       throw new TypeError("A PostgreSQL connection pool is required");
     }
     this.pool = pool;
+  }
+
+  #draftRow(row) {
+    if (!row) return null;
+    if (!Number.isInteger(row.version) || row.version < 1 || row.version > 2147483647) throw new CustomerWorkspacePersistenceError();
+    return { version: row.version, draft: OnboardingDraftSchema.parse(row.draft), updated_at: new Date(row.updated_at).toISOString() };
+  }
+
+  async getOnboardingDraft(authUserId) {
+    try {
+      const result = await this.pool.query("select version, draft, updated_at from public.customer_onboarding_drafts where auth_user_id=$1", [authUserId]);
+      return this.#draftRow(result.rows[0]);
+    } catch { throw new CustomerWorkspacePersistenceError(); }
+  }
+
+  async saveOnboardingDraft({ auth_user_id, expected_version, draft }) {
+    let client;
+    try {
+      draft = OnboardingDraftSchema.parse(draft);
+      client = await this.pool.connect(); await client.query("begin");
+      if (draft.workspace) {
+        const w = draft.workspace;
+        const owned = await client.query(`${WORKSPACE_SELECT}
+          WHERE tm.auth_user_id=$1 AND tm.tenant_id=$2 AND p.project_id=$3 AND b.brand_id=$4
+            AND tm.role='owner' AND b.status='approved' FOR SHARE OF tm,p,b`, [auth_user_id, w.tenant_id, w.project_id, w.brand_id]);
+        if (!owned.rowCount) throw new CustomerWorkspaceValidationError();
+      }
+      const timestamp = new Date().toISOString();
+      const result = expected_version === 0
+        ? await client.query(`insert into public.customer_onboarding_drafts(auth_user_id,version,draft,created_at,updated_at)
+            values($1,1,$2,$3,$3) on conflict(auth_user_id) do nothing returning version,draft,updated_at`, [auth_user_id, draft, timestamp])
+        : await client.query(`update public.customer_onboarding_drafts set version=version+1,draft=$3,updated_at=$4
+            where auth_user_id=$1 and version=$2 returning version,draft,updated_at`, [auth_user_id, expected_version, draft, timestamp]);
+      if (!result.rowCount) throw new CustomerOnboardingConflictError();
+      const row = this.#draftRow(result.rows[0]); await client.query("commit"); return row;
+    } catch (error) {
+      try { await client?.query("rollback"); } catch {}
+      if (error instanceof CustomerOnboardingConflictError || error instanceof CustomerWorkspaceValidationError) throw error;
+      throw new CustomerWorkspacePersistenceError();
+    } finally { client?.release(); }
   }
 
   async listWorkspacesForAuthUserId(authUserId) {

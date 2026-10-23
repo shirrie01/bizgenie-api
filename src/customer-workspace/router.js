@@ -1,6 +1,7 @@
 const { AuthenticationRequiredError } = require("../authorization");
 const { extractBearerToken } = require("../authentication");
 const {
+  CustomerOnboardingConflictError,
   CustomerWorkspacePersistenceError,
   CustomerWorkspaceValidationError,
 } = require("./errors");
@@ -43,6 +44,21 @@ function createCustomerWorkspaceRouter({ service, tokenVerifier, logger = consol
     const accessToken = extractBearerToken(req.header("authorization"));
     return tokenVerifier.verifyAccessToken(accessToken);
   }
+
+  router.get("/onboarding", async (req, res) => {
+    res.set("Cache-Control", "private, no-store").vary("Authorization");
+    try {
+      const actor = await actorForRequest(req);
+      if (Object.keys(req.query).length) throw new CustomerWorkspaceValidationError();
+      return res.json(await service.getOnboardingDraft({ actor }));
+    } catch (error) { return sendWorkspaceError({ error, res, logger, path: req.path }); }
+  });
+  router.put("/onboarding", async (req, res) => {
+    res.set("Cache-Control", "private, no-store").vary("Authorization");
+    try {
+      return res.json(await service.saveOnboardingDraft({ actor: await actorForRequest(req), request: req.body }));
+    } catch (error) { return sendWorkspaceError({ error, res, logger, path: req.path }); }
+  });
 
   router.get("/", async (req, res) => {
     try {
@@ -128,7 +144,7 @@ function sendWorkspaceError({ error, res, logger, path }) {
     return res.status(401).json({ status: "failed", error: AUTHENTICATION_ERROR });
   }
 
-  if (error instanceof CustomerWorkspaceValidationError) {
+  if (error instanceof CustomerWorkspaceValidationError || error instanceof CustomerOnboardingConflictError) {
     return res.status(error.status).json(errorBody(error));
   }
 

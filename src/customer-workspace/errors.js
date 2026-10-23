@@ -17,7 +17,12 @@ class CustomerWorkspacePersistenceError extends Error {
   }
 }
 
+class CustomerOnboardingConflictError extends Error {
+  constructor() { super("Onboarding changed; reload before saving again"); this.code = "ONBOARDING_VERSION_CONFLICT"; this.status = 409; }
+}
+
 module.exports = {
+  CustomerOnboardingConflictError,
   CustomerWorkspacePersistenceError,
   CustomerWorkspaceValidationError,
 };

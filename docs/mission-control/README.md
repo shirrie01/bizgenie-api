@@ -55,6 +55,17 @@ Paid-beta capture is merged but disabled/unstaged per the current checkpoint.
 Staging and production are untouched by I-A. Migrations, customer APIs, preview registry,
 connectors, W4B complete-journey proof and activation remain subsequent bounded work.
 
+## Persistent onboarding engineering checkpoint — 2026-10-23
+
+[BG-STUDIO-010-BE contract/evidence](../studio/BG-STUDIO-010-BE.md) branches
+independently from canonical main. Sector/planning-channel preferences persist in
+existing Brand Brain JSON. Authenticated Save/Resume has private CAS draft storage;
+its SQL remains a proposal outside automatic migrations and was executed only in
+a disposable local fixture. Frontend #47 G1–G6 handoff, schema/rollout gates and
+regression evidence are in the report. No video stack or runtime activated.
+DEC-015 keeps the external Google Sheets register as sole operational authority;
+this repository and #191 record engineering evidence, not acceptance.
+
 ## Purpose
 
 Mission Control is the operating layer for planning, building, verifying and continuously improving BizGenie. It exists to prevent architectural drift, uncontrolled scope, unverified completion and loss of strategic knowledge.

@@ -1,4 +1,5 @@
 const {
+  parseSaveOnboardingDraftRequest,
   parseBootstrapWorkspaceRequest,
   parseCreateAdditionalWorkspaceRequest,
   parseSelectWorkspaceRequest,
@@ -24,6 +25,29 @@ class CustomerWorkspaceService {
     this.brandBrainRepository = brandBrainRepository;
     this.scopeProvisioner = scopeProvisioner;
     this.now = now;
+  }
+
+  async #authorizeDraftWorkspace(customer, workspace) {
+    if (!workspace) return;
+    const selected = await this.repository.getAuthorizedWorkspaceSelection({ auth_user_id: customer.auth_user_id, ...workspace });
+    if (!selected || selected.membership_role !== "owner") throw new CustomerWorkspaceValidationError([
+      { path: "draft.workspace", code: "unauthorized", message: "Draft workspace is not owned by this customer" },
+    ]);
+  }
+
+  async getOnboardingDraft({ actor }) {
+    const customer = parseCustomerActor(actor);
+    const row = await this.repository.getOnboardingDraft(customer.auth_user_id);
+    if (!row) return { status: "missing", version: 0, draft: null };
+    await this.#authorizeDraftWorkspace(customer, row.draft.workspace);
+    return { status: "saved", version: row.version, draft: row.draft, updated_at: row.updated_at };
+  }
+
+  async saveOnboardingDraft({ actor, request }) {
+    const customer = parseCustomerActor(actor), parsed = parseSaveOnboardingDraftRequest(request);
+    await this.#authorizeDraftWorkspace(customer, parsed.draft.workspace);
+    const row = await this.repository.saveOnboardingDraft({ auth_user_id: customer.auth_user_id, ...parsed });
+    return { status: "saved", version: row.version, draft: row.draft, updated_at: row.updated_at };
   }
 
   async getWorkspace({ actor }) {
@@ -140,7 +164,17 @@ class CustomerWorkspaceService {
       ]);
     }
 
+    if (selected.membership_role !== "owner") throw new CustomerWorkspaceValidationError([
+      { path: "trusted_scope", code: "unauthorized", message: "Only workspace owners may change Brand Brain data" },
+    ]);
+
     const input = parseCustomerBrandBrainCorrectionRequest(request);
+    if (existing.identity && Object.hasOwn(existing.identity, "sector") && !Object.hasOwn(input.identity || {}, "sector")) {
+      input.identity = { ...input.identity, sector: existing.identity.sector };
+    }
+    if (existing.commercial && Object.hasOwn(existing.commercial, "preferred_channels") && !Object.hasOwn(input.commercial || {}, "preferred_channels")) {
+      input.commercial = { ...input.commercial, preferred_channels: existing.commercial.preferred_channels };
+    }
     const timestamp = this.now().toISOString();
     const candidate = {
       ...input,

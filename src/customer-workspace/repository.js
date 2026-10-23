@@ -1,3 +1,5 @@
+const { OnboardingDraftSchema } = require("./schema");
+const { CustomerOnboardingConflictError, CustomerWorkspaceValidationError } = require("./errors");
 const { randomUUID } = require("node:crypto");
 
 function clone(value) {
@@ -48,6 +50,8 @@ function workspaceDto({
 }
 
 class CustomerWorkspaceRepository {
+  getOnboardingDraft() { throw new Error("CustomerWorkspaceRepository.getOnboardingDraft is not implemented"); }
+  saveOnboardingDraft() { throw new Error("CustomerWorkspaceRepository.saveOnboardingDraft is not implemented"); }
   getWorkspaceForAuthUserId(_authUserId) {
     throw new Error("CustomerWorkspaceRepository.getWorkspaceForAuthUserId is not implemented");
   }
@@ -69,11 +73,29 @@ class InMemoryCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
   constructor({ workspaces = [] } = {}) {
     super();
     this.workspaces = new Map();
+    this.onboardingDrafts = new Map();
     for (const item of workspaces) {
       const list = this.workspaces.get(item.auth_user_id) || [];
       list.push(clone(item.workspace));
       this.workspaces.set(item.auth_user_id, list);
     }
+  }
+
+  getOnboardingDraft(authUserId) {
+    return clone(this.onboardingDrafts.get(authUserId) || null);
+  }
+
+  saveOnboardingDraft({ auth_user_id, expected_version, draft }) {
+    draft = OnboardingDraftSchema.parse(draft);
+    if (draft.workspace) {
+      const selected = this.getAuthorizedWorkspaceSelection({ auth_user_id, ...draft.workspace });
+      if (!selected || selected.membership_role !== "owner") throw new CustomerWorkspaceValidationError();
+    }
+    const current = this.onboardingDrafts.get(auth_user_id);
+    if ((current?.version || 0) !== expected_version) throw new CustomerOnboardingConflictError();
+    const row = { version: expected_version + 1, draft: clone(draft), updated_at: new Date().toISOString() };
+    this.onboardingDrafts.set(auth_user_id, row);
+    return clone(row);
   }
 
   getWorkspaceForAuthUserId(authUserId) {

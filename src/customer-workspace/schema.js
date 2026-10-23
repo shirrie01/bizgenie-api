@@ -27,6 +27,20 @@ const CustomerBrandBrainCorrectionSchema = UpsertBrandBrainSchema
   .omit({ project_id: true })
   .extend({ project_id: z.string().optional() });
 
+const channelPreferences = z.array(z.enum(["instagram", "tiktok", "facebook", "linkedin", "email", "website", "youtube", "other"]))
+  .max(8).refine(items => new Set(items).size === items.length, "Duplicate channels are not allowed");
+const draftText = max => z.string().trim().max(max).optional();
+const OnboardingDraftSchema = z.object({
+  workspace: SelectWorkspaceSchema.nullable(),
+  step: z.enum(["welcome", "identity", "about", "customers", "channels", "brain", "recommendation"]),
+  answers: z.object({ business_name: draftText(200), website_or_social_profile: draftText(500),
+    primary_marketing_challenge: draftText(1000), sector_choice: draftText(200), industry_text: draftText(200),
+    description: draftText(2000), audience: draftText(2000), primary_cta: draftText(2000), goal: draftText(2000),
+    preferred_channels: channelPreferences.optional() }).strict(),
+}).strict().refine(value => Buffer.byteLength(JSON.stringify(value), "utf8") <= 16000, "Draft exceeds storage limit");
+const SaveOnboardingDraftSchema = z.object({ expected_version: z.number().int().min(0).max(2147483646),
+  draft: OnboardingDraftSchema }).strict();
+
 function validationDetails(error) {
   return error.issues.map((issue) => ({
     path: issue.path.join("."),
@@ -68,6 +82,9 @@ function parseCustomerBrandBrainCorrectionRequest(value) {
 }
 
 module.exports = {
+  OnboardingDraftSchema,
+  SaveOnboardingDraftSchema,
+  parseSaveOnboardingDraftRequest: value => parseWith(SaveOnboardingDraftSchema, value),
   BootstrapWorkspaceSchema,
   CreateAdditionalWorkspaceSchema,
   SelectWorkspaceSchema,
