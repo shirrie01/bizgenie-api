@@ -134,3 +134,13 @@ Disposable PostgreSQL test harnesses initialize existing schema in throwaway fix
 - Buildpack: `command -v pack` found no CLI; no Buildpack result claimed and no installer/infrastructure change attempted.
 
 Additional logs: `/workspace/.onboarding/bg-studio-008-docker-online.log`, `bg-studio-008-docker-offline.log`, `bg-studio-008-docker-smoke.log`. Temporary context holds only source plus the local dependency-copy test tree. No image was pushed or deployed. The canonical build error and missing Buildpack/toolchain remain separate artifact gates.
+
+## Publication checkpoint
+
+Validated implementation head: **`74c952b671101c9f2e7a3d17e7c8c83a128373ae`**, pushed to `bg-studio-008-be-video-inspection`; exact parent/base **`e26b79d273fe2a906245b1ce52fd6d7e67df4250`**. A subsequent evidence-only commit records this publication result; its source/test files are unchanged from the validated implementation head. Resolve the final documentation commit through the published branch history/final engineering checkpoint.
+
+Draft creation targeting `bg-studio-007-be-instagram-video-contract` returned `Post "https://api.github.com/graphql": Forbidden`; **no new PR exists from this execution**. [Exact stacked comparison](https://github.com/shirrie01/bizgenie-api/compare/bg-studio-007-be-instagram-video-contract...bg-studio-008-be-video-inspection?expand=1). Draft body retained in `/workspace/.onboarding/bg-studio-008-pr.md`.
+
+The authorized engineering-index update to existing issue #191 also returned GraphQL `Forbidden`. Further GitHub issue writes were stopped at that boundary; #197 was not falsely reported updated. Prepared update referencing #128/#191/#197 and canonical Mission Control is retained in `/workspace/.onboarding/bg-studio-008-issue-comment.md`. The existing repository engineering index (`docs/mission-control/README.md`) is updated on this isolated branch; the external canonical Sheet was not modified.
+
+GitHub CI remains **unverified**, not assumed pending or passing. CI configuration does not run every arbitrary feature-branch push; an authorized owner must create the stacked draft and verify exact final-head checks, including tool availability and canonical Docker/Buildpack jobs. Source PR #210 run `39918069787` remains founder-reported successful, with API verification blocked. No merge, deployment or live provisioning authorization is implied by local passing tests or this report.
