@@ -5,6 +5,7 @@ const {
   parseCustomerActor,
   parseCustomerBrandBrainCorrectionRequest,
 } = require("./schema");
+const { denied } = require("../brand-brain/writePolicy");
 const { BrandBrainSchema, UpsertBrandBrainSchema } = require("../brand-brain/schema");
 const { BrandBrainPersistenceError, BrandBrainValidationError } = require("../brand-brain/errors");
 const {
@@ -125,9 +126,7 @@ class CustomerWorkspaceService {
       ...scope,
     });
     if (!selected) {
-      throw new CustomerWorkspaceValidationError([
-        { path: "trusted_scope", code: "unauthorized", message: "Workspace selection is not authorized" },
-      ]);
+      throw denied();
     }
 
     const existing = await this.brandBrainRepository.getByProjectAndBrand(
@@ -157,7 +156,7 @@ class CustomerWorkspaceService {
     try {
       record = UpsertBrandBrainSchema.parse(candidate);
       record = BrandBrainSchema.parse(record);
-      return { status: "ready", brand_brain: await this.brandBrainRepository.upsert(record) };
+      return { status: "ready", brand_brain: await this.brandBrainRepository.guardedUpsert({ record, expected: existing, scope, auth_user_id: customer.auth_user_id, workspaceRepository: this.repository }) };
     } catch (error) {
       if (error instanceof BrandBrainValidationError) throw error;
       if (error?.issues) {

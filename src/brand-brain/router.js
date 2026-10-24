@@ -52,7 +52,7 @@ function createBrandBrainRouter({ repository, now = () => new Date() }) {
         },
       });
 
-      return res.json({ brand_brain: await repository.upsert(record) });
+      return res.json({ brand_brain: await repository.guardedUpsert({ record, expected: existing, admin: true }) });
     } catch (error) {
       return next(error);
     }
