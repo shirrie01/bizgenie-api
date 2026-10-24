@@ -107,23 +107,27 @@ class PostgresCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`customer-workspace:${auth_user_id}`]);
       await client.query(`INSERT INTO public.customer_profiles (auth_user_id, created_at, updated_at)
          VALUES ($1, $2, $2) ON CONFLICT (auth_user_id) DO NOTHING`, [auth_user_id, now]);
-      await client.query(`INSERT INTO public.tenants (tenant_id, name, created_by, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $4) ON CONFLICT (tenant_id) DO NOTHING`, [ids.tenant_id, tenantName, auth_user_id, now]);
-      await client.query(`INSERT INTO public.tenant_memberships (tenant_id, auth_user_id, role, created_at, updated_at)
-         VALUES ($1, $2, 'owner', $3, $3) ON CONFLICT (tenant_id, auth_user_id) DO NOTHING`, [ids.tenant_id, auth_user_id, now]);
-      await client.query(`INSERT INTO public.projects (project_id, tenant_id, name, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $4) ON CONFLICT (project_id) DO NOTHING`, [ids.project_id, ids.tenant_id, projectName, now]);
-      await client.query(`INSERT INTO public.brand_brains (
-           brand_id, project_id, name, identity, commercial, version, status, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, 1, 'approved', $6, $6)
-         ON CONFLICT (brand_id) DO NOTHING`, [
-        ids.brand_id,
-        ids.project_id,
-        businessName,
-        onboardingIdentity({ website_or_social_profile }),
-        onboardingCommercial({ primary_marketing_challenge }),
-        now,
-      ]);
+      const createdTenant = await client.query(`INSERT INTO public.tenants (tenant_id, name, created_by, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $4) ON CONFLICT (tenant_id) DO NOTHING RETURNING tenant_id`, [ids.tenant_id, tenantName, auth_user_id, now]);
+      // Only first creation grants ownership. A retry must not resurrect a revoked
+      // membership or recreate missing identity records in an existing tenant.
+      if (createdTenant.rowCount === 1) {
+        await client.query(`INSERT INTO public.tenant_memberships (tenant_id, auth_user_id, role, created_at, updated_at)
+           VALUES ($1, $2, 'owner', $3, $3) ON CONFLICT (tenant_id, auth_user_id) DO NOTHING`, [ids.tenant_id, auth_user_id, now]);
+        await client.query(`INSERT INTO public.projects (project_id, tenant_id, name, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $4) ON CONFLICT (project_id) DO NOTHING`, [ids.project_id, ids.tenant_id, projectName, now]);
+        await client.query(`INSERT INTO public.brand_brains (
+             brand_id, project_id, name, identity, commercial, version, status, created_at, updated_at
+           ) VALUES ($1, $2, $3, $4, $5, 1, 'approved', $6, $6)
+           ON CONFLICT (brand_id) DO NOTHING`, [
+          ids.brand_id,
+          ids.project_id,
+          businessName,
+          onboardingIdentity({ website_or_social_profile }),
+          onboardingCommercial({ primary_marketing_challenge }),
+          now,
+        ]);
+      }
       const result = await client.query(`${WORKSPACE_SELECT}
         WHERE tm.auth_user_id = $1 AND tm.tenant_id = $2 AND p.project_id = $3 AND b.brand_id = $4 LIMIT 1`,
         [auth_user_id, ids.tenant_id, ids.project_id, ids.brand_id]);
