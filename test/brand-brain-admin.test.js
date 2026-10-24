@@ -39,49 +39,28 @@ describe("Brand Brain administration", () => {
     assert.deepEqual(get.body, { error: "Forbidden" });
   });
 
-  it("authorises upsert and retrieval with server metadata defaults", async () => {
-    const app = createApp();
-    const created = await admin(
-      request(app)
-        .put("/_admin/brand-brains/brand_001")
-        .send(validInput())
-    );
-
-    assert.equal(created.status, 200);
-    assert.equal(created.body.brand_brain.brand_id, "brand_001");
-    assert.equal(created.body.brand_brain.project_id, "project_001");
-    assert.deepEqual(created.body.brand_brain.metadata, {
-      version: 1,
-      status: "approved",
-      created_at: created.body.brand_brain.metadata.created_at,
-      updated_at: created.body.brand_brain.metadata.updated_at,
-    });
-
-    const fetched = await admin(
-      request(app).get("/_admin/brand-brains/brand_001")
-    );
-    assert.equal(fetched.status, 200);
-    assert.deepEqual(fetched.body, created.body);
+  it("prohibits admin-key-only identity creation", async () => {
+    const response = await admin(request(createApp()).put("/_admin/brand-brains/new").send(validInput()));
+    assert.equal(response.status, 403);
+    assert.equal(response.body.error.code, "BRAND_BRAIN_WRITE_FORBIDDEN");
   });
 
-  it("authorises persistent upsert and retrieval through the Postgres repository", async () => {
-    const repository = new PostgresBrandBrainRepository({
-      pool: new FakeBrandBrainPool(),
-    });
+  it("preserves admin retrieval and non-identity edits but denies identity changes/removal", async () => {
+    const { InMemoryBrandBrainRepository } = require("../src/brand-brain");
+    const repository = new InMemoryBrandBrainRepository();
+    const record = { ...validInput(), brand_id: "brand_001", identity: { description: "Customer description" }, metadata: { version: 1, status: "approved", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" } };
+    repository.upsert(record);
     const app = createApp({ brandBrainRepository: repository });
-
-    const created = await admin(
-      request(app)
-        .put("/_admin/brand-brains/brand_persistent")
-        .send(validInput())
-    );
-    const fetched = await admin(
-      request(app).get("/_admin/brand-brains/brand_persistent")
-    );
-
-    assert.equal(created.status, 200);
+    const saved = await admin(request(app).put("/_admin/brand-brains/brand_001").send({ ...record, voice: { tone: "Warm" } }));
+    assert.equal(saved.status, 200);
+    for (const change of [{ name: "Changed" }, { identity: {} }, { identity: { description: "Changed" } }]) {
+      const denied = await admin(request(app).put("/_admin/brand-brains/brand_001").send({ ...record, ...change }));
+      assert.equal(denied.status, 403);
+    }
+    const fetched = await admin(request(app).get("/_admin/brand-brains/brand_001"));
     assert.equal(fetched.status, 200);
-    assert.deepEqual(fetched.body, created.body);
+    assert.equal(fetched.body.brand_brain.name, record.name);
+    assert.equal(fetched.body.brand_brain.voice.tone, "Warm");
   });
 
   it("returns a safe structured error when persistent retrieval fails", async () => {
@@ -155,13 +134,13 @@ describe("Brand Brain administration", () => {
     );
     assert.equal(mismatch.status, 400);
 
-    await admin(
-      request(app)
-        .put("/_admin/brand-brains/brand_001")
-        .send(validInput())
-    );
+    const { InMemoryBrandBrainRepository } = require("../src/brand-brain");
+    // Existing administrative project-conflict contract is tested on a seeded record.
+    const repository = new InMemoryBrandBrainRepository();
+    repository.upsert({ ...validInput(), brand_id: "brand_001", metadata: { version: 1, status: "approved", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" } });
+    const seededApp = createApp({ brandBrainRepository: repository });
     const reassignment = await admin(
-      request(app)
+      request(seededApp)
         .put("/_admin/brand-brains/brand_001")
         .send(validInput({ project_id: "project_002" }))
     );

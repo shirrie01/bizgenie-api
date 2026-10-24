@@ -11,6 +11,10 @@ class BrandBrainRepository {
     );
   }
 
+  guardedUpsert(_request) {
+    throw new Error("BrandBrainRepository.guardedUpsert is not implemented");
+  }
+
   upsert(_record) {
     throw new Error("BrandBrainRepository.upsert is not implemented");
   }
@@ -33,6 +37,16 @@ class InMemoryBrandBrainRepository extends BrandBrainRepository {
       return null;
     }
     return structuredClone(record);
+  }
+
+  guardedUpsert({ record, expected, scope, auth_user_id, workspaceRepository, admin = false }) {
+    const { checkWrite, denied } = require("./writePolicy");
+    const selected = admin ? null : workspaceRepository.getAuthorizedWorkspaceSelection({ ...scope, auth_user_id });
+    if (!admin && (!selected || typeof selected.then === "function")) throw denied();
+    // No asynchronous boundary between final authority check/comparison and memory write.
+    const current = this.getByProjectAndBrand(record.project_id, record.brand_id);
+    checkWrite({ current, expected, record, role: selected?.membership_role });
+    return this.upsert(record);
   }
 
   upsert(record) {
