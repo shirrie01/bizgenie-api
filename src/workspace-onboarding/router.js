@@ -13,6 +13,7 @@ function createWorkspaceOnboardingRouter({ service, tokenVerifier, logger = cons
     throw new TypeError("Workspace onboarding routes require service and token verification dependencies");
   }
   const router = express.Router();
+  router.use((_req, res, next) => { res.set("Cache-Control", "private, no-store").vary("Authorization"); next(); });
   // Scope comes only from the verified token's trusted_scope, never from the request.
   const actorFor = (req) => tokenVerifier.verifyAccessToken(extractBearerToken(req.header("authorization")));
 

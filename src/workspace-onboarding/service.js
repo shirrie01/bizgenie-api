@@ -5,10 +5,12 @@ const {
   OnboardingIdempotencyError,
   OnboardingIncompleteError,
   OnboardingNotAuthorizedError,
+  OnboardingPersistenceError,
   OnboardingValidationError,
   OnboardingVersionConflictError,
 } = require("./errors");
-const { PLACEHOLDER_BRAND_NAMES, parseSaveOnboardingRequest } = require("./schema");
+const { parseSaveOnboardingRequest } = require("./schema");
+const { businessMissing, isPlaceholderName, assertBusinessCompletion } = require("./completion");
 
 const CONTRACT_VERSION = "workspace-onboarding.v1";
 
@@ -44,15 +46,16 @@ function emptyRecord(scope) {
   };
 }
 
-function completeness(record) {
+function completeness(record, brain) {
   const missing = [];
   if (!record.sector_key) missing.push("sector_key");
   if (!record.channels.length) missing.push("channels");
+  if (brain !== undefined) missing.push(...businessMissing(brain));
   return { sector: Boolean(record.sector_key), channels: record.channels.length > 0, ready_to_complete: missing.length === 0, missing };
 }
 
 // The public shape. Never exposes actor ids, idempotency keys or request hashes.
-function toDto(record) {
+function toDto(record, brain) {
   return {
     contract_version: CONTRACT_VERSION,
     tenant_id: record.tenant_id,
@@ -65,7 +68,7 @@ function toDto(record) {
     channels: { values: [...record.channels], source: record.channels_source },
     current_step: record.current_step,
     draft: { ...record.draft },
-    completeness: completeness(record),
+    completeness: completeness(record, brain),
     completed_at: record.completed_at,
     updated_at: record.updated_at,
   };
@@ -82,7 +85,7 @@ class WorkspaceOnboardingService {
     this.now = now;
   }
 
-  async #authorizedScope(actor) {
+  async #authorizedScope(actor, write = false) {
     let customer;
     try {
       customer = parseCustomerActor(actor);
@@ -97,27 +100,24 @@ class WorkspaceOnboardingService {
       auth_user_id: customer.auth_user_id,
       ...scope,
     });
-    if (!selected) throw new OnboardingNotAuthorizedError();
+    if (!selected || (write && selected.membership_role !== "owner")) throw new OnboardingNotAuthorizedError();
     return { customer, scope: { tenant_id: scope.tenant_id, project_id: scope.project_id, brand_id: scope.brand_id }, workspace: selected };
   }
 
-  async #placeholder(scope, workspace) {
-    let name = workspace?.brand_name;
-    if (this.brandBrainRepository) {
-      const brain = await this.brandBrainRepository.getByProjectAndBrand(scope.project_id, scope.brand_id);
-      if (brain?.name) name = brain.name;
-    }
-    return typeof name === "string" && PLACEHOLDER_BRAND_NAMES.includes(name.trim());
+  async #view(scope, workspace, record, knownBrain) {
+    const brain = knownBrain !== undefined ? knownBrain : this.brandBrainRepository
+      ? await this.brandBrainRepository.getByProjectAndBrand(scope.project_id, scope.brand_id) : null;
+    return { onboarding: toDto(record, brain), brand_name_placeholder: isPlaceholderName(brain?.name ?? workspace?.brand_name) };
   }
 
   async get({ actor }) {
     const { scope, workspace } = await this.#authorizedScope(actor);
     const record = (await this.repository.get(scope)) || emptyRecord(scope);
-    return { status: "ready", onboarding: toDto(record), brand_name_placeholder: await this.#placeholder(scope, workspace) };
+    return { status: "ready", ...await this.#view(scope, workspace, record) };
   }
 
   async save({ actor, request }) {
-    const { customer, scope, workspace } = await this.#authorizedScope(actor);
+    const { customer, scope, workspace } = await this.#authorizedScope(actor, true);
     const input = parseSaveOnboardingRequest(request);
     const hash = requestHash(input);
 
@@ -125,22 +125,35 @@ class WorkspaceOnboardingService {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (current.last_idempotency_key === input.idempotency_key) {
         if (current.last_request_hash !== hash) throw new OnboardingIdempotencyError();
+        await this.#authorizedScope(actor, true);
         return this.#response(scope, workspace, current, true);
       }
       if (current.profile_version !== input.expected_version) {
         throw new OnboardingVersionConflictError(current.profile_version);
       }
       const next = this.#apply(current, input, customer.auth_user_id, hash);
-      const result = await this.repository.commit({ scope, expected_version: input.expected_version, record: next });
-      if (result.saved) return this.#response(scope, workspace, result.record, false);
+      const result = await this.repository.commit({ scope, expected_version: input.expected_version, record: next,
+        auth_user_id: customer.auth_user_id,
+        // Memory adapter rechecks at its commit boundary. PostgreSQL independently locks the real authority rows.
+        authorizeWrite: async () => {
+          await this.#authorizedScope(actor, true);
+          if (next.status === "completed" && !this.brandBrainRepository) throw new OnboardingPersistenceError();
+          const brain = this.brandBrainRepository
+            ? await this.brandBrainRepository.getByProjectAndBrand(scope.project_id, scope.brand_id) : null;
+          if (next.status === "completed") assertBusinessCompletion(brain);
+          await this.#authorizedScope(actor, true);
+          return brain;
+        },
+      });
+      if (result.saved) return this.#response(scope, workspace, result.record, false, result.brain);
       // Lost a race: re-evaluate once so an identical concurrent retry is recognised as a replay.
       current = result.record || emptyRecord(scope);
     }
     throw new OnboardingVersionConflictError(current.profile_version);
   }
 
-  async #response(scope, workspace, record, replayed) {
-    return { status: "saved", replayed, onboarding: toDto(record), brand_name_placeholder: await this.#placeholder(scope, workspace) };
+  async #response(scope, workspace, record, replayed, knownBrain) {
+    return { status: "saved", replayed, ...await this.#view(scope, workspace, record, knownBrain) };
   }
 
   #apply(current, input, actorId, hash) {

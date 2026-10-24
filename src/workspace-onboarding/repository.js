@@ -13,15 +13,17 @@ class InMemoryWorkspaceOnboardingRepository {
   }
 
   // Compare-and-set on profile_version; a loser receives the current record.
-  async commit({ scope, expected_version, record }) {
+  async commit({ scope, expected_version, record, authorizeWrite }) {
+    if (typeof authorizeWrite !== "function") throw new (require("./errors").OnboardingNotAuthorizedError)();
+    const brain = await authorizeWrite();
     const key = scopeKey(scope);
     const current = this.records.get(key);
     const currentVersion = current ? current.profile_version : 0;
     if (currentVersion !== expected_version) {
-      return { saved: false, record: current ? structuredClone(current) : null };
+      return { saved: false, record: current ? structuredClone(current) : null, brain };
     }
     this.records.set(key, structuredClone(record));
-    return { saved: true, record: structuredClone(record) };
+    return { saved: true, record: structuredClone(record), brain };
   }
 }
 
