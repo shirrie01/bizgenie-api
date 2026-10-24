@@ -1,0 +1,347 @@
+{
+  "date": "2026-10-24",
+  "code_sha": "fc9214f95b639092c2630805f7f98cd8588eb205",
+  "local_node": "22.23.3",
+  "database": "disposable PostgreSQL17, loopback only",
+  "full_suite": {
+    "passed": 713,
+    "failed": 0,
+    "skipped": 0
+  },
+  "targeted_postgres_regressions": {
+    "passed": 72,
+    "failed": 0,
+    "skipped": 0
+  },
+  "focused_new_work": {
+    "passed": 22,
+    "failed": 0,
+    "skipped": 0
+  },
+  "mutations": [
+    {
+      "mutation": "bootstrap-owner-resurrection",
+      "detected": true,
+      "exit_code": 1,
+      "restored_sha256": "35f9dc1e3ebbcf62c1ee972cfe69bb22d7a64180a74d17268aa5ebaf21834faf"
+    },
+    {
+      "mutation": "identity-owner-check",
+      "detected": true,
+      "exit_code": 1,
+      "restored_sha256": "62ea0e3dfef8f2b5d7e1ff41d731f8d8623cab35e0cae93d9603d502bf1b9469"
+    },
+    {
+      "mutation": "project-tenant-predicate",
+      "detected": true,
+      "exit_code": 1,
+      "restored_sha256": "58cabed6e38593a83bf2ab58dc9eac48462f322934b4c752843e4d5454930f1f"
+    },
+    {
+      "mutation": "private-cache-header",
+      "detected": true,
+      "exit_code": 1,
+      "restored_sha256": "1b99853297d43cafe14da793b7ce79155f7a4128020958e0641fc6d6f15384df"
+    },
+    {
+      "mutation": "campaign-patch-cors",
+      "detected": true,
+      "exit_code": 1,
+      "restored_sha256": "6dff930d77df5f8981247555111fabe3ba2397b736af601acb12bda369e94429"
+    }
+  ],
+  "local_measurements": {
+    "workspaceReads": {
+      "count": 128,
+      "concurrency": 8,
+      "poolMax": 5,
+      "elapsedMs": 52.98,
+      "p50Ms": 2.09,
+      "p95Ms": 7.32,
+      "maxMs": 25.72,
+      "waitingAfter": 0
+    },
+    "campaignList": [
+      {
+        "campaigns": 4,
+        "queries": 56,
+        "elapsedMs": 23.76
+      },
+      {
+        "campaigns": 12,
+        "queries": 160,
+        "elapsedMs": 60.28
+      }
+    ],
+    "stripeInterruptedClaim": {
+      "newRepositoryInstance": true,
+      "retryCode": "STRIPE_EVENT_IN_PROGRESS",
+      "retryStatus": 503,
+      "note": "processing claim has no automatic expired-lease transition in current repository"
+    }
+  },
+  "mock_generation_probe": {
+    "instances": 2,
+    "sameJob": true,
+    "mockProviderCalls": 2,
+    "reservationEntries": 1,
+    "debitEntries": 1,
+    "conclusion": "financial idempotency does not provide cross-instance provider-execution exclusivity"
+  },
+  "dependency_audit": {
+    "metadata": {
+      "vulnerabilities": {
+        "info": 0,
+        "low": 0,
+        "moderate": 7,
+        "high": 2,
+        "critical": 2,
+        "total": 11
+      },
+      "dependencies": {
+        "prod": 145,
+        "dev": 22,
+        "optional": 1,
+        "peer": 0,
+        "peerOptional": 0,
+        "total": 167
+      }
+    },
+    "advisories": [
+      {
+        "name": "@google-cloud/vertexai",
+        "severity": "moderate",
+        "isDirect": true,
+        "fixAvailable": false,
+        "via": [
+          "google-auth-library"
+        ]
+      },
+      {
+        "name": "body-parser",
+        "severity": "high",
+        "isDirect": false,
+        "fixAvailable": false,
+        "via": [
+          {
+            "source": 1243073,
+            "name": "body-parser",
+            "dependency": "body-parser",
+            "title": "body-parser vulnerable to Denial of Service via trailing bytes after a compressed request body",
+            "url": "https://github.com/advisories/GHSA-27r3-jxmh-p828",
+            "severity": "high",
+            "cwe": [
+              "CWE-248"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": "<1.20.9"
+          },
+          "qs"
+        ]
+      },
+      {
+        "name": "express",
+        "severity": "critical",
+        "isDirect": true,
+        "fixAvailable": false,
+        "via": [
+          "body-parser",
+          "proxy-addr",
+          "qs"
+        ]
+      },
+      {
+        "name": "gaxios",
+        "severity": "moderate",
+        "isDirect": false,
+        "fixAvailable": false,
+        "via": [
+          "uuid"
+        ]
+      },
+      {
+        "name": "gcp-metadata",
+        "severity": "moderate",
+        "isDirect": false,
+        "fixAvailable": true,
+        "via": [
+          "gaxios"
+        ]
+      },
+      {
+        "name": "google-auth-library",
+        "severity": "moderate",
+        "isDirect": false,
+        "fixAvailable": false,
+        "via": [
+          "gaxios",
+          "gcp-metadata",
+          "gtoken"
+        ]
+      },
+      {
+        "name": "gtoken",
+        "severity": "moderate",
+        "isDirect": false,
+        "fixAvailable": true,
+        "via": [
+          "gaxios"
+        ]
+      },
+      {
+        "name": "proxy-addr",
+        "severity": "critical",
+        "isDirect": false,
+        "fixAvailable": true,
+        "via": [
+          {
+            "source": 1241210,
+            "name": "proxy-addr",
+            "dependency": "proxy-addr",
+            "title": "proxy-addr vulnerable to IP spoofing via IPv4-mapped IPv6 trust subnet",
+            "url": "https://github.com/advisories/GHSA-jqcg-44mw-7w3h",
+            "severity": "critical",
+            "cwe": [
+              "CWE-290",
+              "CWE-348",
+              "CWE-697"
+            ],
+            "cvss": {
+              "score": 9.1,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N"
+            },
+            "range": ">=1.1.0 <2.0.8"
+          }
+        ]
+      },
+      {
+        "name": "qs",
+        "severity": "moderate",
+        "isDirect": false,
+        "fixAvailable": false,
+        "via": [
+          {
+            "source": 1158506,
+            "name": "qs",
+            "dependency": "qs",
+            "title": "qs array-limit bypass via bracket-key comma parsing",
+            "url": "https://github.com/advisories/GHSA-x5fp-wj9c-mxmx",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 3.7,
+              "vectorString": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=6.14.2 <=6.15.3"
+          },
+          {
+            "source": 1158507,
+            "name": "qs",
+            "dependency": "qs",
+            "title": "qs: Denial of Service via Attacker Controlled isBuffer",
+            "url": "https://github.com/advisories/GHSA-4mjr-xmp4-gh2g",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-248",
+              "CWE-703"
+            ],
+            "cvss": {
+              "score": 5.3,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
+            },
+            "range": ">=2.2.5 <6.16.0"
+          }
+        ]
+      },
+      {
+        "name": "uuid",
+        "severity": "moderate",
+        "isDirect": false,
+        "fixAvailable": false,
+        "via": [
+          {
+            "source": 1119441,
+            "name": "uuid",
+            "dependency": "uuid",
+            "title": "uuid: Missing buffer bounds check in v3/v5/v6 when buf is provided",
+            "url": "https://github.com/advisories/GHSA-w5hq-g745-h8pq",
+            "severity": "moderate",
+            "cwe": [
+              "CWE-787",
+              "CWE-1285"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N"
+            },
+            "range": "<11.1.1"
+          }
+        ]
+      },
+      {
+        "name": "zod",
+        "severity": "high",
+        "isDirect": true,
+        "fixAvailable": false,
+        "via": [
+          {
+            "source": 1243066,
+            "name": "zod",
+            "dependency": "zod",
+            "title": "Zod can exhaust memory while validating oversized constrained collections",
+            "url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+            "severity": "high",
+            "cwe": [
+              "CWE-770"
+            ],
+            "cvss": {
+              "score": 7.5,
+              "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+            },
+            "range": "<4.6.6"
+          }
+        ]
+      }
+    ]
+  },
+  "offline_container": {
+    "image": "sha256:20feb6ff1af03573f5ded9f97e303a9935b383a2838ca8e66032fb24a1c6f594",
+    "node": "22.23.4",
+    "lock_sha256": "218172a4b9bf2e9931bdb63046da337131854b905ea8984be430f3ddb83eda30",
+    "type": "source overlay over cached dependency-matched image; not a fresh Dockerfile or Buildpack build",
+    "smoke": [
+      "health200",
+      "admin denied403",
+      "synthetic admin200",
+      "empty generation400; no provider call"
+    ]
+  },
+  "github_ci": "unverified for new work",
+  "deployed_integration": "not run; staging RED",
+  "actual_frontend_contract_probe": {
+    "frontendSha": "9749254b80aaa128c7d2af27f12124478d9f9ea4",
+    "adapter": "actual frontend module against actual backend HTTP via in-process Supertest; fake identity and memory persistence; no network",
+    "casesPassed": 5,
+    "cases": [
+      "member unrelated update",
+      "owner identity correction",
+      "stale member403",
+      "overlapping server snapshot409",
+      "unavailable503 unconfirmed"
+    ]
+  },
+  "cold_cluster_full_suite": {
+    "postgres": "fresh PostgreSQL17 container, initially no Supabase fixture roles",
+    "passed": 713,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "elapsed_ms": 11259.32,
+    "container_removed": true
+  }
+}
