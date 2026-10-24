@@ -27,6 +27,7 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
   const build = () => new WorkspaceOnboardingService({
     repository: new PostgresWorkspaceOnboardingRepository({ pool }),
     workspaceRepository: new PostgresCustomerWorkspaceRepository({ pool }),
+    brandBrainRepository: new (require("../src/brand-brain").PostgresBrandBrainRepository)({ pool }),
   });
 
   before(async () => {
@@ -52,7 +53,7 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     await pool.query("insert into public.tenants(tenant_id,name,created_by) values('tenant_a','A',$1),('tenant_b','B',$2)", [AUTH_A, AUTH_B]);
     await pool.query("insert into public.tenant_memberships(tenant_id,auth_user_id,role) values('tenant_a',$1,'owner'),('tenant_b',$2,'owner')", [AUTH_A, AUTH_B]);
     await pool.query("insert into public.projects(project_id,tenant_id,name) values('project_a','tenant_a','A'),('project_a2','tenant_a','A2'),('project_b','tenant_b','B')");
-    await pool.query("insert into public.brand_brains(brand_id,project_id,name,version,status,created_at,updated_at) values('brand_a','project_a','A',7,'approved','2026-01-01','2026-02-02'),('brand_a2','project_a2','A2',1,'approved',now(),now()),('brand_b','project_b','B',1,'approved',now(),now())");
+    await pool.query("insert into public.brand_brains(brand_id,project_id,name,version,status,identity,created_at,updated_at) values('brand_a','project_a','A',7,'approved','{\"description\":\"We supply products for local customers.\"}','2026-01-01','2026-02-02'),('brand_a2','project_a2','A2',1,'approved',null,now(),now()),('brand_b','project_b','B',1,'approved',null,now(),now())");
     service = build();
   });
   after(async () => {
@@ -136,4 +137,137 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     await pool.query(sql);
     assert.deepEqual((await service.get({ actor: actor(AUTH_A, SCOPE_A) })).onboarding, before.onboarding);
   });
+  // Pause only the transaction's authority query, after the service-level check.
+  function gatedService({ afterLock = false } = {}) {
+    let ready, resume, once = true;
+    const reached = new Promise(resolve => { ready = resolve; });
+    const continued = new Promise(resolve => { resume = resolve; });
+    const wrapped = { query: (...args) => pool.query(...args), async connect() {
+      const client = await pool.connect();
+      return { async query(sql, ...args) {
+        if (once && String(sql).includes("for share of tm,p,b")) {
+          once = false;
+          if (afterLock) { const result = await client.query(sql, ...args); ready(); await continued; return result; }
+          ready(); await continued;
+        }
+        return client.query(sql, ...args);
+      }, release: () => client.release() };
+    } };
+    return { reached, resume, service: new WorkspaceOnboardingService({
+      repository: new PostgresWorkspaceOnboardingRepository({ pool: wrapped }),
+      workspaceRepository: new PostgresCustomerWorkspaceRepository({ pool }),
+      brandBrainRepository: new (require("../src/brand-brain").PostgresBrandBrainRepository)({ pool }),
+    }) };
+  }
+
+  it("rejects revocation after service authorization but before the transaction lock", { timeout: 15000 }, async () => {
+    const before = await service.get({ actor: actor(AUTH_A, SCOPE_A) }), gate = gatedService();
+    const writing = gate.service.save({ actor: actor(AUTH_A, SCOPE_A), request: body({ expected_version: before.onboarding.version, channels: ["website"] }) });
+    const outcome = writing.then(value => ({ value }), error => ({ error }));
+    try {
+      await Promise.race([gate.reached, outcome.then(r => { throw r.error || new Error("Writer did not reach authority barrier"); })]);
+      await pool.query("update public.tenant_memberships set role='member' where tenant_id='tenant_a' and auth_user_id=$1", [AUTH_A]);
+      gate.resume(); const result = await outcome;
+      assert.equal(result.error.code, "WORKSPACE_NOT_AUTHORIZED");
+      assert.equal((await service.get({ actor: actor(AUTH_A, SCOPE_A) })).onboarding.version, before.onboarding.version, "member read stays authorized");
+    } finally { gate.resume(); await outcome; await pool.query("update public.tenant_memberships set role='owner' where tenant_id='tenant_a' and auth_user_id=$1", [AUTH_A]); }
+  });
+
+  it("serializes a later revocation behind an already-authorized write lock", { timeout: 15000 }, async () => {
+    const before = await service.get({ actor: actor(AUTH_A, SCOPE_A) }), gate = gatedService({ afterLock: true });
+    const request = body({ expected_version: before.onboarding.version, channels: ["instagram"] });
+    const writing = gate.service.save({ actor: actor(AUTH_A, SCOPE_A), request });
+    const outcome = writing.then(value => ({ value }), error => ({ error }));
+    const revoker = await pool.connect(); let revocation;
+    try {
+      await Promise.race([gate.reached, outcome.then(r => { throw r.error || new Error("Writer did not hold authority lock"); })]);
+      const pid = (await revoker.query("select pg_backend_pid() pid")).rows[0].pid;
+      revocation = revoker.query("update public.tenant_memberships set role='member' where tenant_id='tenant_a' and auth_user_id=$1", [AUTH_A]);
+      let waiting = false; const deadline = Date.now() + 5000;
+      while (!waiting && Date.now() < deadline) {
+        waiting = (await pool.query("select wait_event_type from pg_stat_activity where pid=$1", [pid])).rows[0]?.wait_event_type === "Lock";
+        if (!waiting) await new Promise(resolve => setImmediate(resolve));
+      }
+      assert.equal(waiting, true, "real PostgreSQL lock blocks the revocation update");
+      gate.resume(); const result = await outcome; if (result.error) throw result.error;
+      assert.equal(result.value.onboarding.version, before.onboarding.version + 1);
+      await revocation;
+      await assert.rejects(() => service.save({ actor: actor(AUTH_A, SCOPE_A), request }), { code: "WORKSPACE_NOT_AUTHORIZED" });
+    } finally { gate.resume(); await outcome; await revocation?.catch(() => {}); revoker.release(); await pool.query("update public.tenant_memberships set role='owner' where tenant_id='tenant_a' and auth_user_id=$1", [AUTH_A]); }
+  });
+
+  it("validates the locked Brand Brain, not draft text or an earlier service snapshot", { timeout: 15000 }, async () => {
+    const before = await service.get({ actor: actor(AUTH_A, SCOPE_A) }), gate = gatedService();
+    const writing = gate.service.save({ actor: actor(AUTH_A, SCOPE_A), request: body({ expected_version: before.onboarding.version, complete: true, draft: { description: "Not canonical" } }) });
+    const outcome = writing.then(value => ({ value }), error => ({ error }));
+    const brain = (await pool.query("select name,identity from public.brand_brains where brand_id='brand_a'")).rows[0];
+    try {
+      await Promise.race([gate.reached, outcome.then(r => { throw r.error || new Error("Writer missed barrier"); })]);
+      await pool.query("update public.brand_brains set name='BizGenie Workspace',identity=$1 where brand_id='brand_a'", [{ description: "Customer-provided website or profile: https://example.test" }]);
+      gate.resume(); const result = await outcome;
+      assert.equal(result.error.code, "ONBOARDING_INCOMPLETE");
+      assert.deepEqual(result.error.details.map(d => d.path), ["business_name", "description"]);
+      assert.equal((await service.get({ actor: actor(AUTH_A, SCOPE_A) })).onboarding.version, before.onboarding.version);
+    } finally { gate.resume(); await outcome; await pool.query("update public.brand_brains set name=$1,identity=$2 where brand_id='brand_a'", [brain.name, brain.identity]); }
+  });
+
+  it("rejects mismatched tenant/project and duplicate/unknown channel writes in SQL", async () => {
+    const insert = (tenant, project, brand, channels) => pool.query(`insert into public.workspace_onboarding_profiles
+      (tenant_id,project_id,brand_id,profile_version,status,channels,channels_source,created_at,updated_at,updated_by,last_idempotency_key,last_request_hash)
+      values($1,$2,$3,1,'in_progress',$4,'customer',now(),now(),$5,'adversary',$6)`, [tenant,project,brand,JSON.stringify(channels),AUTH_A,"a".repeat(64)]);
+    await assert.rejects(() => insert("tenant_b", "project_a", "brand_a", ["email"]), /project_tenant_fkey/);
+    await assert.rejects(() => insert("tenant_b", "project_b", "brand_b", ["email","email"]), /channels_values/);
+    await assert.rejects(() => insert("tenant_b", "project_b", "brand_b", ["unsupported"]), /channels_values/);
+  });
+
+  for (const scenario of [
+    ["disabled RLS", "alter table public.workspace_onboarding_profiles disable row level security", "alter table public.workspace_onboarding_profiles enable row level security"],
+    ["table grant", "grant select on public.workspace_onboarding_profiles to authenticated", "revoke select on public.workspace_onboarding_profiles from authenticated"],
+    ["column grant", "grant select(draft) on public.workspace_onboarding_profiles to authenticated", "revoke select(draft) on public.workspace_onboarding_profiles from authenticated"],
+    ["public column grant", "grant select(draft) on public.workspace_onboarding_profiles to public", "revoke select(draft) on public.workspace_onboarding_profiles from public"],
+    ["unexpected policy", "create policy onboarding_drift on public.workspace_onboarding_profiles using (true)", "drop policy onboarding_drift on public.workspace_onboarding_profiles"],
+    ["extra column", "alter table public.workspace_onboarding_profiles add column unexpected text", "alter table public.workspace_onboarding_profiles drop column unexpected"],
+  ]) it(`fails closed on schema drift: ${scenario[0]}`, async () => {
+    const repo = new PostgresWorkspaceOnboardingRepository({ pool });
+    try {
+      await pool.query(scenario[1]);
+      await assert.rejects(() => repo.get(SCOPE_A), { code: "ONBOARDING_UNAVAILABLE" });
+      await assert.rejects(() => service.save({ actor: actor(AUTH_A, SCOPE_A), request: body({ sector_key: "charity" }) }), { code: "ONBOARDING_UNAVAILABLE" });
+    } finally { await pool.query(scenario[2]); }
+    await repo.preflight();
+  });
+
+  it("detects a weakened named constraint rather than trusting its name", async () => {
+    const repo = new PostgresWorkspaceOnboardingRepository({ pool });
+    try {
+      await pool.query("alter table public.workspace_onboarding_profiles drop constraint workspace_onboarding_channels_values, add constraint workspace_onboarding_channels_values check(true)");
+      await assert.rejects(() => repo.preflight(), { code: "ONBOARDING_UNAVAILABLE" });
+    } finally {
+      await pool.query("alter table public.workspace_onboarding_profiles drop constraint workspace_onboarding_channels_values");
+      await pool.query(fs.readFileSync(path.join(__dirname, "../supabase/migrations/20261024090000_harden_workspace_onboarding_profiles.sql"), "utf8"));
+    }
+    await repo.preflight();
+  });
+
+  it("a lost commit acknowledgement returns 503 but same-key retry recovers the committed receipt", async () => {
+    const before = await service.get({ actor: actor(AUTH_A, SCOPE_A) });
+    let lose = true;
+    const wrapped = { query: (...args) => pool.query(...args), async connect() {
+      const client = await pool.connect();
+      return { async query(sql, ...args) {
+        const result = await client.query(sql, ...args);
+        if (String(sql).toLowerCase() === "commit" && lose) { lose = false; throw new Error("synthetic acknowledgement loss"); }
+        return result;
+      }, release: () => client.release() };
+    } };
+    const broken = new WorkspaceOnboardingService({ repository: new PostgresWorkspaceOnboardingRepository({ pool: wrapped }),
+      workspaceRepository: new PostgresCustomerWorkspaceRepository({ pool }),
+      brandBrainRepository: new (require("../src/brand-brain").PostgresBrandBrainRepository)({ pool }) });
+    const request = body({ expected_version: before.onboarding.version, channels: ["website"] });
+    await assert.rejects(() => broken.save({ actor: actor(AUTH_A, SCOPE_A), request }), { code: "ONBOARDING_UNAVAILABLE" });
+    const resumed = await build().save({ actor: actor(AUTH_A, SCOPE_A), request });
+    assert.equal(resumed.replayed, true); assert.equal(resumed.onboarding.version, before.onboarding.version + 1);
+    assert.deepEqual(resumed.onboarding.channels.values, ["website"]);
+  });
+
 });

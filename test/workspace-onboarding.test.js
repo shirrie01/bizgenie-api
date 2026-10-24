@@ -58,6 +58,11 @@ function authorizationRepository() {
 }
 
 function fixture({ brandName = "Acme Ltd", brandBrainRepository = new InMemoryBrandBrainRepository() } = {}) {
+  if (!brandBrainRepository.getByProjectAndBrand(SCOPE_A.project_id, SCOPE_A.brand_id)) {
+    brandBrainRepository.upsert({ brand_id: SCOPE_A.brand_id, project_id: SCOPE_A.project_id, name: brandName,
+      identity: { description: "We provide locally made products for our customers." },
+      metadata: { version: 1, status: "approved", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" } });
+  }
   const workspaceRepository = new InMemoryCustomerWorkspaceRepository({
     workspaces: [
       { auth_user_id: USER_A, workspace: ws(SCOPE_A, brandName) },
@@ -81,7 +86,7 @@ function fixture({ brandName = "Acme Ltd", brandBrainRepository = new InMemoryBr
     customerTokenVerifier: verifier,
     logger: { info() {}, warn() {}, error() {} },
   });
-  return { client: request(app), workspaceRepository, onboardingRepository, verifier };
+  return { client: request(app), workspaceRepository, onboardingRepository, verifier, brandBrainRepository };
 }
 
 const as = (call, token = "token-a") => call.set("authorization", `Bearer ${token}`);
@@ -387,5 +392,87 @@ describe("saved preferences and recommendations (BG-STUDIO-010-BE)", () => {
     assert.deepEqual(platforms(await rec(client, {}, "token-b", SCOPE_B)), otherBaseline);
     const sibling = platforms(await rec(client, {}, "token-a2", SCOPE_A2));
     assert.deepEqual(sibling, otherBaseline);
+  });
+});
+
+describe("BG-STUDIO-011 owner, confirmation and privacy hardening", () => {
+  it("preserves member reads but refuses writes and idempotent write replays", async () => {
+    const { client, workspaceRepository } = fixture();
+    const body = base({ sector_key: "leasing" }); assert.equal((await save(client, body)).status, 200);
+    workspaceRepository.workspaces.get(USER_A)[0].membership_role = "member";
+    assert.equal((await as(client.get(URL))).status, 200);
+    assert.equal((await save(client, body)).status, 403);
+    assert.equal((await save(client, base({ expected_version: 1, channels: ["email"] }))).status, 403);
+    assert.equal((await as(client.get(URL))).body.onboarding.version, 1);
+  });
+
+  it("rechecks write authority at the memory commit boundary", async () => {
+    const { client, workspaceRepository, onboardingRepository } = fixture();
+    const original = onboardingRepository.commit.bind(onboardingRepository);
+    onboardingRepository.commit = async args => {
+      workspaceRepository.workspaces.get(USER_A)[0].membership_role = "member";
+      return original(args);
+    };
+    assert.equal((await save(client, base({ channels: ["email"] }))).status, 403);
+    assert.equal(onboardingRepository.records.size, 0);
+  });
+
+  it("requires explicit confirmation and never relabels saved inference", async () => {
+    const { client, brandBrainRepository } = fixture();
+    const before = await brandBrainRepository.getByBrandId(SCOPE_A.brand_id);
+    const saved = await save(client, base({ sector_key: "leasing", sector_source: "inferred", channels: ["email"], channels_source: "inferred" }));
+    assert.equal(saved.body.onboarding.status, "in_progress"); assert.equal(saved.body.onboarding.completed_at, null);
+    const confirmed = await save(client, { idempotency_key: key(), expected_version: 1, complete: true });
+    assert.equal(confirmed.status, 200); assert.equal(confirmed.body.onboarding.status, "completed");
+    assert.equal(confirmed.body.onboarding.sector.source, "inferred"); assert.equal(confirmed.body.onboarding.channels.source, "inferred");
+    assert.deepEqual(await brandBrainRepository.getByBrandId(SCOPE_A.brand_id), before);
+    assert.equal(Object.hasOwn(confirmed.body, "entitlements"), false);
+  });
+
+  for (const name of ["BizGenie Workspace", "Customer Campaign Workspace", "  bizgenie   WORKSPACE  "]) {
+    it(`rejects placeholder business name ${name}`, async () => {
+      const { client, onboardingRepository } = fixture({ brandName: name });
+      const response = await save(client, base({ sector_key: "leasing", channels: ["email"], complete: true }));
+      assert.equal(response.status, 422); assert.ok(response.body.error.details.some(d => d.path === "business_name"));
+      assert.equal(onboardingRepository.records.size, 0);
+      const read = await as(client.get(URL)); assert.equal(read.body.brand_name_placeholder, true);
+      assert.ok(read.body.onboarding.completeness.missing.includes("business_name"));
+    });
+  }
+
+  for (const description of [null, "", "https://example.test", "www.example.test", "Customer-provided website or profile: https://example.test", " customer-PROVIDED website or profile: x "]) {
+    it(`rejects missing/seeded description ${String(description).slice(0, 25)}`, async () => {
+      const { client, brandBrainRepository, onboardingRepository } = fixture();
+      const brain = await brandBrainRepository.getByBrandId(SCOPE_A.brand_id);
+      brain.identity = description === null ? {} : { description }; brandBrainRepository.upsert(brain);
+      const r = await save(client, base({ sector_key: "leasing", channels: ["email"], draft: { description: "Draft text cannot stand in for saved knowledge" }, complete: true }));
+      assert.equal(r.status, 422); assert.ok(r.body.error.details.some(d => d.path === "description"));
+      assert.equal(onboardingRepository.records.size, 0);
+    });
+  }
+
+  it("keeps lost-response retries and stale-version rejection unchanged", async () => {
+    const { client } = fixture(); const body = base({ sector_key: "leasing", channels: ["email"], complete: true });
+    const first = await save(client, body), replay = await save(client, body);
+    assert.equal(first.status, 200); assert.equal(replay.status, 200); assert.equal(replay.body.replayed, true);
+    assert.deepEqual(replay.body.onboarding, first.body.onboarding);
+    assert.equal((await save(client, base({ channels: ["website"] }))).status, 409);
+  });
+
+  it("sets private no-store and Authorization variance on success and all error paths", async () => {
+    const { client, workspaceRepository, onboardingRepository } = fixture();
+    const responses = [await client.get(URL), await as(client.get(URL)), await save(client, base({ complete: true }))];
+    responses.push(await save(client, base({ channels: ["email"] })));
+    responses.push(await save(client, base({ channels: ["website"] })));
+    workspaceRepository.workspaces.get(USER_A)[0].membership_role = "member";
+    responses.push(await save(client, base()));
+    workspaceRepository.workspaces.get(USER_A)[0].membership_role = "owner";
+    onboardingRepository.get = async () => { throw new Error("private database details"); };
+    responses.push(await as(client.get(URL)));
+    assert.deepEqual(responses.map(r => r.status), [401,200,422,200,409,403,503]);
+    for (const response of responses) {
+      assert.equal(response.headers["cache-control"], "private, no-store"); assert.match(response.headers.vary, /Authorization/);
+      assert.ok(!JSON.stringify(response.body).includes("private database details"));
+    }
   });
 });

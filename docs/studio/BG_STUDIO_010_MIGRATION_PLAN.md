@@ -1,22 +1,39 @@
-# Migration plan: `20261023100000_create_workspace_onboarding_profiles.sql` (BG-STUDIO-010-BE)
+# Workspace onboarding migration and retention plan — BG-STUDIO-011
 
-**Status: prepared and tested in a disposable local PostgreSQL only. It has not been executed against any shared, staging or production database and must not be without founder approval.**
+**Prepared/tested only in disposable local PostgreSQL 17. No shared, staging or production application is authorized by this document.** DEC-020 / LOCK-018 selects A; DEC-015 keeps the Google Sheets Mission Control register canonical.
 
-## What it does
-Creates one new table, `public.workspace_onboarding_profiles` (PK `tenant_id, project_id, brand_id`; FK `(project_id, brand_id)` → `brand_brains`; FK `updated_by` → `customer_profiles`). RLS enabled, all privileges revoked from `public`, `anon`, `authenticated`, `service_role`; no policies. Access is only through `bizgenie-api`'s database role, as with `campaign_goal_recommendations`.
+## Pending schema
 
-It does **not** alter, backfill, rewrite or lock any existing table, and does not touch `brand_brains`. It is idempotent (`create table if not exists`; rerun verified with data present).
+1. Existing `20261023100000_create_workspace_onboarding_profiles.sql`: workspace-scoped profile, RLS, denied browser/service-role access and existing source/completion guards.
+2. New `20261024090000_harden_workspace_onboarding_profiles.sql`: full `(project_id,tenant_id)` FK to the existing projects unique key; allowed, unique channel values. No Brain mutation, backfill, guessed tenant reassignment, grants, billing or provider columns.
 
-## Why a new table and not `brand_brains`
-Campaign snapshots capture the Brand Brain `version`, `updated_at` and hash, and `PUT /customer/workspace/brand-brain` has no concurrency control. Writing preferences there would change snapshot provenance and race with customer edits. A separate table keeps the "do not overwrite Brand Brain content" rule structural. Test: the Brand Brain row is byte-identical before and after saves (in-memory and PostgreSQL).
+The additional constraints validate existing rows. Bad tenant linkage/duplicate or unknown channels cause a transaction failure, not silent customer-data repair. ALTER/validation may take locks; an authorized operator must assess row count, lock window and deployment ordering. The base migration was not edited.
 
-## Order of operations (for the founder / Codex, when approved)
-1. Review the SQL. 2. Apply to **staging** first. 3. Deploy the API build containing this branch (the onboarding routes return `503 ONBOARDING_UNAVAILABLE` until the table exists; every other route is unaffected, since the table is only read by the onboarding routes and, tolerantly, by recommendations). 4. Smoke: `GET/PUT /customer/workspace/onboarding` with a staging account. 5. Only then production.
+## Proposed sequence — only after separate founder approval
 
-Apply the migration **before** enabling the frontend flag that reads these fields.
+- Inventory the target's schema, grants, database role/version and existing data through authorized access. Do not assume CREATE IF NOT EXISTS establishes compatibility or rerun the base file to silently reset unexpected grants. No such target inventory was performed here.
+- Review/back up through the existing approved database backup process and test restoration in an approved isolated environment. Owner must set retention, restore access and RPO/RTO; no new infrastructure or backup spending is created by this work.
+- Validate both pending SQL files on a disposable representative fixture first. Stop on drift or inconsistent rows for explicit correction planning; do not delete or relabel records to make validation pass.
+- Apply only in a separately authorized nonproduction change window, with the correct trusted backend DB role. No SQL in this task runs against a shared database.
+- Run the repository's read-only `preflight()` after schema application and before enabling writes. It checks ordinary table/RLS, no policies/direct public or browser/service-role grants (including column grants), exact column types/nullability and normalized PostgreSQL 17 constraint definitions against `schemaContract.json`. Unexpected catalog shape fails closed with 503; preflight does not repair schema or privileges. A different PostgreSQL major/schema requires reviewed compatibility evidence rather than loosening guards.
+- Prove owner/member behavior, fresh scope/session, lost-response same-key retry, revocation races, business completion and private response headers in an authorized staging E2E. CI/local fixtures are not that proof.
 
-## Rollback
-Application: deploy the previous build; the frontend degrades to session-only (its current behaviour). Data: `drop table public.workspace_onboarding_profiles;` removes only onboarding preferences. Nothing else depends on it (recommendations catch lookup errors and fall back to unchanged behaviour). Do not drop it once customers have saved answers unless losing them is accepted.
+The hardened API does not depend on startup migration execution. Missing or old/unsafe onboarding schema returns `503 ONBOARDING_UNAVAILABLE` for that feature while unrelated routes stay available. Recommendation preference lookup remains tolerant. A schema preflight is a defense against accidental drift, not protection from a malicious privileged DBA who controls the database.
 
-## Disposable-environment evidence
-`test/workspace-onboarding.integration.test.js` creates a throwaway database, applies **all** migrations in order, then proves: save/resume across a fresh service instance, retry after restart, concurrent first writes (exactly one wins), tenant isolation, Brand Brain row unchanged, DB-level constraints (enum, source pairing, size bounds, completed-requires-answers, FK), `anon/authenticated/service_role` denied, and migration rerun without data loss. Gated by `TEST_DATABASE_URL`; it runs in CI under `npm test` against the job's PostgreSQL 17 service.
+## Retention and account deletion
+
+Profiles are workspace-owned business data, not personal cross-workspace scratchpads. Member removal prevents later writes and can end read access; it does not delete the workspace profile. Brand archival makes it unselectable without deleting history. No automatic retention/deletion duration is invented here.
+
+`updated_by` already references customer_profiles with ON DELETE RESTRICT; workspace/brand FKs also restrict deletion. Account deletion/offboarding therefore needs an approved data-owner procedure: determine retained business records, lawful erasure/actor-attribution treatment and backup expiry first. Do not silently replace UUIDs, erase actor provenance or cascade-delete other businesses' data. No account-deletion bypass, anonymization job or service-role grant was added. Existing Brain/campaign history and hashes remain untouched.
+
+Production backup existence, retention and restore readiness are not verified. Use encrypted, access-controlled approved backups and synthetic restore tests; do not export draft contents into logs, PRs or chat. Founder/data-owner decisions remain necessary for retention, attribution on deletion and operational recovery targets.
+
+## Non-destructive rollback
+
+Keep the private table, RLS, constraints and saved records. Do not drop onboarding data or disable security checks as a code rollback. Prefer rolling back the frontend while retaining a compatible hardened backend, or a separately reviewed backend fix. Returning to the pre-hardening member-writable endpoint is not a safe rollback.
+
+Existing frontend APIs retain v1 payloads and error codes. On a failed/unavailable save the UI must keep text and report an unconfirmed outcome, retaining the same idempotency key. A 503 can follow a committed transaction whose acknowledgement was lost; the regression test proves safe retry. Do not invent a saved/unsaved certainty or clear user answers on that error.
+
+## Executed evidence
+
+Disposable PostgreSQL tests exercise all migrations, exact schema preflight, permission/constraint drift, FK/channel enforcement, owner-lock/revocation orderings, locked business fact checks, CAS/concurrency, cross-tenant isolation, lost COMMIT acknowledgement/replay and no Brain mutation. No shared schema, grant, backup, deployment or production traffic changed. Exact commands/counts and final SHA/CI are in `BG_STUDIO_011_BE_HARDENING.md`.

@@ -1,6 +1,14 @@
 # BG-STUDIO-010-BE report: persistent customer onboarding and frontend contract completion
 
-Authority: Google Sheets Mission Control Register v1.0 (DEC-015). This report is evidence for it, not a status change. **Not founder-accepted, not production-ready, not deployed, migration not executed.**
+Authority: Google Sheets Mission Control Register v1.0 (DEC-015). This report is evidence for it, not a status change. **Architecture A approved under DEC-020 / LOCK-018; implementation not release-accepted or deployed, and no shared migration executed.**
+
+## Current hardening checkpoint — BG-STUDIO-011-BE
+
+Founder DEC-020 / LOCK-018 approves Architecture A and supersedes B. This is architecture authority, **not deployment or launch acceptance**. The original BG-STUDIO-010 evidence below is historical; current security changes and test evidence are in [`BG_STUDIO_011_BE_HARDENING.md`](BG_STUDIO_011_BE_HARDENING.md).
+
+On the same PR #213 branch: owner-only writes with transaction-bound membership/project/brand locks; completion validates saved genuine business facts without changing source provenance; private/no-store responses; pending tenant FK/channel hardening and fail-closed catalog preflight. Local evidence: full suite 689, focused 43, PostgreSQL onboarding 19/billing 24/campaign 22 passed, no skips. Same-key recovery after a lost COMMIT acknowledgement is tested. Frontend #48's 503 copy requires an unconfirmed-outcome clarification; protocol remains v1.
+
+Both migrations remain unexecuted on shared databases. Retention/account-deletion/backups and non-destructive rollback are documented in the updated migration plan. Exact SHA and GitHub CI/access evidence are recorded in the hardening report; no CI GREEN is inferred from local passes.
 
 ## 1. Verified starting state
 * Base: `main` at `ddcc26cb4111303f0c8fbf9745db5fed1e40ca6f` (live GitHub state read at the start of the session). Branch `bg-studio-010-be-onboarding-persistence` was cut from it. The media/video stack (#208–#211, BG-STUDIO-009-BE) was **not** used as a base because nothing here depends on it, and basing on unmerged draft PRs would couple this work to them. If those merge first, this branch should rebase without conflict in new files (it adds files plus small edits to `index.js`, `src/campaigns/router.js` and `src/campaigns/goalRecommendation.js`; not yet tried).
