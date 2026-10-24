@@ -14,6 +14,14 @@ const gate = () => { let resolve; const promise = new Promise(r => { resolve = r
   let admin, pool, database, repo;
   before(async () => {
     admin = new Pool({ connectionString: url });
+    // Roles are cluster-wide; serialize with the other disposable PostgreSQL suites.
+    const roleClient = await admin.connect();
+    try {
+      await roleClient.query('select pg_advisory_lock(734921)');
+      await roleClient.query("do $roles$ begin if not exists(select 1 from pg_roles where rolname='anon') then create role anon nologin; end if; if not exists(select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if; if not exists(select 1 from pg_roles where rolname='service_role') then create role service_role nologin; end if; end $roles$");
+    } finally {
+      try { await roleClient.query('select pg_advisory_unlock(734921)'); } finally { roleClient.release(); }
+    }
     database = `brain_policy_${process.pid}_${Date.now()}`;
     await admin.query(`create database ${database}`);
     const target = new URL(url); target.pathname = `/${database}`;
