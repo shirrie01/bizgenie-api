@@ -662,6 +662,7 @@ function createCustomerCampaignRecommendationRouter({
   recommendationRegistry = createDefaultGoalRecommendationRegistry(),
   measurementRegistry,
   brandBrainRepository,
+  onboardingRepository = null,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -687,10 +688,17 @@ function createCustomerCampaignRecommendationRouter({
       const brandBrain = brandBrainRepository
         ? await brandBrainRepository.getByProjectAndBrand(context.project_id, body.brand_id)
         : null;
+      // Saved preferences only reorder deterministic candidates; a lookup failure must not block a recommendation.
+      const onboarding = onboardingRepository
+        ? await onboardingRepository.get({ tenant_id: context.tenant_id, project_id: context.project_id, brand_id: body.brand_id }).catch(() => null)
+        : null;
+      const baseContext = onboarding && onboarding.status === "completed"
+        ? { ...context, onboarding_preferences: { sector_key: onboarding.sector_key, channels: onboarding.channels } }
+        : context;
       const recommendation = await recommendationRegistry.recommend(
         brandBrain?.metadata?.status === "approved" || brandBrain?.status === "approved"
-          ? { ...context, brand_brain: brandBrain }
-          : context,
+          ? { ...baseContext, brand_brain: brandBrain }
+          : baseContext,
         body,
         { evidence }
       );
