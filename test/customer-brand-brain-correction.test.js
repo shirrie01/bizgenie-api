@@ -29,9 +29,9 @@ function brain(scope, name) {
   };
 }
 
-function fixture(scope = SCOPE_A, includeScope = true) {
+function fixture(scope = SCOPE_A, includeScope = true, role = "owner") {
   const workspaceRepository = new InMemoryCustomerWorkspaceRepository({ workspaces: [
-    { auth_user_id: USER, workspace: { ...scope, tenant_name: "Tenant", project_name: scope.project_id, brand_name: scope.brand_id, brand_status: "approved", membership_role: "owner" } },
+    { auth_user_id: USER, workspace: { ...scope, tenant_name: "Tenant", project_name: scope.project_id, brand_name: scope.brand_id, brand_status: "approved", membership_role: role } },
   ] });
   const brandBrainRepository = new InMemoryBrandBrainRepository();
   brandBrainRepository.upsert(brain(SCOPE_A, "Fonzo"));
@@ -55,7 +55,7 @@ function fixture(scope = SCOPE_A, includeScope = true) {
     customerTokenVerifier: verifier,
     logger: { warn() {}, error() {} },
   });
-  return { client: request(app), brandBrainRepository };
+  return { client: request(app), brandBrainRepository, workspaceRepository };
 }
 
 function correction(name = "Fonzo") {
@@ -116,5 +116,55 @@ describe("customer Brand Brain correction boundary", () => {
     });
     assert.equal(response.status, 400);
     assert.deepEqual(await brandBrainRepository.getByProjectAndBrand(SCOPE_A.project_id, SCOPE_A.brand_id), before);
+  });
+});
+
+describe("owner-only business identity", () => {
+  it("allows verified owner name and description corrections over HTTP", async () => {
+    const { client } = fixture();
+    const response = await client.put("/customer/workspace/brand-brain").set("authorization", "Bearer token").send({ ...correction("Owner business"), identity: { description: "Owner-written description" } });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.brand_brain.name, "Owner business");
+    assert.equal(response.body.brand_brain.identity.description, "Owner-written description");
+  });
+  it("permits member non-identity replacement while denying name/description changes and deletion", async () => {
+    const { client, brandBrainRepository } = fixture(SCOPE_A, true, "member");
+    const initial = brandBrainRepository.getByBrandId(SCOPE_A.brand_id);
+    initial.identity.description = "Real business description";
+    brandBrainRepository.upsert(initial);
+    const url = "/customer/workspace/brand-brain";
+    const unrelated = { ...correction(), identity: { description: initial.identity.description, mission: "New mission" } };
+    assert.equal((await client.put(url).set("authorization", "Bearer token").send(unrelated)).status, 200);
+    for (const payload of [{ ...unrelated, name: "Other" }, { ...unrelated, identity: {} }, { ...unrelated, identity: { description: "Other" } }, correction()]) {
+      const response = await client.put(url).set("authorization", "Bearer token").send(payload);
+      assert.equal(response.status, 403, JSON.stringify(response.body));
+    }
+    assert.equal(brandBrainRepository.getByBrandId(SCOPE_A.brand_id).identity.description, initial.identity.description);
+  });
+  it("rejects revoked/nonmember requests and rechecks membership at the write boundary", async () => {
+    const { client, workspaceRepository, brandBrainRepository } = fixture();
+    const before = brandBrainRepository.getByBrandId(SCOPE_A.brand_id);
+    const get = brandBrainRepository.getByProjectAndBrand.bind(brandBrainRepository);
+    brandBrainRepository.getByProjectAndBrand = (...args) => {
+      const value = get(...args);
+      workspaceRepository.workspaces.clear();
+      return value;
+    };
+    assert.equal((await client.put("/customer/workspace/brand-brain").set("authorization", "Bearer token").send(correction("Changed"))).status, 403);
+    assert.deepEqual(brandBrainRepository.getByBrandId(SCOPE_A.brand_id), before);
+    assert.equal((await client.put("/customer/workspace/brand-brain").set("authorization", "Bearer token").send(correction())).status, 403);
+  });
+  it("rejects a stale full payload when a concurrent owner update lands before guarded commit", async () => {
+    const { client, brandBrainRepository } = fixture(SCOPE_A, true, "member");
+    const guarded = brandBrainRepository.guardedUpsert.bind(brandBrainRepository);
+    brandBrainRepository.guardedUpsert = (args) => {
+      const newer = structuredClone(args.expected);
+      newer.name = "Owner correction"; newer.metadata.version++;
+      brandBrainRepository.upsert(newer);
+      return guarded(args);
+    };
+    const response = await client.put("/customer/workspace/brand-brain").set("authorization", "Bearer token").send(correction());
+    assert.equal(response.status, 409);
+    assert.equal(brandBrainRepository.getByBrandId(SCOPE_A.brand_id).name, "Owner correction");
   });
 });

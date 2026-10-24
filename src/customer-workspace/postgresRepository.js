@@ -150,7 +150,7 @@ class PostgresCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
       await client.query("BEGIN");
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`customer-workspace:${auth_user_id}`]);
       const membership = await client.query(
-        `SELECT role FROM public.tenant_memberships WHERE tenant_id = $1 AND auth_user_id = $2 LIMIT 1`,
+        `SELECT role FROM public.tenant_memberships WHERE tenant_id = $1 AND auth_user_id = $2 FOR SHARE`,
         [tenant_id, auth_user_id]
       );
       if (membership.rows[0]?.role !== "owner") {
