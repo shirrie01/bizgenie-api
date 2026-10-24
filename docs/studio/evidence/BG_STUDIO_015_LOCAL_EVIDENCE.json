@@ -322,5 +322,26 @@
     ]
   },
   "github_ci": "unverified for new work",
-  "deployed_integration": "not run; staging RED"
+  "deployed_integration": "not run; staging RED",
+  "actual_frontend_contract_probe": {
+    "frontendSha": "9749254b80aaa128c7d2af27f12124478d9f9ea4",
+    "adapter": "actual frontend module against actual backend HTTP via in-process Supertest; fake identity and memory persistence; no network",
+    "casesPassed": 5,
+    "cases": [
+      "member unrelated update",
+      "owner identity correction",
+      "stale member403",
+      "overlapping server snapshot409",
+      "unavailable503 unconfirmed"
+    ]
+  },
+  "cold_cluster_full_suite": {
+    "postgres": "fresh PostgreSQL17 container, initially no Supabase fixture roles",
+    "passed": 713,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "elapsed_ms": 11259.32,
+    "container_removed": true
+  }
 }

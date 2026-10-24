@@ -108,7 +108,7 @@ Long-lived write transactions hold authority/Brain/account locks; injected real 
 | Before-fix PG bootstrap regressions |2 failing revocation cases,4 other cases passing; source regranted owner |
 | Before-fix privacy and PATCH probes |Missing no-store headers; PATCH preflight403 instead of204 |
 | Final focused new work |22 passed,0 failed/skipped |
-| Entire Node22.23.3 + disposable PostgreSQL17 suite |713 passed,0 failed/skipped/cancelled |
+| Entire Node22.23.3 + disposable PostgreSQL17 suite |713 passed,0 failed/skipped/cancelled; independently rerun against a fresh PG17 cluster without pre-created fixture roles:713 passed,0 failed/skipped/cancelled |
 | Explicit billing/campaign/onboarding/Brain PostgreSQL regressions |72 passed,0 failed/skipped (24 billing,22 campaign,19 onboarding,7 Brain) |
 | Syntax |index.js and all src/test JavaScript passed node --check |
 | Whitespace / unintended changes |git diff --check passed; no migration/package/workflow/deployment file changes |
@@ -126,6 +126,8 @@ Standalone synthetic evidence probes (not new production APIs): `/workspace/.onb
 Current frontend #49 contains #48's identity enforcement, member read-only identity controls, unchanged protected values during unrelated saves,403/409 recovery and uncertain-save503 wording in `src/premium/brainClient.js` and Premium handlers. Legacy flag-off raw editor retains generic errors by explicit scope. Backend Q1–Q8 is already published in #214 files; no duplicate approval request or contract invention.
 
 Q7 remains: onboarding rechecks current business facts for completed-profile writes;422 business_name/description paths unchanged. Owner edits can still invalidate previously complete facts; member restriction is not a permanent freeze. This work preserves those semantics and version/provenance checks. The new revoked-bootstrap503 must not trigger a client loop to recreate old ownership: re-discover authorized workspaces, retain honest unavailable/access guidance, and use separately approved support recovery. Browser role hints remain stale-capable; server authorization is final.
+
+A no-network integration probe loaded the **actual #49 `src/premium/brainClient.js` module** and called real backend HTTP handlers through Supertest (fake identity and memory persistence). **5/5 cases passed:** member unrelated edit, owner identity edit, stale-member403, overlapping server-snapshot409 and503 mapped to unconfirmed. This is stronger than comparing documented shapes but is not real Supabase/browser/PostgreSQL staging E2E. Probe retained at `/workspace/.onboarding/bg015-frontend-contract-probe.js`; sanitized results are in the evidence JSON.
 
 No new frontend request fields, response DTO versions or feature flags are required by these fixes. Existing campaign PATCH now works through allowed-origin CORS. A real frontend/backend authenticated session integration remains unverified; mocked UI passes do not resolve staging gates.
 
