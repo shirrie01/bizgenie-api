@@ -79,3 +79,9 @@ Schema DDL/catalog development and tests ran **only in new disposable local data
 Founder/data-owner decisions still needed before a shared change: migration/deployment approval, retention periods, actor-attribution treatment for account deletion (`updated_by` already has a restrictive FK), backup expiry and restore/RPO/RTO policy. No automatic erasure, UUID substitution, new backup spending or infrastructure is added. The canonical architecture, owner-only write policy and explicit confirmation direction are already decided; this report does not reopen them.
 
 Next integration: review this exact #213 diff and CI; coordinate the #48 503/422 copy and validation updates; only then request a separately authorized nonproduction schema preflight and E2E. No competing PR, B migration, video runtime activation or provider provisioning is involved.
+
+## Publication / CI checkpoint
+
+Validated implementation SHA **`c878661ef2981f6bfb846c4cbb58f77875136507`**, parent **`d0e1142c91c0c12b907227f2881e14f3bb2a44e2`**, remains on existing #213 branch `bg-studio-010-be-onboarding-persistence`. The following evidence-only commit leaves tested code, SQL, fixtures and protocol unchanged. No competing PR was created; original reconciliation/B branch is untouched.
+
+GitHub API reads returned Forbidden during this execution. **Exact-head GitHub CI is UNVERIFIED**, not GREEN from local results; verify the final published head at [#213 checks](https://github.com/shirrie01/bizgenie-api/pull/213/checks). The existing PR is updated through branch code/documents. Prepared PR checkpoint text is retained at `/workspace/.onboarding/bg-studio-011-pr-checkpoint.md` if comment access is blocked. Canonical Mission Control remains external and was not modified.
