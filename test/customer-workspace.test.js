@@ -217,3 +217,16 @@ describe("customer workspace API", () => {
     assert.equal(response.body.error.message, "Malformed JSON request body");
   });
 });
+
+describe("bootstrap does not reverse revocation", () => {
+  it("fails closed over HTTP after the original owner membership is removed", async () => {
+    const { client, repository } = fixture();
+    const first = await customer(client.post("/customer/workspace/bootstrap")).send({ business_name: "Original business" });
+    assert.equal(first.status, 201);
+    repository.workspaces.delete(USER_A);
+    const retry = await customer(client.post("/customer/workspace/bootstrap")).send({ business_name: "Attempted replacement" });
+    assert.equal(retry.status, 503);
+    assert.equal(retry.body.error.code, "WORKSPACE_PROVISIONING_UNAVAILABLE");
+    assert.equal(repository.listWorkspacesForAuthUserId(USER_A).length, 0);
+  });
+});
