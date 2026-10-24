@@ -6,6 +6,7 @@ const {
 console.log(`🚀 ${brandingConfig.marketingStrings.apiBooting}`);
 
 const express = require("express");
+const { privateResponse } = require("./src/authentication/privateResponse");
 const {
   AuthorizationService,
   InMemoryAuthorizationRepository,
@@ -342,6 +343,8 @@ function createApp({
     brandBrainRepository,
   });
   const app = express();
+  app.use("/customer", privateResponse);
+  app.use("/billing/stripe/checkout", privateResponse);
   app.use(createCorsMiddleware({ config: corsConfig }));
 
   // Stripe signature verification must see the exact request bytes. Mount
