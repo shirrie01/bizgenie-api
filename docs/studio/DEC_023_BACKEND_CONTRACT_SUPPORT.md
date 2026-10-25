@@ -60,3 +60,14 @@ Claude can implement approved auto-load without another backend endpoint: after 
 - Syntax and whitespace passed. No schema, package/lockfile, financial implementation or onboarding enum files changed. No hosted integration/new-head CI claimed. Logs: `/workspace/.onboarding/dec023-{calendar-before,focused,full}.log`.
 
 Next safe product step: create/review the dependent calendar draft and reconcile this note with existing frontend #50. Supply the existing locked pricing canon and separately authorize the professional-services schema/manifest draft before claiming persisted sector support. Keep S1 Console IAM review, named operator and numeric ceiling on the existing S1 checkpoint; no security infrastructure execution mixed into these product commits.
+
+Publication checkpoint: native git published `dec-023-backend-contract-support`. Creating a dependent draft against `bg-studio-015-backend-reliability` and posting this contract to frontend #50 both returned GraphQL **Forbidden**. No new PR number/comment URL is claimed. Prepared text is retained at `/workspace/.onboarding/dec023-pr-body.md` and `dec023-frontend-comment.md`. An authorized maintainer can create the single dependent draft after checking none exists:
+
+```bash
+gh pr create --repo shirrie01/bizgenie-api --draft \
+  --base bg-studio-015-backend-reliability --head dec-023-backend-contract-support \
+  --title 'DEC-023: validate campaign calendar windows and document backend contract gaps' \
+  --body-file docs/studio/DEC_023_BACKEND_CONTRACT_SUPPORT.md
+```
+
+Verify final-head CI independently; local715 passing tests are not GitHub CI or deployed acceptance. Original backend #213/#214/#215 branches and S1 operational state remain unchanged. The read-only source evidence is available for ChatGPT/Claude through this published file even though comment access failed.
