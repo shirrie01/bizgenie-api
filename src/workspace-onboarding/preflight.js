@@ -1,5 +1,17 @@
 const contract = require("./schemaContract.json");
 const { OnboardingPersistenceError } = require("./errors");
+// PostgreSQL17 logical dump/reparse flattens this one redundant AND grouping.
+// Accept only this exact equivalent rendering, never general parenthesis removal.
+const idempotencyName = "workspace_onboarding_profiles_last_idempotency_key_check";
+const restoredIdempotency = "CHECK (((length(last_idempotency_key) >= 1) AND (length(last_idempotency_key) <= 128) AND (last_idempotency_key ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'::text)))";
+function normalizedConstraint(c) {
+  let definition = c.definition.replace(/public\./g, "").replace(/\s+/g, " ").trim();
+  if (c.conname === idempotencyName && definition === restoredIdempotency) {
+    definition = contract.constraints.find(entry => entry.name === idempotencyName).definition;
+  }
+  return { name: c.conname, definition };
+}
+
 const columns = {
   tenant_id: ["text", true], project_id: ["text", true], brand_id: ["text", true], profile_version: ["integer", true],
   status: ["text", true], sector_key: ["text", false], sector_source: ["text", false], industry_text: ["text", false],
@@ -24,8 +36,7 @@ async function preflight(client) {
   const constraints = await client.query(`select conname,convalidated,pg_get_constraintdef(oid) definition from pg_constraint
     where conrelid='public.workspace_onboarding_profiles'::regclass`);
   if (constraints.rows.some(c => !c.convalidated)) throw new OnboardingPersistenceError();
-  const actual = constraints.rows.map(c => ({ name: c.conname,
-    definition: c.definition.replace(/public\./g, "").replace(/\s+/g, " ").trim() })).sort((a,b) => a.name.localeCompare(b.name));
+  const actual = constraints.rows.map(normalizedConstraint).sort((a,b) => a.name.localeCompare(b.name));
   if (JSON.stringify(actual) !== JSON.stringify(contract.constraints)) throw new OnboardingPersistenceError();
 }
 module.exports = { preflight };

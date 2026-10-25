@@ -237,6 +237,23 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     await repo.preflight();
   });
 
+  it("accepts the exact logically restored idempotency constraint without accepting weaker checks", async () => {
+    const repo = new PostgresWorkspaceOnboardingRepository({ pool });
+    const name = "workspace_onboarding_profiles_last_idempotency_key_check";
+    const original = (await pool.query("select pg_get_constraintdef(oid) definition from pg_constraint where conrelid='workspace_onboarding_profiles'::regclass and conname=$1", [name])).rows[0].definition;
+    try {
+      // pg_dump emits this expression; reparsing flattens redundant AND grouping.
+      await pool.query(`alter table workspace_onboarding_profiles drop constraint ${name}, add constraint ${name} ${original}`);
+      await repo.preflight();
+      await pool.query(`alter table workspace_onboarding_profiles drop constraint ${name}, add constraint ${name}
+        check(length(last_idempotency_key)>=1 and length(last_idempotency_key)<=4096 and last_idempotency_key ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$')`);
+      await assert.rejects(repo.preflight(), { code: "ONBOARDING_UNAVAILABLE" });
+    } finally {
+      await pool.query(`alter table workspace_onboarding_profiles drop constraint ${name}, add constraint ${name} ${original}`);
+    }
+    await repo.preflight();
+  });
+
   it("detects a weakened named constraint rather than trusting its name", async () => {
     const repo = new PostgresWorkspaceOnboardingRepository({ pool });
     try {
