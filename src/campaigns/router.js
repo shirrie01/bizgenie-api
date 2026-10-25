@@ -133,7 +133,9 @@ const manualResolutionBody = bodyScope.extend({
 const calendarQuery = queryScope.extend({
   from: z.string().datetime({ offset: true }),
   to: z.string().datetime({ offset: true }),
-}).strict();
+}).strict().refine(value => Date.parse(value.from) < Date.parse(value.to), {
+  path: ["to"], message: "Calendar window end must be after its start",
+});
 const measurementBody = bodyScope.extend({
   idempotency_key: identifier,
   metric: z.enum(["reach","views","impressions","clicks","enquiries","leads","conversions","sales","revenue","value"]),
