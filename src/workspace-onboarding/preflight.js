@@ -1,4 +1,5 @@
 const contract = require("./schemaContract.json");
+const professionalContract = require("./schemaContractProfessional.json");
 const { OnboardingPersistenceError } = require("./errors");
 // PostgreSQL17 logical dump/reparse flattens this one redundant AND grouping.
 // Accept only this exact equivalent rendering, never general parenthesis removal.
@@ -37,6 +38,8 @@ async function preflight(client) {
     where conrelid='public.workspace_onboarding_profiles'::regclass`);
   if (constraints.rows.some(c => !c.convalidated)) throw new OnboardingPersistenceError();
   const actual = constraints.rows.map(normalizedConstraint).sort((a,b) => a.name.localeCompare(b.name));
-  if (JSON.stringify(actual) !== JSON.stringify(contract.constraints)) throw new OnboardingPersistenceError();
+  if (JSON.stringify(actual) === JSON.stringify(professionalContract.constraints)) return { professional: true };
+  if (JSON.stringify(actual) === JSON.stringify(contract.constraints)) return { professional: false };
+  throw new OnboardingPersistenceError();
 }
 module.exports = { preflight };
