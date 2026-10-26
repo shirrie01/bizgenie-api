@@ -341,6 +341,44 @@ postgresDescribe("PostgresBillingRepository real PostgreSQL adversarial proof", 
   });
 
   beforeEach(resetFixture);
+  async function stripeRecoveryFixture(){
+    const {FencedStripeBillingRepository}=require('../src/billing/stripe/fencedRepository');
+    const {StripeSubscriptionService}=require('../src/billing/stripe/service');
+    const repo=new FencedStripeBillingRepository({pool,now:()=>new Date(NOW)}),billingService=new BillingService({repository:repo,now:()=>new Date(NOW)});
+    await repo.createStripeCustomerMapping({tenant_id:'tenant_a',stripe_customer_id:'cus_recovery',livemode:false,created_at:NOW});
+    const sub={id:'sub_recovery',customer:'cus_recovery',status:'active',livemode:false,start_date:Math.floor(Date.parse('2026-01-01')/1000),items:{data:[{id:'si_recovery',price:{id:'price_Recovery'},current_period_start:Math.floor(Date.parse(PERIOD_START)/1000),current_period_end:Math.floor(Date.parse(PERIOD_END)/1000)}]}};
+    const event={id:'evt_recoveryinvoice',type:'invoice.paid',created:Math.floor(Date.parse(NOW)/1000),livemode:false,data:{object:{id:'in_recovery',customer:'cus_recovery',status:'paid',paid:true,billing_reason:'subscription_cycle',parent:{type:'subscription_details',subscription_details:{subscription:'sub_recovery'}}}}};
+    const config={mode:'test',plans:{standard:{priceId:'price_Recovery',policyId:'policy_standard_v1'}},pastDueGraceDays:7};
+    const make=(r,stripe={subscriptions:{retrieve:async()=>sub}})=>new StripeSubscriptionService({repository:r,billingService:new BillingService({repository:r,now:()=>new Date(NOW)}),stripe,config,now:()=>new Date(NOW)});
+    return {repo,billingService,sub,event,make,Repository:FencedStripeBillingRepository};
+  }
+  it('fences abandoned Stripe processing claims before financial writes and preserves immutable event identity',async()=>{
+    const f=await stripeRecoveryFixture(),input={event_id:'evt_claim',event_type:'invoice.paid',livemode:false,intent_hash:'a'.repeat(64)};
+    const old=await f.repo.beginStripeEvent(input);await assert.rejects(f.repo.beginStripeEvent(input),{code:'STRIPE_EVENT_IN_PROGRESS'});
+    const replacement=new f.Repository({pool,now:()=>new Date(NOW)}),current=await replacement.beginStripeEvent({...input,recover_processing:true});
+    assert.notEqual(current.claim_token,old.claim_token);
+    await assert.rejects(f.repo.withStripeEventFence(old,()=>f.billingService.adjustCredits({tenantId:'tenant_a',amount:1,direction:'credit',transactionCorrelationId:'stale',idempotencyKey:'stale'})),{code:'STRIPE_EVENT_CONFLICT'});
+    await assert.rejects(replacement.beginStripeEvent({...input,intent_hash:'b'.repeat(64),recover_processing:true}),{code:'STRIPE_EVENT_CONFLICT'});
+    await replacement.withStripeEventFence(current,()=>replacement.completeStripeEvent({event_id:input.event_id,result:{handled:true}}));
+    assert.equal((await replacement.beginStripeEvent(input)).replay,true);
+  });
+  it('recovers a crash after Stripe monthly grant without applying the financial effect twice',async()=>{
+    const f=await stripeRecoveryFixture();f.repo.completeStripeEvent=async()=>{throw Error('crash after financial effect');};f.repo.abandonStripeEvent=async()=>{};
+    await assert.rejects(f.make(f.repo).processVerifiedEvent(f.event),/crash/);
+    assert.equal((await pool.query('select status from stripe_webhook_events where stripe_event_id=$1',[f.event.id])).rows[0].status,'processing');
+    const fresh=new f.Repository({pool,now:()=>new Date(NOW)}),result=await f.make(fresh).recoverVerifiedEvent(f.event);
+    assert.equal(result.handled,true);assert.equal((await f.make(fresh).processVerifiedEvent(f.event)).replay,true);
+    assert.equal((await pool.query("select count(*)::int n from credit_ledger where entry_type='monthly_grant' and tenant_id='tenant_a'")).rows[0].n,1);
+  });
+  it('a slow stale Stripe handler cannot write after a replacement claim finishes',async()=>{
+    const f=await stripeRecoveryFixture();let ready,release;const reached=new Promise(r=>ready=r),blocked=new Promise(r=>release=r);
+    const original=f.make(f.repo,{subscriptions:{retrieve:async()=>{ready();await blocked;return f.sub;}}}).processVerifiedEvent(f.event);
+    const oldRejected=assert.rejects(original,{code:'STRIPE_EVENT_CONFLICT'});await reached;
+    const fresh=new f.Repository({pool,now:()=>new Date(NOW)});await f.make(fresh).recoverVerifiedEvent(f.event);release();await oldRejected;
+    assert.equal((await pool.query("select count(*)::int n from credit_ledger where entry_type='monthly_grant'")).rows[0].n,1);
+    assert.equal((await pool.query('select status from stripe_webhook_events where stripe_event_id=$1',[f.event.id])).rows[0].status,'processed');
+  });
+
 
   it("runs against a real server with every durable authority guard initialized", async () => {
     const version = await pool.query("SHOW server_version");
