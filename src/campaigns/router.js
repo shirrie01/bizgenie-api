@@ -563,6 +563,15 @@ function createCustomerCampaignRouter({
     });
   }
 
+  router.post('/:campaignId/variants/:variantId/unschedule',async(req,res)=>{
+    try {
+      const body=parse(bodyScope.extend({expected_campaign_version:expectedVersion,schedule_id:uuid}).strict(),req.body),campaignId=parse(uuid,req.params.campaignId),variantId=parse(uuid,req.params.variantId);
+      const context=await authorize({req,tokenVerifier,authorizationService,tenantId:body.tenant_id,projectId:body.project_id,action:'project:write'});
+      const result=await repository.executeCommand(context,command({body,campaignId,commandType:'unschedule',expectedVersion:body.expected_campaign_version,payload:{variant_id:variantId,schedule_id:body.schedule_id}}));
+      return res.json({result:safeResult(result),campaign:safeCampaign(await repository.getCampaign(context,campaignId),{detail:true})});
+    }catch(error){return sendCampaignError(error,res,logger);}
+  });
+
   router.get("/:campaignId/calendar", async (req, res) => {
     try {
       const query = parse(calendarQuery, req.query);
