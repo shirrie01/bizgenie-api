@@ -97,7 +97,7 @@ class PostgresCampaignRepository extends CampaignRepository {
     if (!result.rowCount) throw new CampaignResourceError();
   }
 
-  async executeCommand(context, input, requestId) {
+  async executeCommand(context, input, requestId, transactionEffect = null) {
     const command = parseCommand(input);
     let client;
     let stage = "connect";
@@ -113,6 +113,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       const intentHash = hashIntent({ ...command, actor: context.actor });
       if (existing.rowCount) {
         if (existing.rows[0].intent_hash !== intentHash) throw new CampaignIdempotencyError();
+        if(transactionEffect)await transactionEffect(client,{command,result:existing.rows[0].result});
         stage = "commit_replay";
         await client.query("commit");
         return clone(existing.rows[0].result);
@@ -137,6 +138,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       if(!projection.verify(after).valid)throw new CampaignPersistenceError();
       stage = "persist";
       await this._persistCampaign(client, before, after, command, context, intentHash, result);
+      if(transactionEffect)await transactionEffect(client,{command,result});
       stage = "constraints_immediate";
       await client.query("set constraints all immediate");
       await client.query("select set_config('bizgenie.campaign_command','off',true)");
