@@ -15,8 +15,16 @@ class FencedGenerationWorker{
  async start(claim){return this.billing.withTransaction(async client=>{
   const row=await this.load(client,claim.job_id);this.match(row,claim);if(row.state!=='claimed')throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);
   await this.quotes.authorize(client,{kind:'customer',auth_user_id:row.auth_user_id},row.tenant_id,row.project_id,row.brand_id);
-  const binding=await this.quotes.binding(client,row.request);if(digest(binding.preview_profile)!==digest(row.profile.preview_profile)||digest(binding.brand_snapshot)!==digest(row.profile.brand_snapshot))throw new QuoteError('QUOTE_CHANGED');const refs=await this.quotes.rights(client,row.request,row.brand_id);if(digest(refs)!==digest(row.profile.reference_bindings||[]))throw new QuoteError('QUOTE_CHANGED');
+  const binding=await this.quotes.binding(client,row.request);if(digest(binding.preview_profile)!==digest(row.profile.preview_profile)||digest(binding.brand_snapshot)!==digest(row.profile.brand_snapshot))throw new QuoteError('QUOTE_CHANGED');if(digest(await this.quotes.learning(client,{kind:'customer',auth_user_id:row.auth_user_id},row.request,row.brand_id))!==digest(row.profile.learning_context??null))throw new QuoteError('QUOTE_CHANGED');const refs=await this.quotes.rights(client,row.request,row.brand_id);if(digest(refs)!==digest(row.profile.reference_bindings||[]))throw new QuoteError('QUOTE_CHANGED');
   await client.query("update public.generation_execution_claims set state='calling',updated_at=$2 where job_id=$1",[claim.job_id,this.quotes.now()]);return row;
+ });}
+ async abortBeforeCall(claim,code){return this.billing.withTransaction(async client=>{
+  const row=await this.load(client,claim.job_id);this.match(row,claim);
+  // A committed calling boundary is never proof that no paid work occurred.
+  if(row.state!=='claimed')throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);
+  const account=await this.billing.requireLockedAccount(client,row.tenant_id),reservation=await this.billing.requireRelatedEntry(client,account,row.reservation_id,'reservation');
+  await this.billing.appendLocked(client,account,{tenant_id:row.tenant_id,entry_type:'reservation_release',amount:reservation.amount,balance_delta:0,reserved_delta:-reservation.amount,project_id:reservation.project_id,generation_id:reservation.generation_id,execution_id:reservation.execution_id,transaction_correlation_id:reservation.transaction_correlation_id,reservation_entry_id:reservation.ledger_entry_id,idempotency_key:`quote:settle:${row.quote_id}`});
+  await client.query("update public.generation_execution_claims set state='cancelled',fence=fence+1,claim_token=null,error_code=$2,updated_at=$3 where job_id=$1",[claim.job_id,code,this.quotes.now()]);
  });}
  async recovery(claim,reference=null){return this.billing.withTransaction(async client=>{
   const row=await this.load(client,claim.job_id);this.match(row,claim);if(['succeeded','failed'].includes(row.state))return;
@@ -38,7 +46,7 @@ class FencedGenerationWorker{
   });
  }
  async run(claim){return bounded(this,'run',()=>this._run(claim));}
- async _run(claim){const row=await this.start(claim);try{
+ async _run(claim){let row;try{row=await this.start(claim);}catch(error){if(['QUOTE_CHANGED','VERSION_CONFLICT','RESOURCE_NOT_AVAILABLE','OPERATION_UNSUPPORTED','PREVIEW_VERSION_UNAVAILABLE'].includes(error.code))await this.abortBeforeCall(claim,error.code);throw error;}try{
   await this.fault('after_call_boundary_before_provider');
   const submit=()=>this.provider.submit({idempotency_key:claim.job_id,profile:row.profile,request:row.request});
   const outcome=await (this.executionPolicy?this.executionPolicy.runClaim(claim,submit):submit());

@@ -1,0 +1,9 @@
+const express=require('express');const {ZodError}=require('zod');const {extractBearerToken}=require('../authentication');const {AuthenticationRequiredError}=require('../authorization');const {QuoteError}=require('../generation-quotes/service');const {Scope}=require('../social-publishing/service');
+function createLearningRouter({service=null,tokenVerifier}){const r=express.Router();r.use(require('../authentication/privateResponse').privateResponse);const split=input=>{const {tenant_id,project_id,brand_id,...payload}=input;return {scope:Scope.parse({tenant_id,project_id,brand_id}),payload};};const run=fn=>async(req,res)=>{try{const actor=await tokenVerifier.verifyAccessToken(extractBearerToken(req.header('authorization')));if(!service)throw new QuoteError('LEARNING_UNAVAILABLE',503);return res.json(await fn(actor,req));}catch(e){return res.status(e instanceof AuthenticationRequiredError?401:e instanceof ZodError?400:e instanceof QuoteError?e.status:503).json({error:{code:e instanceof AuthenticationRequiredError?'AUTHENTICATION_REQUIRED':e instanceof ZodError?'VALIDATION_ERROR':e instanceof QuoteError?e.code:'LEARNING_UNAVAILABLE',message:'Performance evidence or learning is unavailable'}});}};
+ r.post('/objectives',run((a,q)=>{const {scope,payload}=split(q.body);return service.configureObjective(a,scope,payload);}));
+ r.post('/snapshots',run((a,q)=>service.snapshot(a,Scope.parse(q.body))));
+ r.post('/recommendations',run((a,q)=>{const {scope,payload}=split(q.body);return service.recommend(a,scope,payload);}));
+ r.get('/recommendations',run((a,q)=>service.recommendations(a,Scope.parse(q.query))));
+ r.post('/feedback',run((a,q)=>{const {scope,payload}=split(q.body);return service.feedback(a,scope,payload);}));
+ return r;}
+module.exports={createLearningRouter};
