@@ -79,6 +79,23 @@ const url=process.env.TEST_DATABASE_URL;
   await assert.rejects(broken.run(claim),{code:'EXECUTION_RECONCILIATION_REQUIRED'});const before=await pool.query("select entry_type from credit_ledger where generation_id=$1",[claim.job_id]);assert.deepEqual(before.rows.map(r=>r.entry_type),['reservation']);
   const repaired=new FencedGenerationWorker({quoteService:r.q,provider,executionPolicy:policy});assert.equal((await repaired.reconcile(claim)).status,'succeeded');assert.equal(calls,1);
  });
+ it('durable text job survives reload, lists/polls, attaches atomically and never approves itself',async()=>{
+  const {GenerationExecutionPolicy}=require('../src/generation-quotes/executionPolicy');const {ExistingTextGenerationAdapter}=require('../src/generation-quotes/textAdapter');const {PostgresGenerationJobRepository}=require('../src/generation-jobs');const {CreativeJobService}=require('../src/generation-quotes/jobs');
+  const r=await ready(),policy=new GenerationExecutionPolicy({mode:'quoted_v1',quoteService:r.q});let calls=0;
+  const adapter=new ExistingTextGenerationAdapter({jobs:new PostgresGenerationJobRepository({pool}),executionPolicy:policy,branding:{},generator:async(_brief,options)=>{calls++;assert.equal(options.modelName,'mock-only');return {text:'Synthetic durable generated draft',metadata:{model:'mock-only'}};}}),worker=new FencedGenerationWorker({quoteService:r.q,provider:adapter,executionPolicy:policy});const claim=await worker.claim(r.confirmed.job_id);await worker.run(claim);
+  const jobs=new CreativeJobService({quoteService:quotes(),campaignRepository:campaigns}),scope={tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a'};
+  const detail=await jobs.get(actor,r.confirmed.job_id,scope);assert.equal(detail.state,'succeeded');assert.equal(detail.association,null);assert.equal(JSON.stringify(detail).includes('claim_token'),false);
+  const first=await jobs.list(actor,{...scope,limit:1});assert.equal(first.jobs.length,1);assert.ok(first.next_cursor);
+  const second=await jobs.list(actor,{...scope,limit:1,cursor:first.next_cursor});assert.notEqual(second.jobs[0].job_id,first.jobs[0].job_id);await assert.rejects(jobs.list(actor,{...scope,project_id:'foreign',cursor:first.next_cursor}),{code:'VALIDATION_ERROR'});
+  const attached=await jobs.attach(actor,r.confirmed.job_id,scope);assert.ok(attached.association.revision_id);assert.equal(attached.association.approval_status,'not_approved');assert.equal((await jobs.attach(actor,r.confirmed.job_id,scope)).association.revision_id,attached.association.revision_id);assert.equal(calls,1);
+  const fresh=new CreativeJobService({quoteService:quotes(),campaignRepository:campaigns});assert.equal((await fresh.get(actor,r.confirmed.job_id,scope)).association.revision_id,attached.association.revision_id);
+  await assert.rejects(fresh.get(actor,r.confirmed.job_id,{...scope,brand_id:'foreign'}),{code:'RESOURCE_NOT_AVAILABLE'});
+ });
+ it('job attachment rolls back revision and association together, then safely retries',async()=>{
+  const {CreativeJobService}=require('../src/generation-quotes/jobs'),r=await ready(),outcome={status:'succeeded',result:{content:{title:null,body:'Synthetic rollback draft',caption:null,alt_text:null,asset_refs:[]}}},worker=new FencedGenerationWorker({quoteService:r.q,provider:{submit:async()=>outcome}});await worker.run(await worker.claim(r.confirmed.job_id));const jobs=new CreativeJobService({quoteService:r.q,campaignRepository:campaigns}),scope={tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a'},old=campaigns.fault;campaigns.fault=async stage=>{if(stage==='postgres_before_commit')throw Error('synthetic attachment failure');};
+  try{await assert.rejects(jobs.attach(actor,r.confirmed.job_id,scope));assert.equal((await jobs.get(actor,r.confirmed.job_id,scope)).association,null);}finally{campaigns.fault=old;}
+  assert.ok((await jobs.attach(actor,r.confirmed.job_id,scope)).association.revision_id);
+ });
  it('retired pricing policy refuses confirmation before any execution starts',async()=>{const q=quotes(),quote=await q.quote(actor,await input());await pool.query("update commercial_policies set status='retired' where policy_id='synthetic_policy'");await assert.rejects(q.confirm(actor,quote.quote_id,confirmBody()),{code:'QUOTE_CHANGED'});});
  it('RLS denies browser/service roles access to quotes and execution claims',async()=>{const c=await pool.connect();try{await c.query('begin');await c.query('set local role authenticated');await assert.rejects(c.query('select * from generation_quotes'),/permission denied/);}finally{await c.query('rollback');c.release();}});
 });

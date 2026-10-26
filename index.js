@@ -523,6 +523,8 @@ function createApp({
     customerVideoRouter
   );
 
+  app.use('/customer/creative-jobs',require('./src/generation-quotes/jobsRouter').createCreativeJobsRouter({service:generationQuoteService?new(require('./src/generation-quotes/jobs').CreativeJobService)({quoteService:generationQuoteService,campaignRepository}):null,tokenVerifier:customerTokenVerifier}));
+
   app.use('/customer/generation-quotes',require('./src/generation-quotes/router').createGenerationQuoteRouter({service:generationQuoteService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/calendar', createCustomerWorkspaceCalendarRouter({
