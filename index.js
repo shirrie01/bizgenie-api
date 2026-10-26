@@ -289,6 +289,7 @@ function createApp({
   generationJobRepository = new InMemoryGenerationJobRepository(),
   mediaAssetRepository = null,
   mediaIntakeService = null,
+  socialPublishingService = null,
   mediaPreviewStorage = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
@@ -523,6 +524,8 @@ function createApp({
         : next(),
     customerVideoRouter
   );
+
+  app.use('/customer/social',require('./src/social-publishing/router').createSocialRouter({service:socialPublishingService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/assets',require('./src/media-intake/router').createMediaIntakeRouter({service:mediaIntakeService,tokenVerifier:customerTokenVerifier}));
 
