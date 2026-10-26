@@ -4,6 +4,7 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { after, before, describe, it } = require("node:test");
 const { Pool } = require("pg");
+const { objectKey } = require("../src/media");
 const { PostgresCampaignRepository, CampaignIdempotencyError, CampaignResourceError } = require("../src/campaigns");
 const {regressionCases,scenario,previewReceipt,context:regressionContext,content:regressionContent,NOW}=require('./helpers/campaign-regressions');
 
@@ -45,6 +46,23 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     await pool.query(`insert into public.brand_brains(brand_id,project_id,name,version,status,created_at,updated_at) values('brand_a','project_a','A',1,'approved',now(),now()),('brand_b','project_b','B',1,'approved',now(),now())`);
   });
   after(async()=>{await pool?.end();if(adminPool&&database){for(let i=0;i<20;i++){try{await adminPool.query(`drop database if exists ${database}`);break;}catch{await new Promise((resolve)=>setTimeout(resolve,25));}}}await adminPool?.end();});
+  it("keeps durable seeded profile hashes in parity and the proposed Instagram video tuple unavailable", async () => {
+    const { InMemoryPreviewRegistry, PostgresPreviewRegistry } = require("../src/campaigns");
+    const candidate = require("../docs/media/contracts/instagram-feed-video-preview.v1.proposed.json");
+    const memory = new InMemoryPreviewRegistry();
+    const rows = await pool.query("select * from public.campaign_preview_profiles order by profile_id");
+    assert.equal(rows.rowCount, memory.profiles.size);
+    for (const row of rows.rows) {
+      const expected = memory.profiles.get(`${row.profile_id}:${row.profile_version}`);
+      assert.ok(expected);
+      assert.equal(row.profile_hash, expected.profile_hash);
+      assert.equal(row.renderer_version, expected.renderer_version);
+    }
+    const registry = new PostgresPreviewRegistry({ pool });
+    const client = await pool.connect();
+    try { assert.equal(await registry.activeProfile(client, candidate.registry_identity), null); }
+    finally { client.release(); }
+  });
   it("initializes only when all fourteen relations are RLS-locked from direct roles",async()=>{await repository.initialize();});
   it('workspace calendar has SQL/projection parity, bounded pagination and transaction-authorized isolation',async()=>{
     const {parseQuery,page,memoryRows}=require('../src/campaigns/workspaceCalendar');
@@ -127,14 +145,71 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     async function asset({tenant='tenant_a',project='project_a',brand='brand_a',status='active',kind='image',source='generated'}={}){
       const id=randomUUID(),job='job_'+randomUUID();
       await pool.query(`insert into public.generation_jobs(job_id,tenant_id,project_id,brand_id,execution_class,auth_user_id,request_correlation_id,idempotency_key,allowed_scopes) values($1,$2,$3,$4,$5,$6,$1,$1,'["generation:execute"]')`,[job,tenant,project,brand,kind+'.normal',tenant==='tenant_b'?AUTH_B:AUTH_A]);
-      await pool.query(`insert into public.media_assets(asset_id,tenant_id,project_id,generation_job_id,generation_id,source_kind,media_kind,storage_bucket,storage_key,mime_type,status,allowed_uses) values($1,$2,$3,$4,$4,$5,$6,'test-assets',$7,$8,$9,$10)`,[id,tenant,project,job,source,kind,`assets/${'a'.repeat(64)}/${'b'.repeat(64)}/${kind}/${id}.${kind==='image'?'png':'mp4'}`,kind==='image'?'image/png':'video/mp4',status,['campaign.preview','campaign.publish']]);return id;
+      await pool.query(`insert into public.media_assets(asset_id,tenant_id,project_id,generation_job_id,generation_id,source_kind,media_kind,storage_bucket,storage_key,mime_type,status,allowed_uses) values($1,$2,$3,$4,$4,$5,$6,'test-assets',$7,$8,$9,$10)`,[id,tenant,project,job,source,kind,objectKey({tenantId:tenant,projectId:project,mediaKind:kind,assetId:id,extension:kind==='image'?'png':'mp4'}),kind==='image'?'image/png':'video/mp4',status,['campaign.preview','campaign.publish']]);return id;
     }
     const s=await scenario(repository);
     for(const id of [await asset({tenant:'tenant_b',project:'project_b',brand:'brand_b'}),await asset({brand:null}),await asset({status:'revoked'}),await asset({kind:'video'}),await asset({source:'reference'})])await s.unchanged(()=>s.add('image',{...regressionContent,asset_refs:[{asset_id:id,role:'primary'}]}));
-    const id=await asset(),t=await s.add('image',{...regressionContent,asset_refs:[{asset_id:id,role:'primary'}]}),a=await s.approve(t),attempt=await s.begin(a);
+    const id=await asset(),t=await s.add('image',{...regressionContent,asset_refs:[{asset_id:id,role:'primary'}]});
+    const preview=await repository.getCreativePreview(context,s.id,{variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:(await s.get()).version});
+    assert.equal(preview.media[0].source_kind,'generated');assert.equal(preview.media[0].reason,'PRIVATE_MEDIA_DELIVERY_UNAVAILABLE');assert.equal(preview.media[0].url,null);
+    const a=await s.approve(t),attempt=await s.begin(a);
+    const beforeRead=await s.get();
+    const options={variantId:t.variant_id,revisionId:t.revision_id,assetId:id,expectedVersion:beforeRead.version};
+    const delivery=await repository.getMediaPreviewAsset(context,s.id,options);
+    assert.equal(delivery.mimeType,'image/png');assert.equal(delivery.bucket,'test-assets');
+    assert.deepEqual(await s.get(),beforeRead);
+    await assert.rejects(()=>repository.getMediaPreviewAsset(context,s.id,{...options,expectedVersion:0}),e=>e.code==='VERSION_CONFLICT');
+    await assert.rejects(()=>repository.getMediaPreviewAsset({...context,tenant_id:'tenant_b',project_id:'project_b',actor:{kind:'customer',auth_user_id:AUTH_B}},s.id,options),CampaignResourceError);
     const revision=(await s.variant(t)).revisions.get(t.revision_id);assert.equal(revision.generation_links[0].asset_id,id);assert.equal(revision.generation_links[0].generation_brand_snapshot_id,null);
     await pool.query("update public.media_assets set status='revoked' where asset_id=$1",[id]);
+    const revoked=await repository.getCreativePreview(context,s.id,{variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:(await s.get()).version});
+    assert.equal(revoked.media[0].reason,'ASSET_NOT_AVAILABLE');
+    await assert.rejects(()=>repository.getMediaPreviewAsset(context,s.id,options),CampaignResourceError);
     await s.cmd('confirm_manual_publication',{...attempt,published_at:NOW,attested_published:true});assert.equal((await s.variant(t)).workflow,'published');
+  });
+
+  it("scoped video inspection uses real PostgreSQL authority and rejects a rights change before return", async () => {
+    const { AuthorizationService, PostgresAuthorizationRepository } = require("../src/authorization");
+    const { createScopedVideoInspectionService } = require("../src/media/scopedVideoInspection");
+    const { createVideoInspector } = require("../src/media/videoInspection");
+    const data = fs.readFileSync(path.join(__dirname, "fixtures/video-inspection/silent-h264.mp4"));
+    const id = randomUUID(), job = "job_" + randomUUID();
+    await pool.query(`insert into public.generation_jobs(job_id,tenant_id,project_id,brand_id,execution_class,auth_user_id,request_correlation_id,idempotency_key,allowed_scopes) values($1,'tenant_a','project_a','brand_a','video.normal',$2,$1,$1,'["generation:execute"]')`, [job, AUTH_A]);
+    await pool.query(`insert into public.media_assets(asset_id,tenant_id,project_id,generation_job_id,generation_id,source_kind,media_kind,storage_bucket,storage_key,mime_type,status,allowed_uses,byte_size) values($1,'tenant_a','project_a',$2,$2,'generated','video','test-assets',$3,'video/mp4','active',$4,$5)`,
+      [id, job, objectKey({ tenantId: "tenant_a", projectId: "project_a", mediaKind: "video", assetId: id, extension: "mp4" }), ["campaign.preview"], data.length]);
+    const s = await scenario(repository), target = await s.add("video", { ...regressionContent, asset_refs: [{ asset_id: id, role: "primary" }] });
+    let reads = 0;
+    const storage = { bucket: "test-assets", async statPreview() { return { size: data.length, generation: "123", mimeType: "video/mp4" }; },
+      async openPreview({ generation, range }) { reads++; assert.equal(generation, "123"); return new Response(data.subarray(range.start, range.end + 1), { status: 206, headers: { "content-type": "video/mp4", "content-length": String(range.end - range.start + 1), "content-range": `bytes ${range.start}-${range.end}/${data.length}` } }); } };
+    const config = { repository, storage, tokenVerifier: { async verifyAccessToken() { return context.actor; } },
+      authorizationService: new AuthorizationService({ repository: new PostgresAuthorizationRepository({ pool }) }), inspect: createVideoInspector() };
+    const input = { accessToken: "synthetic", tenantId: "tenant_a", projectId: "project_a", brandId: "brand_a", campaignId: s.id,
+      variantId: target.variant_id, revisionId: target.revision_id, assetId: id, expectedVersion: (await s.get()).version };
+    const before = await s.get();
+    assert.equal((await createScopedVideoInspectionService(config).inspect(input)).status, "measured");
+    assert.equal(reads, 1); assert.deepEqual(await s.get(), before);
+    const local = createVideoInspector();
+    const revoking = createScopedVideoInspectionService({ ...config, inspect: async (bytes, options) => {
+      const result = await local(bytes, options); await pool.query("update public.media_assets set status='revoked' where asset_id=$1", [id]); return result;
+    } });
+    assert.equal((await revoking.inspect(input)).status, "unavailable");
+    const priorReads = reads;
+    assert.equal((await revoking.inspect(input)).status, "unavailable"); assert.equal(reads, priorReads);
+    assert.deepEqual(await s.get(), before);
+  });
+
+  it("reads persisted creative in a scoped read-only snapshot with exact revision/version", async () => {
+    const s=await scenario(repository),t=await s.add();
+    const before=await s.get();
+    const options={variantId:t.variant_id,revisionId:t.revision_id,expectedVersion:before.version};
+    const result=await repository.getCreativePreview(context,s.id,options);
+    assert.equal(result.copy.body,regressionContent.body);
+    assert.equal(result.platform_preview.status,"unrendered");
+    assert.equal(result.content_status,"available");
+    assert.deepEqual(await s.get(),before);
+    await assert.rejects(()=>repository.getCreativePreview(context,s.id,{...options,expectedVersion:0}),e=>e.code==="VERSION_CONFLICT");
+    await assert.rejects(()=>repository.getCreativePreview(context,s.id,{...options,revisionId:randomUUID()}),e=>e.code==="VERSION_CONFLICT");
+    await assert.rejects(()=>repository.getCreativePreview({...context,tenant_id:"tenant_b",project_id:"project_b",actor:{kind:"customer",auth_user_id:AUTH_B}},s.id,options),CampaignResourceError);
   });
 
   it("recovers only the exact committed generation receipt across repository instances", async () => {

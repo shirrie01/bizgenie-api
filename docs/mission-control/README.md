@@ -55,6 +55,41 @@ Paid-beta capture is merged but disabled/unstaged per the current checkpoint.
 Staging and production are untouched by I-A. Migrations, customer APIs, preview registry,
 connectors, W4B complete-journey proof and activation remain subsequent bounded work.
 
+## Secure inspection engineering checkpoint — 2026-10-23
+
+[BG-STUDIO-009-BE evidence](../media/BG-STUDIO-009-BE.md) continues #211 on
+`bg-studio-009-be-secure-video-runtime`: scoped generation-pinned inspection,
+final rights/version rechecks, bounded request/byte/concurrency controls and a
+fail-closed namespace-runtime candidate. Canonical Docker is digest/lock pinned
+but local npm installation still fails; sandbox setup is blocked, not accepted.
+No routes, profiles or live resources activated. DEC-015 leaves the Google Sheets
+register as sole operational authority; this and #191 are engineering evidence.
+
+## Video inspection engineering checkpoint — 2026-10-23
+
+[BG-STUDIO-008-BE implementation and evidence](../media/BG-STUDIO-008-BE.md)
+continues #208 → #209 → #210 on `bg-studio-008-be-video-inspection`.
+Actual local byte inspection, adversarial resource tests and synthetic Chromium
+H.264 playback are implemented; the Instagram candidate remains non-provisionable.
+Meta specifications, runtime packaging/isolation, scoped inspection orchestration
+and aggregate egress controls remain blockers. GitHub API authority/CI reads are
+Forbidden. Under DEC-015 the external Google Sheets Mission Control remains the
+sole operational authority; #191 and this repository record engineering evidence,
+not launch acceptance. No source PR branch, live profile or deployment changed.
+
+## Creative-preview engineering checkpoint — 2026-10-23
+
+[BG-STUDIO-007-BE contract and evidence](../media/BG-STUDIO-007-BE.md) continues
+#208 integration (`bf120509`) and #209 readiness (`6911ffc2`) on a separate branch.
+The proposed Instagram-feed video profile is **not provisionable**: current Meta
+specifications and trusted byte inspection remain unresolved. Default profiles,
+live databases and original PR branches are unchanged. See the report for pinned
+contract hashes, deterministic security/recovery tests, delivery-limit proof and
+Claude's supported/unsupported states. GitHub API/CI verification is blocked by
+`Forbidden`; local evidence is separate from deployed E2E. This is a repository
+engineering checkpoint, not founder acceptance or a write to the canonical
+[Google Sheets governance register](https://docs.google.com/spreadsheets/d/1N4Yf4hgi5a-ZB_VXZ7WSteLyTVWsX14wxmESvCzMtcc/edit).
+
 ## Purpose
 
 Mission Control is the operating layer for planning, building, verifying and continuously improving BizGenie. It exists to prevent architectural drift, uncontrolled scope, unverified completion and loss of strategic knowledge.

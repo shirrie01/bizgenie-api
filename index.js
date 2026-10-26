@@ -288,6 +288,7 @@ function createApp({
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
   mediaAssetRepository = null,
+  mediaPreviewStorage = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   campaignGenerationService,
@@ -297,6 +298,7 @@ function createApp({
   billing,
   billingRepository,
   commercialCatalog = null,
+  generationQuoteService = null,
   env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
@@ -513,6 +515,8 @@ function createApp({
     customerVideoRouter
   );
 
+  app.use('/customer/generation-quotes',require('./src/generation-quotes/router').createGenerationQuoteRouter({service:generationQuoteService,tokenVerifier:customerTokenVerifier}));
+
   app.use('/customer/calendar', createCustomerWorkspaceCalendarRouter({
     repository:campaignRepository,tokenVerifier:customerTokenVerifier,
     authorizationService:resolvedAuthorizationService,logger,
@@ -527,6 +531,7 @@ function createApp({
       authorizationService: resolvedAuthorizationService,
       campaignGenerationService: resolvedCampaignGenerationService,
       measurementRegistry: campaignMeasurementRegistry,
+      mediaPreviewStorage,
       logger,
     })
   );
@@ -770,6 +775,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       customerTokenVerifier,
       generationJobRepository,
       mediaAssetRepository: media.mediaAssetRepository,
+      mediaPreviewStorage: media.mediaPreviewStorage,
       generationBillingOrchestrator: billing.generationBillingOrchestrator,
       imageProvider: media.imageProvider,
       videoGenerationRepository,

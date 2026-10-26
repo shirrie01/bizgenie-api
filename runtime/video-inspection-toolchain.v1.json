@@ -1,0 +1,12 @@
+{
+  "status": "isolated_review_candidate_not_activated",
+  "platform": "linux",
+  "distribution_observed": "Debian 13",
+  "ffprobe_version": "7.1.5-0+deb13u1",
+  "ffmpeg_package": "7:7.1.5-0+deb13u1",
+  "bubblewrap_package": "0.12.0-1~deb13u1",
+  "util_linux_package": "2.41.5-0+deb13u1",
+  "network": "new_unshared_namespace_no_fallback",
+  "filesystem": "system_libraries_and_one_readonly_input_only",
+  "provisionable": false
+}

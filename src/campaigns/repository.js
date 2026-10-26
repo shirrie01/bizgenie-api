@@ -1,5 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const {
+  CampaignError,
+  CampaignPersistenceError,
   CampaignIdempotencyError,
   CampaignResourceError,
   CampaignTransitionError,
@@ -8,6 +10,8 @@ const {
 } = require("./errors");
 const { content: contentSchema, emptyContent, hashIntent, parseCommand, authorization, previewReceipt } = require("./schema");
 const projection = require('./projection');
+const { creativePreview } = require('./creativePreview');
+const { mediaPreviewAsset } = require('./mediaPreviewAsset');
 
 const clone = (value) => structuredClone(value);
 const iso = (value) => new Date(value).toISOString();
@@ -15,6 +19,8 @@ const iso = (value) => new Date(value).toISOString();
 class CampaignRepository {
   async executeCommand() { throw new Error("Not implemented"); }
   async getCampaign() { throw new Error("Not implemented"); }
+  async getCreativePreview() { throw new Error("Not implemented"); }
+  async getMediaPreviewAsset() { throw new Error("Not implemented"); }
   async listCampaigns() { throw new Error("Not implemented"); }
   async listCalendarEntries() { throw new Error("Not implemented"); }
   async listCampaignEvents() { throw new Error("Not implemented"); }
@@ -142,6 +148,21 @@ class InMemoryCampaignRepository extends CampaignRepository {
     if (!campaign || campaign.tenant_id !== context.tenant_id || campaign.project_id !== context.project_id ||
         !(await this.authorize(clone(context)))) throw new CampaignResourceError();
     return projection.decorate(campaign);
+  }
+
+  async getCreativePreview(context, campaignId, options) {
+    try {
+      return await creativePreview({ ...options, context, campaign: await this.getCampaign(context, campaignId),
+        resolveMedia: this.resolveMedia, validatePreview: this.validatePreview });
+    } catch (error) {
+      if (error instanceof CampaignError) throw error;
+      throw new CampaignPersistenceError();
+    }
+  }
+
+  async getMediaPreviewAsset(context, campaignId, options) {
+    try { return await mediaPreviewAsset({ ...options, context, campaign: await this.getCampaign(context, campaignId), resolveMedia: this.resolveMedia }); }
+    catch (error) { if (error instanceof CampaignError) throw error; throw new CampaignPersistenceError(); }
   }
 
   async listCampaigns(context) {
