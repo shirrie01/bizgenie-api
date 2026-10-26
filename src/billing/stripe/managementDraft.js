@@ -8,7 +8,7 @@ const requestSchema=z.object({request_id:identifier}).strict();
 // Intentionally unmounted and disabled. The draft adapter is exercised only with injected mock clients.
 // Any production/test Stripe composition requires a separately reviewed activation and commercial-policy gate.
 function createDraftBillingManagementRouter({authorizeTenantRequest,repository,stripe,catalog,configurationId,returnUrl,enabled=false}) {
- const router=express.Router();
+ const router=express.Router();router.use(require('../../authentication/privateResponse').privateResponse);
  const safeReturn=z.string().url().refine(v=>{const u=new URL(v);return u.protocol==='https:'&&!u.username&&!u.password&&!u.hash&&!u.search;});
  async function session(req,res,next,operation){
   try {
