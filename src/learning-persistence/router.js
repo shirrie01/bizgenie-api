@@ -3,7 +3,7 @@ function createLearningRouter({service=null,tokenVerifier}){const r=express.Rout
  r.post('/objectives',run((a,q)=>{const {scope,payload}=split(q.body);return service.configureObjective(a,scope,payload);}));
  r.post('/snapshots',run((a,q)=>service.snapshot(a,Scope.parse(q.body))));
  r.post('/recommendations',run((a,q)=>{const {scope,payload}=split(q.body);return service.recommend(a,scope,payload);}));
- r.get('/recommendations',run((a,q)=>service.recommendations(a,Scope.parse(q.query))));
+ r.get('/recommendations',run((a,q)=>(()=>{const {scope,payload}=split(q.query);return service.recommendations(a,scope,payload);})()));
  r.post('/feedback',run((a,q)=>{const {scope,payload}=split(q.body);return service.feedback(a,scope,payload);}));
  return r;}
 module.exports={createLearningRouter};

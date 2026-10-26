@@ -25,6 +25,7 @@ class CreativeJobService{
   await this.campaigns.executeCommand(context,command,undefined,async(client,{result})=>{
    await this.row(client,actor,id,scope);const state=await client.query("select state from generation_execution_claims where job_id=$1 for share",[id]);if(state.rows[0]?.state!=='succeeded')throw new QuoteError('RESULT_NOT_READY');
    await client.query('insert into generation_job_revision_links(job_id,tenant_id,project_id,brand_id,campaign_id,content_item_id,variant_id,revision_id,campaign_version,created_by,created_at)values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict(job_id)do nothing',[id,q.tenant_id,q.project_id,q.brand_id,q.request.campaign_id,q.profile.creative_target.content_item_id,q.request.variant_id,result.created_ids.revision_ids[0],result.campaign_version,actor.auth_user_id,this.quotes.now()]);
+   await require('../creative-intelligence/service').attachDna(client,q,result.created_ids.revision_ids[0],actor,this.quotes.now());
   });return this.get(actor,id,scope);
  }
  async cancel(actor,id,scope){const q=await this.quotes.transaction(async c=>(await this.row(c,actor,id,scope)).q);return this.quotes.cancel(actor,q.quote_id);}

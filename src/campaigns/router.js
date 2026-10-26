@@ -216,6 +216,7 @@ function safeVariant(variant, item, campaign) {
   const attempt=campaign.attempts.get(variant.pending_attempt_id);
   const original=campaign.publications.get(variant.publication_id);
   const publication=original?(require('./projection').latestCorrection(campaign,original.publication_id)||original):null;
+  const platformPublication=campaign.platform_publications?.get(variant.variant_id);
   const current = variant.revisions.get(variant.current_revision_id);
   return {
     variant_id: variant.variant_id,
@@ -223,7 +224,8 @@ function safeVariant(variant, item, campaign) {
     platform: variant.platform,
     placement: variant.placement,
     destination_label: variant.destination_label,
-    workflow: variant.workflow,
+    workflow: platformPublication?'published':variant.workflow,
+    platform_publication:platformPublication?{dispatch_id:platformPublication.dispatch_id,provider_publication_id:platformPublication.provider_publication_id,revision_id:platformPublication.revision_id,platform:platformPublication.platform,destination:platformPublication.destination_account,publication_url:platformPublication.publication_url,published_at:platformPublication.published_at,evidence_kind:'platform_api',reconciliation_status:platformPublication.reconciliation_status,dna_id:platformPublication.dna_id}:null,
     current_revision_id: variant.current_revision_id,
     current_content: current?.content || null,
     current_schedule:schedule?{schedule_id:schedule.schedule_id,revision_id:schedule.revision_id,scheduled_for:schedule.scheduled_for,timezone:schedule.timezone}:null,
@@ -242,6 +244,7 @@ function campaignVariant(campaign, variantId) {
 }
 
 function safeCampaign(campaign, { detail = false } = {}) {
+  if(campaign.platform_publications?.size){campaign=structuredClone(campaign);for(const i of campaign.items.values())for(const v of i.variants.values())if(campaign.platform_publications.has(v.variant_id))v.workflow='published';campaign=require('./projection').decorate(campaign);}
   const base = {
     campaign_id: campaign.campaign_id,
     tenant_id: campaign.tenant_id,
@@ -624,6 +627,7 @@ function createCustomerCampaignRouter({
     }catch(error){return sendCampaignError(error,res,logger);}
   });
 
+  router.get('/:campaignId/publication-history',async(req,res)=>{try{const {tenant_id,project_id,...q}=req.query;const scope=parse(queryScope,{tenant_id,project_id}),id=parse(uuid,req.params.campaignId);const context=await authorize({req,tokenVerifier,authorizationService,tenantId:scope.tenant_id,projectId:scope.project_id,action:'project:read'});if(!repository.listPublicationHistory)throw new CampaignPersistenceError();return res.json(await repository.listPublicationHistory(context,id,q));}catch(e){return sendCampaignError(e,res,logger);}});
   router.get("/:campaignId/calendar", async (req, res) => {
     try {
       const query = parse(calendarQuery, req.query);

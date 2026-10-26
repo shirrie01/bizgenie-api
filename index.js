@@ -291,6 +291,8 @@ function createApp({
   mediaIntakeService = null,
   socialPublishingService = null,
   learningService = null,
+  creativeIntelligenceService = null,
+  growthReadModel = null,
   mediaPreviewStorage = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
@@ -525,6 +527,8 @@ function createApp({
         : next(),
     customerVideoRouter
   );
+
+  app.use('/customer/intelligence',require('./src/creative-intelligence/router').createCreativeIntelligenceRouter({service:creativeIntelligenceService,growth:growthReadModel,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/insights',require('./src/learning-persistence/router').createLearningRouter({service:learningService,tokenVerifier:customerTokenVerifier}));
 
