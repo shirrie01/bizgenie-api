@@ -290,6 +290,7 @@ function createApp({
   mediaAssetRepository = null,
   mediaIntakeService = null,
   socialPublishingService = null,
+  learningService = null,
   mediaPreviewStorage = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
@@ -524,6 +525,8 @@ function createApp({
         : next(),
     customerVideoRouter
   );
+
+  app.use('/customer/insights',require('./src/learning-persistence/router').createLearningRouter({service:learningService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/social',require('./src/social-publishing/router').createSocialRouter({service:socialPublishingService,tokenVerifier:customerTokenVerifier}));
 
