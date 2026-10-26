@@ -23,6 +23,7 @@ function campaign() {
   const revision = { revision_id: "11111111-1111-4111-8111-111111111114", content: { title: null, body: "Existing draft", caption: null, alt_text: null, asset_refs: [] } };
   return {
     campaign_id: CAMPAIGN, tenant_id: "tenant_a", project_id: "project_a", brand_id: "brand_a", name: "Launch Fonzo Into The Uk Campaign", goal: "Launch Fonzo in the UK", version: 3, status: "active", counts: {}, archived_at: null, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", next_action: { code: "finish_draft", label: "Finish draft" },
+    schedules:new Map(),attempts:new Map(),publications:new Map(),corrections:new Map(),
     items: new Map([["item_a", { content_item_id: "item_a", name: "Launch announcement", format: "text", status: "active", counts: {}, archived_at: null, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z", variants: new Map([[VARIANT, { variant_id: VARIANT, platform: "instagram", placement: "feed", destination_label: "Instagram feed", workflow: "draft", current_revision_id: revision.revision_id, updated_at: "2026-01-01T00:00:00.000Z", revisions: new Map([[revision.revision_id, revision]]) }]]) }]]),
   };
 }
