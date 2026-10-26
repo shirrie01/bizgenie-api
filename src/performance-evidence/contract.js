@@ -1,0 +1,29 @@
+const {z}=require('zod');const {identifier,uuid,canonical}=require('../campaigns/schema');const {createHash}=require('node:crypto');
+const sha=v=>createHash('sha256').update(canonical(v)).digest('hex');
+class EvidenceError extends Error{constructor(code){super('Performance evidence is unavailable or incompatible');this.code=code;}}
+const Observation=z.object({observation_id:uuid,tenant_id:identifier,project_id:identifier,brand_id:identifier,campaign_id:uuid,variant_id:uuid,publication_id:uuid,objective:identifier,platform:z.enum(['instagram','facebook','linkedin','tiktok','youtube']),attribution:z.enum(['organic','paid']),metric:z.enum(['reach','views','impressions','clicks','leads','conversions','sales','revenue']),unit:z.enum(['count','gbp','usd','eur']),value:z.number().finite().min(0).max(1e15).nullable(),period:z.object({from:z.string().datetime({offset:true}),to:z.string().datetime({offset:true})}).strict(),observed_at:z.string().datetime({offset:true}),source:z.object({kind:z.literal('platform_api'),source_id:identifier,account_id:identifier,record_id:identifier}).strict(),correction_of:uuid.optional(),retracted:z.boolean().default(false)}).strict();
+const scopeKeys=['tenant_id','project_id','brand_id','campaign_id','variant_id','publication_id','objective','platform'];
+const comparisonKeys=['tenant_id','project_id','brand_id','objective','platform','attribution','metric','unit'];
+function parseObservation(input,binding,now){const r=Observation.safeParse(input);if(!r.success)throw new EvidenceError('EVIDENCE_INVALID');const o=r.data;
+ if(scopeKeys.some(k=>!binding[k]||binding[k]!==o[k])||!binding.published_at||Date.parse(binding.published_at)>Date.parse(o.period.from))throw new EvidenceError('EVIDENCE_BINDING_INVALID');
+ const from=Date.parse(o.period.from),to=Date.parse(o.period.to),at=Date.parse(o.observed_at);
+ if(!(from<to&&to<=at&&at<=now.getTime())||o.retracted!==(o.value===null)||o.metric!=='revenue'&&(o.unit!=='count'||!Number.isSafeInteger(o.value)&&!o.retracted)||o.metric==='revenue'&&o.unit==='count')throw new EvidenceError('EVIDENCE_INVALID');
+ o.period={from:new Date(from).toISOString(),to:new Date(to).toISOString()};o.observed_at=new Date(at).toISOString();return o;
+}
+// Deterministic reference registry only; no mounted ingestion route or process-local durability claim.
+class PerformanceEvidenceReferenceRegistry{
+ constructor({authorizeSource,now=()=>new Date()}){if(typeof authorizeSource!=='function')throw new TypeError('Verified connector authorization required');this.authorizeSource=authorizeSource;this.now=now;this.rows=new Map();}
+ async ingest(context,binding,input){const o=parseObservation(input,binding,this.now());if(await this.authorizeSource({context,binding,observation:o})!==true)throw new EvidenceError('EVIDENCE_SOURCE_UNAUTHORIZED');
+ const fingerprint=sha(o),prior=this.rows.get(o.observation_id);if(prior){if(prior.fingerprint!==fingerprint)throw new EvidenceError('EVIDENCE_IDENTITY_CONFLICT');return structuredClone(prior);}
+ if(o.correction_of){const parent=this.rows.get(o.correction_of);if(!parent||parent.superseded_by||parent.observation.source.source_id!==o.source.source_id||parent.observation.source.account_id!==o.source.account_id||[...scopeKeys,'attribution','metric','unit'].some(k=>parent.observation[k]!==o[k])||canonical(parent.observation.period)!==canonical(o.period))throw new EvidenceError('EVIDENCE_CORRECTION_INVALID');}
+ else if([...this.rows.values()].some(r=>!r.superseded_by&&[...scopeKeys,'attribution','metric','unit'].every(k=>r.observation[k]===o[k])&&canonical(r.observation.period)===canonical(o.period)))throw new EvidenceError('EVIDENCE_CORRECTION_REQUIRED');
+ const row={contract_version:'performance-observation.v1',observation:o,fingerprint,superseded_by:null};this.rows.set(o.observation_id,row);if(o.correction_of)this.rows.get(o.correction_of).superseded_by=o.observation_id;return structuredClone(row);
+ }
+ snapshot({tenant_id,project_id,brand_id,max_age_ms}){if(!Number.isSafeInteger(max_age_ms)||max_age_ms<0)throw new EvidenceError('EVIDENCE_POLICY_REQUIRED');const now=this.now().getTime();const rows=[...this.rows.values()].filter(r=>r.observation.tenant_id===tenant_id&&r.observation.project_id===project_id&&r.observation.brand_id===brand_id&&!r.superseded_by&&!r.observation.retracted);const usable=rows.filter(r=>now-Date.parse(r.observation.observed_at)<=max_age_ms);return {contract_version:'performance-snapshot.v1',state:usable.length?'available':'unavailable',reason:usable.length?null:rows.length?'stale':'missing_or_retracted',observations:structuredClone(usable),snapshot_hash:sha(usable.map(r=>r.fingerprint).sort())};}
+}
+function compareObservations(previous,current){if(previous.superseded_by||current.superseded_by||previous.observation.retracted||current.observation.retracted)throw new EvidenceError('EVIDENCE_UNAVAILABLE');const a=previous.observation,b=current.observation;
+ if(comparisonKeys.some(k=>a[k]!==b[k])||Date.parse(a.period.to)-Date.parse(a.period.from)!==Date.parse(b.period.to)-Date.parse(b.period.from)||Date.parse(a.period.to)>Date.parse(b.period.from))throw new EvidenceError('EVIDENCE_INCOMPATIBLE');
+ return {contract_version:'evidence-recommendation.v1',kind:'review_metric_change',metric:b.metric,previous_value:a.value,current_value:b.value,absolute_change:b.value-a.value,percentage_change:a.value===0?null:(b.value-a.value)/a.value*100,evidence:[previous.fingerprint,current.fingerprint],confidence:'observed_change_only',causal_claim:false,requires_customer_acceptance:true};
+}
+const Feedback=z.object({recommendation_hash:z.string().regex(/^[a-f0-9]{64}$/),decision:z.enum(['accepted','rejected']),customer_actor:uuid,tenant_id:identifier,project_id:identifier,recorded_at:z.string().datetime({offset:true})}).strict();
+module.exports={Observation,Feedback,parseObservation,PerformanceEvidenceReferenceRegistry,compareObservations,EvidenceError};
