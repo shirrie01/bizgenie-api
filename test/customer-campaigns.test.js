@@ -141,6 +141,10 @@ beforeEach(() => {
 });
 
 describe("customer campaign API", () => {
+  it('serves bounded discovery with private headers, archived filters and foreign-scope denial',async()=>{
+    const client=fixture();await customer(client.post('/customer/campaigns')).send(createBody());await customer(client.post('/customer/campaigns')).send(createBody({idempotency_key:'second',name:'Second'}));
+    const url='/customer/campaigns/discovery',q={tenant_id:'tenant_a',project_id:'project_a',limit:1};assert.equal((await client.get(url).query(q)).status,401);const first=await customer(client.get(url).query(q));assert.equal(first.status,200);assert.equal(first.body.campaigns.length,1);assert.ok(first.body.next_cursor);assert.match(first.headers['cache-control'],/no-store/);const next=await customer(client.get(url).query({...q,cursor:first.body.next_cursor}));assert.equal(next.status,200);assert.notEqual(next.body.campaigns[0].campaign_id,first.body.campaigns[0].campaign_id);assert.equal(next.body.next_cursor,null);assert.equal((await customer(client.get(url).query({...q,limit:101}))).status,400);assert.equal((await customer(client.get(url).query(q),'token-b')).status,404);
+  });
   it("creates, lists, reads and resumes a campaign through customer-safe DTOs", async () => {
     const client = fixture();
     const created = await customer(client.post("/customer/campaigns")).send(createBody());
