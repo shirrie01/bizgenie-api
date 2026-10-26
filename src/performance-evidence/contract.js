@@ -23,7 +23,7 @@ class PerformanceEvidenceReferenceRegistry{
 }
 function compareObservations(previous,current){if(previous.superseded_by||current.superseded_by||previous.observation.retracted||current.observation.retracted)throw new EvidenceError('EVIDENCE_UNAVAILABLE');const a=previous.observation,b=current.observation;
  if(comparisonKeys.some(k=>a[k]!==b[k])||Date.parse(a.period.to)-Date.parse(a.period.from)!==Date.parse(b.period.to)-Date.parse(b.period.from)||Date.parse(a.period.to)>Date.parse(b.period.from))throw new EvidenceError('EVIDENCE_INCOMPATIBLE');
- return {contract_version:'evidence-recommendation.v1',kind:'review_metric_change',metric:b.metric,previous_value:a.value,current_value:b.value,absolute_change:b.value-a.value,percentage_change:a.value===0?null:(b.value-a.value)/a.value*100,evidence:[previous.fingerprint,current.fingerprint],confidence:'observed_change_only',causal_claim:false,requires_customer_acceptance:true};
+ return {contract_version:'evidence-recommendation.v1',kind:'review_metric_change',metric:b.metric,previous_value:a.value,current_value:b.value,absolute_change:b.value-a.value,percentage_change:a.value===0||!Number.isFinite((b.value-a.value)/a.value*100)?null:(b.value-a.value)/a.value*100,evidence:[previous.fingerprint,current.fingerprint],confidence:'observed_change_only',causal_claim:false,requires_customer_acceptance:true};
 }
 const Feedback=z.object({recommendation_hash:z.string().regex(/^[a-f0-9]{64}$/),decision:z.enum(['accepted','rejected']),customer_actor:uuid,tenant_id:identifier,project_id:identifier,recorded_at:z.string().datetime({offset:true})}).strict();
 module.exports={Observation,Feedback,parseObservation,PerformanceEvidenceReferenceRegistry,compareObservations,EvidenceError};

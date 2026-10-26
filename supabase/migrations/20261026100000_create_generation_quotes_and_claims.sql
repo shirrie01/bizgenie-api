@@ -17,6 +17,7 @@ create table public.generation_quotes (
  foreign key(tenant_id,project_id) references public.projects(tenant_id,project_id) on delete restrict,
  foreign key(project_id,brand_id) references public.brand_brains(project_id,brand_id) on delete restrict,
  unique(tenant_id,project_id,auth_user_id,idempotency_key),
+ unique(tenant_id,project_id,auth_user_id,confirmation_key),
  check((state='confirmed' and confirmation_key is not null and job_id is not null and reservation_id is not null) or (state in ('quoted','cancelled') and confirmation_key is null and job_id is null and reservation_id is null))
 );
 create table public.generation_execution_claims (
