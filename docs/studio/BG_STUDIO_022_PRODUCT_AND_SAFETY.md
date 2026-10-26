@@ -1,0 +1,25 @@
+# BG022 — product evidence, market boundaries and distributed safety
+
+26 October 2026. Local-only draft; all new server services disabled/unconfigured by default. No live fetch/provider/OAuth/Stripe/IAM/cloud changes. Sole Mission Control preserved.
+
+## Product intelligence security report
+
+Owner-only immutable source submission records declared URL, ownership attestation, submitted plain text, SHA256, claims/interpretation/objective and timestamp. Retrieval is explicitly not_fetched, extraction timestamp null: no pretend extraction or external verification. Owner confirmation/rejection/revocation has CAS/idempotency/history; member reads, foreign-brand404. Optional accepted-source context enters existing Learning Brain only by explicit server injection; quote/confirm/start revalidate withdrawal, Brand Brain never overwritten. Versioned source revisions are new source IDs/content hashes, not destructive edits.
+
+External website ingestion remains disabled. URL/DNS planning rejects non-HTTPS, credentials/query/hash/nonstandard ports, encoded/internal/private/reserved literals, private/mixed DNS and IPv6 special ranges. A future executor must pin validated socket addresses and TLS host, reject redirects, bound128KiB/3seconds and content types, use a reviewed safe parser, rate limits and no credentials/proxy/redirect forwarding. No parser/fetch infrastructure is claimed. Product text is untrusted data; frontend must render as text, never HTML. Retention, deletion/backup and extraction infrastructure still need approved policy.
+
+## Market intelligence architecture
+
+Extends existing src/mission-control contracts; no second register or customer-admin route/store. Six requested families and explicit evidence/review/supersession/provenance. Promotion only from reviewed public verified-source facts into a separately approved general insight, then freshness/sector/objective relevance. Internal STRATEGIC_DECISIONS, marketing claims, unreviewed/private documents cannot promote. No scraping, competitor assertions, copyrighted asset reuse, pricing mutation or cross-tenant learning. Original competitive action matrix/eight canons inaccessible, so actual reviewed competitor knowledge remains EXTERNAL DEPENDENCY. Creator-economy threshold is not satisfied. These are contract-only internal functions, not an operational research system.
+
+## Distributed financial-safety report
+
+Opt-in RuntimeLimits uses existing PostgreSQL and generation claims, not a replacement ledger/job system. Explicit immutable policy source/version/group; all groups share global/tenant/request/byte/probe ceilings. Immutable activation metadata prevents version bumps silently resetting limits; policy rollout requires separately reviewed control-plane action. Credits are not converted to currency. Optional provider upper-bound minor-unit policy is independent of credit amounts; require_currency_ceiling with no trustworthy source fails503. Currency budgets are per provider group and cannot change currency within that namespace; no exchange rates/global mixed-currency conversion invented.
+
+Independent workers serialize admission against durable held slots; calling/unknown retains capacity until authoritative terminal settlement. Before-call takeover transfers the same slot/fence; stale claims cannot acquire. Terminal release shares the existing credit settlement/cancellation transaction. Daily read-only reconciliation budget never authorizes resubmission. Per-tenant previews reserve8MiB worst-case plus one request before storage metadata; HEAD consumes one request, no byte budget. No abort refund can exceed the cap. Intake reserves declared bytes transactionally at initialization; repeated intent consumes once, over-budget fails before storage. Logical deletion does not refund storage without proof of physical erasure. Existing storage must be inventoried/seeded before activation; these counters alone do not prove total legacy storage.
+
+No approved real provider currency/cap values supplied; synthetic GBP minor values are fixtures, not costs/canon. Local worker cap remains2/pool; opt-in distributed composition rejects pools below4 and still needs request headroom/load evidence. Limits remain off until uniform policy/legacy drain/probe/storage baseline/privacy/retention/role review. Process-local media cap remains defense in depth. No quota/rate-control implementation for real website ingestion or malware inspection is claimed.
+
+## Deterministic evidence
+
+Independent workers race one durable execution slot; winner remains held on unknown; definitive reconciliation frees once; another job proceeds; exhausted probe budget never calls provider. Safe cancellation releases technical capacity and customer reservation; missing cost authority makes zero provider calls. A second preview is denied429 before any storage stat. Intake retries reserve80bytes once and a further80 exceeds synthetic128byte cap. Product acceptance/revocation and stale quote are exercised on disposable PostgreSQL; URL/DNS and internal market promotion tests are synthetic. Full totals and restore evidence recorded in final checkpoint.

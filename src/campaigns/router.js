@@ -346,6 +346,7 @@ function createCustomerCampaignRouter({
   campaignGenerationService,
   measurementRegistry,
   mediaPreviewStorage,
+  runtimeDeliveryLimits=null,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -526,6 +527,7 @@ function createCustomerCampaignRouter({
       const asset = await repository.getMediaPreviewAsset(context, campaignId, {
         variantId: parse(uuid, req.params.variantId), revisionId: parse(uuid, req.params.revisionId), assetId: parse(uuid, req.params.assetId), expectedVersion: query.expected_campaign_version,
       });
+      if(runtimeDeliveryLimits)asset.reserveDelivery=({method})=>runtimeDeliveryLimits.preview({tenant_id:context.tenant_id,method});
       await deliverPreview(req, res, asset, mediaPreviewStorage);
     } catch (error) {
       if (res.destroyed || res.headersSent) return;

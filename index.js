@@ -293,7 +293,9 @@ function createApp({
   learningService = null,
   creativeIntelligenceService = null,
   growthReadModel = null,
+  productIntelligenceService = null,
   mediaPreviewStorage = null,
+  runtimeDeliveryLimits = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   campaignGenerationService,
@@ -528,6 +530,8 @@ function createApp({
     customerVideoRouter
   );
 
+  app.use('/customer/product-intelligence',require('./src/product-intelligence/router').createProductRouter({service:productIntelligenceService,tokenVerifier:customerTokenVerifier}));
+
   app.use('/customer/intelligence',require('./src/creative-intelligence/router').createCreativeIntelligenceRouter({service:creativeIntelligenceService,growth:growthReadModel,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/insights',require('./src/learning-persistence/router').createLearningRouter({service:learningService,tokenVerifier:customerTokenVerifier}));
@@ -555,6 +559,7 @@ function createApp({
       campaignGenerationService: resolvedCampaignGenerationService,
       measurementRegistry: campaignMeasurementRegistry,
       mediaPreviewStorage,
+      runtimeDeliveryLimits,
       logger,
     })
   );
