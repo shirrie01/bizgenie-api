@@ -1,6 +1,6 @@
 const express=require('express');const {z}=require('zod');const {identifier}=require('../schema');const {AuthenticationRequiredError,AuthorizationDeniedError}=require('../../authorization');
 function createDraftInvoiceRouter({authorizeTenantRequest,repository,stripe,enabled=false}){
- const router=express.Router();router.get('/',async(req,res)=>{try{
+ const router=express.Router();router.use(require('../../authentication/privateResponse').privateResponse);router.get('/',async(req,res)=>{try{
   const q=z.object({tenant_id:identifier,limit:z.coerce.number().int().min(1).max(50).default(25),cursor:z.string().regex(/^in_[A-Za-z0-9]+$/).optional()}).strict().safeParse(req.query);if(!q.success)return res.status(400).json({error:{code:'BILLING_VALIDATION_ERROR',message:'Request validation failed'}});
   const auth=await authorizeTenantRequest(req,{action:'billing:checkout'});if(auth.actor?.kind!=='customer'||auth.membership_role!=='owner'||auth.action!=='billing:checkout'||auth.tenant_id!==q.data.tenant_id)throw new AuthorizationDeniedError();
   if(!enabled||!stripe)throw Error('disabled');const customer=await repository.getStripeCustomerByTenant(auth.tenant_id);if(!customer||customer.livemode!==false)throw Error('unsupported mapping');
