@@ -165,6 +165,11 @@ class InMemoryCampaignRepository extends CampaignRepository {
     catch (error) { if (error instanceof CampaignError) throw error; throw new CampaignPersistenceError(); }
   }
 
+  async discoverCampaigns(context,q) {
+    if(!authorization.safeParse(context).success||!(await this.authorize(clone(context))))throw new CampaignResourceError();
+    const d=require('./discovery');const campaigns=[...this.state.campaigns.values()].filter(c=>c.tenant_id===context.tenant_id&&c.project_id===context.project_id).map(projection.decorate);
+    return d.page(q,d.memoryRows(campaigns,q));
+  }
   async listCampaigns(context) {
     if(!authorization.safeParse(context).success)throw new CampaignResourceError();
     if (!(await this.authorize(clone(context)))) throw new CampaignResourceError();

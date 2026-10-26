@@ -21,16 +21,23 @@ function docker(args,input){const r=spawnSync('docker',['exec','-i',container,..
  const quotes=new PostgresGenerationQuoteService({billingRepository:billing,profiles:{'text.standard':{id:'local.restore',version:1,provider_model:'mock-only'}},now:clock});
  const quote=await quotes.quote(actor,{tenant_id:'synthetic',project_id:'synthetic',campaign_id:create.campaign_id,variant_id:item.created_ids.variant_ids[0],expected_campaign_version:2,execution_class:'text.standard',execution_mode:'ai',supplied_assets:[],idempotency_key:'local_restore_quote'});
  await quotes.confirm(actor,quote.quote_id,{idempotency_key:'local_restore_confirm',max_credits:2,confirmed:true});
+ const bg021=await require('./fixtures/bg021-restore-seed.cjs').seed({pool:a,actor});
  const version=docker(['pg_dump','--version']).toString().trim();const dump=docker(['pg_dump','-U','postgres','-Fc','-d',source]);
  docker(['pg_restore','-U','postgres','--exit-on-error','--no-owner','-d',target],dump);
  const before=(await a.query('select * from workspace_onboarding_profiles')).rows,after=(await b.query('select * from workspace_onboarding_profiles')).rows;
  require('node:assert/strict').deepEqual(after,before);
- for(const table of ['generation_jobs','generation_quotes','generation_execution_claims','credit_ledger']){
+ for(const table of ['generation_jobs','generation_quotes','generation_execution_claims','credit_ledger',...bg021.tables]){
   const first=(await a.query(`select * from ${table} order by 1`)).rows,second=(await b.query(`select * from ${table} order by 1`)).rows;require('node:assert/strict').deepEqual(second,first);
  }
+ for(const table of bg021.tables)require('node:assert/strict').ok((await b.query(`select count(*)::int n from ${table}`)).rows[0].n>0,table+' must contain restored synthetic evidence');
  const restoredQuotes=new PostgresGenerationQuoteService({billingRepository:new PostgresBillingRepository({pool:b,now:clock}),profiles:{'text.standard':{id:'local.restore',version:1,provider_model:'mock-only'}},now:clock});
  const restoredState=await restoredQuotes.status(actor,quote.quote_id);require('node:assert/strict').equal(restoredState.state,'queued');require('node:assert/strict').equal(restoredState.reserved_credits,2);
+ const {DurableSocialPublishing}=require(root+'/src/social-publishing/service'),{DurableLearningService}=require(root+'/src/learning-persistence/service'),{CreativeJobService}=require(root+'/src/generation-quotes/jobs');
+ const restoredBilling=new PostgresBillingRepository({pool:b,now:()=>new Date(bg021.at)}),restoredSocial=new DurableSocialPublishing({billingRepository:restoredBilling}),restoredLearning=new DurableLearningService({billingRepository:restoredBilling,socialService:restoredSocial,enabled:true,maxAgeMs:86400000,now:()=>new Date(bg021.at)});
+ require('node:assert/strict').equal((await restoredSocial.list(actor,bg021.scope)).dispatches[0].state,'published');
+ require('node:assert/strict').equal((await restoredLearning.futureContext(actor,bg021.scope,{objective:'traffic'})).recommendation_ids.length,1);
+ const restoredJobs=new CreativeJobService({quoteService:restoredQuotes,campaignRepository:new PostgresCampaignRepository({pool:b})});require('node:assert/strict').ok((await restoredJobs.get(actor,bg021.job_id,bg021.scope)).association.current);
  const {preflight}=require(root+'/src/workspace-onboarding/preflight');const schema=await preflight(b);
  require('node:assert/strict').equal(schema.professional,true);
- console.log(JSON.stringify({result:'PASS',tool:version,scope:'two new disposable databases only',rows_preserved:after.length,sector:after[0].sector_key,preflight:schema,dump_bytes:dump.length,shared_or_managed_restore:false,financial_tables_preserved:true,restored_execution_state:restoredState.state,reserved_credits:restoredState.reserved_credits},null,2));
+ console.log(JSON.stringify({result:'PASS',tool:version,scope:'two new disposable databases only',rows_preserved:after.length,sector:after[0].sector_key,preflight:schema,dump_bytes:dump.length,shared_or_managed_restore:false,financial_tables_preserved:true,bg021_populated_tables_preserved:bg021.tables,private_object_bytes_restored:false,restored_job_association_readable:true,restored_published_dispatch_readable:true,restored_accepted_learning_readable:true,restored_execution_state:restoredState.state,reserved_credits:restoredState.reserved_credits},null,2));
 }finally{await a?.end();await b?.end();await admin.query(`drop database if exists ${source}`);await admin.query(`drop database if exists ${target}`);await admin.end();}})().catch(e=>{console.error(e.message);process.exitCode=1});

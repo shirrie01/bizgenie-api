@@ -1,6 +1,6 @@
 const { randomUUID } = require("node:crypto");
 const { Pool } = require("pg");
-const { CampaignError, CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError } = require("./errors");
+const { CampaignError, CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError, CampaignTransitionError } = require("./errors");
 const { hashIntent, parseCommand } = require("./schema");
 const { CampaignRepository, InMemoryCampaignRepository } = require("./repository");
 const projection = require('./projection');
@@ -97,7 +97,7 @@ class PostgresCampaignRepository extends CampaignRepository {
     if (!result.rowCount) throw new CampaignResourceError();
   }
 
-  async executeCommand(context, input, requestId) {
+  async executeCommand(context, input, requestId, transactionEffect = null) {
     const command = parseCommand(input);
     let client;
     let stage = "connect";
@@ -113,6 +113,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       const intentHash = hashIntent({ ...command, actor: context.actor });
       if (existing.rowCount) {
         if (existing.rows[0].intent_hash !== intentHash) throw new CampaignIdempotencyError();
+        if(transactionEffect)await transactionEffect(client,{command,result:existing.rows[0].result});
         stage = "commit_replay";
         await client.query("commit");
         return clone(existing.rows[0].result);
@@ -120,6 +121,11 @@ class PostgresCampaignRepository extends CampaignRepository {
 
       stage = "load_campaign";
       const before = command.campaign_id ? await this._loadCampaign(client, context, command.campaign_id, true) : null;
+      if(command.command_type==='begin_manual_publication'&&(await client.query("select to_regclass('public.social_dispatches') relation")).rows[0].relation){
+        // Root FOR UPDATE serializes this decision against enqueue's root FOR SHARE.
+        const blocked=await client.query("select dispatch_id from social_dispatches where tenant_id=$1 and project_id=$2 and campaign_id=$3 and variant_id=$4 and state in ('queued','claimed','sending','reconciliation_required','published') limit 1 for share",[context.tenant_id,context.project_id,command.campaign_id,command.payload.variant_id]);
+        if(blocked.rowCount)throw new CampaignTransitionError('PUBLICATION_ALREADY_STARTED');
+      }
       stage = "command";
       const memory = new InMemoryCampaignRepository({
         now: this.now, idFactory: this.idFactory,
@@ -137,6 +143,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       if(!projection.verify(after).valid)throw new CampaignPersistenceError();
       stage = "persist";
       await this._persistCampaign(client, before, after, command, context, intentHash, result);
+      if(transactionEffect)await transactionEffect(client,{command,result});
       stage = "constraints_immediate";
       await client.query("set constraints all immediate");
       await client.query("select set_config('bizgenie.campaign_command','off',true)");
@@ -325,6 +332,7 @@ class PostgresCampaignRepository extends CampaignRepository {
     }
     return campaigns;
   }
+  async discoverCampaigns(context,q){const d=require('./discovery');return this._read(context,async client=>{await client.query("set local statement_timeout='2000ms'");const r=await client.query(d.SQL,[context.tenant_id,context.project_id,q.archived,q.after?.at||null,q.after?.id||null,q.limit+1]);return d.page(q,projection.normalize(r.rows));});}
   async listCampaigns(context){return this._read(context,client=>this._list(client,context));}
   async listCampaignEvents(context,campaignId) { return (await this.getCampaign(context,campaignId)).events; }
   async listWorkspaceCalendar(context,q) {
