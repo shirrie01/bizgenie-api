@@ -48,11 +48,13 @@ begin
  if tg_op='DELETE' then raise exception 'execution history is immutable';end if;
  if new.job_id<>old.job_id or new.quote_id<>old.quote_id then raise exception 'execution authority is immutable';end if;
  if old.state in ('succeeded','failed','cancelled') and new is distinct from old then raise exception 'execution result is final';end if;
- if new.state='claimed' and old.state in ('queued','claimed') then
+ if new.state='cancelled' and old.state in ('queued','claimed') then
+  if new.fence<>old.fence+1 or new.claim_token is not null then raise exception 'cancellation fence required';end if;
+ elsif new.state='claimed' and old.state in ('queued','claimed') then
   if new.fence<>old.fence+1 or new.claim_token is not distinct from old.claim_token then raise exception 'new execution fence required';end if;
  elsif new.fence<>old.fence or new.claim_token is distinct from old.claim_token then raise exception 'execution fence is immutable';
  end if;
- if not ((old.state in ('queued','claimed') and new.state='claimed') or (old.state='claimed' and new.state='calling') or (old.state in ('calling','recovery_required') and new.state in ('recovery_required','succeeded','failed')) or new is not distinct from old) then raise exception 'invalid execution transition';end if;
+ if not ((old.state in ('queued','claimed') and new.state in ('claimed','cancelled')) or (old.state='claimed' and new.state='calling') or (old.state in ('calling','recovery_required') and new.state in ('recovery_required','succeeded','failed')) or new is not distinct from old) then raise exception 'invalid execution transition';end if;
  return new;
 end $$;
 create trigger generation_claim_immutable before update or delete on public.generation_execution_claims for each row execute function generation_quote_private.guard_claim();

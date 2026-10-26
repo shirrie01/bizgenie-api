@@ -51,7 +51,7 @@ class PostgresGenerationQuoteService{
    const q=await this.lockedQuote(client,actor,id),body=parsed.data;
    if(q.state==='cancelled')throw new QuoteError('QUOTE_CANCELLED');
    if(body.max_credits!==Number(q.credit_cost))throw new QuoteError('QUOTE_CHANGED');
-   if(q.state==='confirmed'){if(q.confirmation_key!==body.idempotency_key)throw new QuoteError('IDEMPOTENCY_KEY_CONFLICT');return {status:'queued',job_id:q.job_id,quote_id:q.quote_id,reserved_credits:Number(q.credit_cost),replay:true};}
+   if(q.state==='confirmed'){if(q.confirmation_key!==body.idempotency_key)throw new QuoteError('IDEMPOTENCY_KEY_CONFLICT');const execution=await client.query('select state from public.generation_execution_claims where job_id=$1',[q.job_id]);const state=execution.rows[0]?.state;return {status:state||'queued',job_id:q.job_id,quote_id:q.quote_id,reserved_credits:['succeeded','failed','cancelled'].includes(state)?0:Number(q.credit_cost),replay:true};}
    await client.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[canonical(['confirm',q.tenant_id,q.project_id,q.auth_user_id,body.idempotency_key])]);
    const reused=await client.query('select quote_id from public.generation_quotes where tenant_id=$1 and project_id=$2 and auth_user_id=$3 and confirmation_key=$4 and quote_id<>$5',[q.tenant_id,q.project_id,q.auth_user_id,body.idempotency_key,id]);
    if(reused.rowCount)throw new QuoteError('IDEMPOTENCY_KEY_CONFLICT');
@@ -66,7 +66,14 @@ class PostgresGenerationQuoteService{
    return {status:'queued',job_id:jobId,quote_id:id,reserved_credits:Number(q.credit_cost),replay:false};
   });
  }
- async status(actor,id){return this.transaction(async client=>{const q=await this.lockedQuote(client,actor,id);const r=q.job_id?await client.query('select state from public.generation_execution_claims where job_id=$1',[q.job_id]):null;return {quote_id:id,job_id:q.job_id,state:r?.rows[0]?.state||q.state,execution_class:q.request.execution_class,reserved_credits:q.state==='confirmed'&&!['succeeded','failed'].includes(r?.rows[0]?.state)?Number(q.credit_cost):0,reservation_state:['succeeded','failed'].includes(r?.rows[0]?.state)?'settled':q.state==='confirmed'?'held':'none'};});}
- async cancel(actor,id){return this.transaction(async client=>{const q=await this.lockedQuote(client,actor,id);if(q.state==='confirmed')throw new QuoteError('CONFIRMATION_ALREADY_COMMITTED');await client.query("update public.generation_quotes set state='cancelled' where quote_id=$1",[id]);return {quote_id:id,status:'cancelled',charged:false};});}
+ async status(actor,id){return this.transaction(async client=>{const q=await this.lockedQuote(client,actor,id);const r=q.job_id?await client.query('select state from public.generation_execution_claims where job_id=$1',[q.job_id]):null;return {quote_id:id,job_id:q.job_id,state:r?.rows[0]?.state||q.state,execution_class:q.request.execution_class,reserved_credits:q.state==='confirmed'&&!['succeeded','failed','cancelled'].includes(r?.rows[0]?.state)?Number(q.credit_cost):0,reservation_state:['succeeded','failed','cancelled'].includes(r?.rows[0]?.state)?'settled':q.state==='confirmed'?'held':'none'};});}
+ async cancel(actor,id){return this.transaction(async client=>{const q=await this.lockedQuote(client,actor,id);if(q.state==='confirmed'){
+ const row=(await client.query('select * from public.generation_execution_claims where job_id=$1 for update',[q.job_id])).rows[0];
+ if(row?.state==='cancelled')return {quote_id:id,status:'cancelled',charged:false};
+ if(!row||!['queued','claimed'].includes(row.state))throw new QuoteError('EXECUTION_ALREADY_STARTED');
+ const account=await this.billing.requireLockedAccount(client,q.tenant_id),reservation=await this.billing.requireRelatedEntry(client,account,q.reservation_id,'reservation');
+ await this.billing.appendLocked(client,account,{tenant_id:q.tenant_id,entry_type:'reservation_release',amount:reservation.amount,balance_delta:0,reserved_delta:-reservation.amount,project_id:reservation.project_id,generation_id:reservation.generation_id,execution_id:reservation.execution_id,transaction_correlation_id:reservation.transaction_correlation_id,reservation_entry_id:reservation.ledger_entry_id,idempotency_key:`quote:settle:${q.quote_id}`});
+ await client.query("update public.generation_execution_claims set state='cancelled',fence=fence+1,claim_token=null,updated_at=$2 where job_id=$1",[q.job_id,this.now()]);return {quote_id:id,status:'cancelled',charged:false};
+ }await client.query("update public.generation_quotes set state='cancelled' where quote_id=$1",[id]);return {quote_id:id,status:'cancelled',charged:false};});}
 }
 module.exports={PostgresGenerationQuoteService,QuoteError,requestSchema,digest};
