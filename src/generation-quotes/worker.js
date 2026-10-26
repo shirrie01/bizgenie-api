@@ -1,6 +1,6 @@
 const {randomUUID}=require('node:crypto');const {QuoteError,digest}=require('./service');
 class FencedGenerationWorker{
- constructor({quoteService,provider,fault=async()=>{}}){this.quotes=quoteService;this.billing=quoteService.billing;this.provider=provider;this.fault=fault;}
+ constructor({quoteService,provider,executionPolicy=null,fault=async()=>{}}){this.quotes=quoteService;this.billing=quoteService.billing;this.provider=provider;this.executionPolicy=executionPolicy;this.fault=fault;if(executionPolicy?.mode==='quoted_v1'&&executionPolicy.quotes!==quoteService)throw new TypeError('Mismatched quote execution policy');if(executionPolicy?.mode==='quoted_v1'&&provider.executionPolicy!==executionPolicy)throw new TypeError('Provider must share durable execution policy');}
  async load(client,jobId){await this.quotes.preflight(client);const r=await client.query('select e.*,q.tenant_id,q.project_id,q.brand_id,q.auth_user_id,q.reservation_id,q.request,q.profile,q.credit_cost from public.generation_execution_claims e join public.generation_quotes q on q.quote_id=e.quote_id and q.job_id=e.job_id where e.job_id=$1 for update of e',[jobId]);if(r.rowCount!==1)throw new QuoteError('RESOURCE_NOT_AVAILABLE',404);return r.rows[0];}
  match(row,claim){if(row.claim_token!==claim.token||Number(row.fence)!==claim.fence)throw new QuoteError('EXECUTION_FENCE_STALE');}
  async claim(jobId,{recoverBeforeCall=false}={}){return this.billing.withTransaction(async client=>{
@@ -37,7 +37,8 @@ class FencedGenerationWorker{
  }
  async run(claim){const row=await this.start(claim);try{
   await this.fault('after_call_boundary_before_provider');
-  const outcome=await this.provider.submit({idempotency_key:claim.job_id,profile:row.profile,request:row.request});
+  const submit=()=>this.provider.submit({idempotency_key:claim.job_id,profile:row.profile,request:row.request});
+  const outcome=await (this.executionPolicy?this.executionPolicy.runClaim(claim,submit):submit());
   await this.fault('after_provider_before_settlement');
   if(outcome?.status==='pending'||outcome?.status==='unknown'){await this.recovery(claim,outcome.provider_reference);return {status:'recovery_required'};}
   return await this.finalize(claim,outcome);
