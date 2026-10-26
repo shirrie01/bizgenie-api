@@ -211,7 +211,11 @@ function stageAction(campaign) {
   return { code: "create_content_item", label: "Create content item" };
 }
 
-function safeVariant(variant, item) {
+function safeVariant(variant, item, campaign) {
+  const schedule=campaign.schedules.get(variant.active_schedule_id);
+  const attempt=campaign.attempts.get(variant.pending_attempt_id);
+  const original=campaign.publications.get(variant.publication_id);
+  const publication=original?(require('./projection').latestCorrection(campaign,original.publication_id)||original):null;
   const current = variant.revisions.get(variant.current_revision_id);
   return {
     variant_id: variant.variant_id,
@@ -222,6 +226,9 @@ function safeVariant(variant, item) {
     workflow: variant.workflow,
     current_revision_id: variant.current_revision_id,
     current_content: current?.content || null,
+    current_schedule:schedule?{schedule_id:schedule.schedule_id,revision_id:schedule.revision_id,scheduled_for:schedule.scheduled_for,timezone:schedule.timezone}:null,
+    manual_publication:attempt?{attempt_id:attempt.attempt_id,revision_id:attempt.revision_id,started_at:attempt.started_at,method:'manual'}:null,
+    publication:publication?{record_id:original.publication_id,revision_id:original.revision_id,published_at:publication.published_at,publication_url:publication.publication_url,method:'manual',evidence_kind:'customer_attestation',correction_id:publication.correction_id||null}:null,
     updated_at: variant.updated_at,
   };
 }
@@ -263,7 +270,7 @@ function safeCampaign(campaign, { detail = false } = {}) {
       archived_at: item.archived_at,
       created_at: item.created_at,
       updated_at: item.updated_at,
-      variants: [...item.variants.values()].map((variant) => safeVariant(variant, item)),
+      variants: [...item.variants.values()].map((variant) => safeVariant(variant, item, campaign)),
     })),
   };
 }
@@ -374,6 +381,13 @@ function createCustomerCampaignRouter({
       return res.status(201).json({ generation_id: result.generation_id, campaign: safeCampaign(result.campaign, { detail: true }) });
     } catch (error) { return sendCampaignError(error, res, logger); }
   });
+
+  router.get('/discovery',async(req,res)=>{try{
+    const scope=parse(queryScope, {tenant_id:req.query.tenant_id,project_id:req.query.project_id});
+    const context=await authorize({req,tokenVerifier,authorizationService,tenantId:scope.tenant_id,projectId:scope.project_id,action:'project:read'});
+    const q=require('./discovery').parseQuery(req.query,context.actor);
+    return res.json(await repository.discoverCampaigns(context,q));
+  }catch(error){return sendCampaignError(error,res,logger);}});
 
   router.get("/", async (req, res) => {
     try {

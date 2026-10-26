@@ -327,6 +327,7 @@ class PostgresCampaignRepository extends CampaignRepository {
     }
     return campaigns;
   }
+  async discoverCampaigns(context,q){const d=require('./discovery');return this._read(context,async client=>{await client.query("set local statement_timeout='2000ms'");const r=await client.query(d.SQL,[context.tenant_id,context.project_id,q.archived,q.after?.at||null,q.after?.id||null,q.limit+1]);return d.page(q,projection.normalize(r.rows));});}
   async listCampaigns(context){return this._read(context,client=>this._list(client,context));}
   async listCampaignEvents(context,campaignId) { return (await this.getCampaign(context,campaignId)).events; }
   async listWorkspaceCalendar(context,q) {
