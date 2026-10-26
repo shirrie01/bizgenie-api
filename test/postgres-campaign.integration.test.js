@@ -46,6 +46,24 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
   });
   after(async()=>{await pool?.end();if(adminPool&&database){for(let i=0;i<20;i++){try{await adminPool.query(`drop database if exists ${database}`);break;}catch{await new Promise((resolve)=>setTimeout(resolve,25));}}}await adminPool?.end();});
   it("initializes only when all fourteen relations are RLS-locked from direct roles",async()=>{await repository.initialize();});
+  it('workspace calendar has SQL/projection parity, bounded pagination and transaction-authorized isolation',async()=>{
+    const {parseQuery,page,memoryRows}=require('../src/campaigns/workspaceCalendar');
+    const s=await scenario(repository),a=await s.approve(await s.add());await s.schedule(a);
+    const t=await scenario(repository);await t.add();const published=await t.approve(await t.add());await t.publish(published);
+    await t.cmd("correct_publication",{variant_id:published.variant_id,publication_id:(await t.variant(published)).publication_id,published_at:NOW,publication_url:null,external_reference:null,note:"Corrected",reason:"Test latest evidence"});
+    const input={tenant_id:'tenant_a',project_id:'project_a',from:'2026-09-03T00:00:00Z',to:'2026-09-04T00:00:00Z',limit:1};
+    const campaigns=await repository.listCampaigns(context);let cursor,actual=[],pages=0;
+    do {const q=parseQuery({...input,...(cursor?{cursor}:{})});const result=await repository.listWorkspaceCalendar(context,q);
+      assert.deepEqual(result,page(q,memoryRows(campaigns,q)));actual.push(...result.entries,...result.unscheduled);cursor=result.next_cursor;pages++;
+    } while(cursor && pages<100);
+    assert.equal(pages,3);assert.equal(new Set(actual.map(r=>r.variant_id)).size,3);
+    const q=parseQuery({...input,limit:100,platform:'youtube'});assert.deepEqual((await repository.listWorkspaceCalendar(context,q)).entries,[]);
+    const foreign={...context,tenant_id:'tenant_b',project_id:'project_b'};
+    await assert.rejects(repository.listWorkspaceCalendar(foreign,parseQuery({...input,tenant_id:'tenant_b',project_id:'project_b'})),{code:'RESOURCE_NOT_AVAILABLE'});
+    await pool.query("delete from public.tenant_memberships where tenant_id='tenant_a' and auth_user_id=$1",[AUTH_A]);
+    try {await assert.rejects(repository.listWorkspaceCalendar(context,parseQuery(input)),{code:'RESOURCE_NOT_AVAILABLE'});}
+    finally {await pool.query("insert into public.tenant_memberships(tenant_id,auth_user_id,role) values('tenant_a',$1,'owner') on conflict(tenant_id,auth_user_id) do update set role='owner'",[AUTH_A]);}
+  });
   regressionCases(()=>repository);
   it('reruns the unapplied I-B migration with existing disposable campaign evidence intact',async()=>{
     const s=await scenario(repository);await s.add();const before=await s.get();

@@ -660,6 +660,18 @@ function createCustomerCampaignRouter({
   return router;
 }
 
+function createCustomerWorkspaceCalendarRouter({repository,tokenVerifier,authorizationService,logger=console}) {
+  const router=express.Router();
+  router.get('/',async(req,res)=>{
+    try {
+      const q=require('./workspaceCalendar').parseQuery(req.query);
+      const context=await authorize({req,tokenVerifier,authorizationService,tenantId:q.tenant_id,projectId:q.project_id,action:'project:read'});
+      return res.json(await repository.listWorkspaceCalendar(context,q));
+    } catch(error) {return sendCampaignError(error,res,logger);}
+  });
+  return router;
+}
+
 function createCustomerCampaignRecommendationRouter({
   recommendationRegistry = createDefaultGoalRecommendationRegistry(),
   measurementRegistry,
@@ -716,5 +728,6 @@ function createCustomerCampaignRecommendationRouter({
 module.exports = {
   createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
+  createCustomerWorkspaceCalendarRouter,
   safeCampaign,
 };

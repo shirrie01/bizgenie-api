@@ -287,6 +287,14 @@ class PostgresCampaignRepository extends CampaignRepository {
   async _list(client,context){const rows=await client.query(`select campaign_id from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id]);const campaigns=[];for(const row of rows.rows)campaigns.push(projection.decorate(await this._loadCampaign(client,context,row.campaign_id)));return campaigns;}
   async listCampaigns(context){return this._read(context,client=>this._list(client,context));}
   async listCampaignEvents(context,campaignId) { return (await this.getCampaign(context,campaignId)).events; }
+  async listWorkspaceCalendar(context,q) {
+    const calendar=require('./workspaceCalendar');
+    return this._read(context,async client=>{
+      await client.query("set local statement_timeout='2000ms'");
+      const result=await client.query(calendar.SQL,[context.tenant_id,context.project_id,q.from,q.to,q.campaign_id||null,q.platform||null,q.workflow||null,!!q.after,q.after?.at||null,q.after?.id||null,q.limit+1]);
+      return calendar.page(q,projection.normalize(result.rows));
+    });
+  }
   async listCalendarEntries(context,range){return this._read(context,async client=>projection.calendar(await this._list(client,context),range));}
   async verifyCampaignProjection(context,campaignId){return projection.verify(await this.getCampaign(context,campaignId));}
   async close(){ if(typeof this.pool.end==="function") await this.pool.end(); }

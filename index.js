@@ -84,6 +84,7 @@ const {
   PostgresGoalRecommendationRegistry,
   createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
+  createCustomerWorkspaceCalendarRouter,
   CampaignVariantGenerationService,
   InMemoryCampaignMeasurementRegistry,
   PostgresCampaignMeasurementRegistry,
@@ -510,6 +511,11 @@ function createApp({
         : next(),
     customerVideoRouter
   );
+
+  app.use('/customer/calendar', createCustomerWorkspaceCalendarRouter({
+    repository:campaignRepository,tokenVerifier:customerTokenVerifier,
+    authorizationService:resolvedAuthorizationService,logger,
+  }));
 
   app.use(
     "/customer/campaigns",
