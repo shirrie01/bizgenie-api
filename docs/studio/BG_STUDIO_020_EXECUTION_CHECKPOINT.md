@@ -42,7 +42,7 @@ The new execution path is not a blanket exactly-once claim: before calling, an o
 | bg-studio-020-stripe-recovery | c656264580491834efcd2e76cb16d89403375802 |
 | bg-studio-020-media-integration | 478392512fc7bf3b7bffe92ad65d45898af0ceab |
 | bg-studio-020-evidence-contracts | 83d49b90b61e391772aca6e1f80f52957bc239f8 |
-| Final integrated functional checkpoint | d4c421f317ab36f3b2cc0d9e10b6d68097aa59cb |
+| Validated pre-final checkpoint | d4c421f317ab36f3b2cc0d9e10b6d68097aa59cb |
 | Separate S1 documentation branch | 16c1d71fd32a5240d531585f22afd38ad6c66195 |
 
 Earlier branch checkpoints are review boundaries, **not independent activation candidates**. Final integration includes later preview/confirmation/cancellation/privacy hardening. Use final integrated SHA and the versioned contract, not an earlier quote prototype. Keep #213->#214->#215->#216 and frontend #48->#49->#50->#51->#52 dependency order. Media commits were replayed only in new branches; two adjacency conflicts preserved both scoped media methods and batched reader. No PR merge occurred.
@@ -78,3 +78,5 @@ S1 stays separate: reviewer sign-off template at16c1d71, founder operator, propo
 5. Founder/reviewer satisfies separate S1 gates, then explicitly authorizes any S2 infrastructure/schema/deployment/real-auth test. Acceptance includes real owner/member/two-workspace/F-08d/e, refresh/revocation/CAS/idempotency, rights/streaming/recovery and founder-visible approval. No activation before these decisions.
 
 Mission Control reconciliation handoff only: existing BG016/017/020 scope, DEC023–025, BLK06/07/08, TD-STUDIO-BE-003/004 and TD-STUDIO-SEC-001/002. No new register/tasks or row-alignment repair without canonical readback. ChatGPT should record durable safety as implemented local/opt-in and retain activation blockers, not close launch requirements from mock tests.
+
+Final-review correction: confirmed creative execution now pins the campaign revision's immutable Brand Brain snapshot/hash and target platform/placement. The existing service is reused through a per-job frozen repository view; no shared service mutation or late live context read. The22 focused PostgreSQL/bridge tests pass; full exact final-head and restore reruns are reported with the final published SHA. This supersedes earlier intermediate code checkpoints.

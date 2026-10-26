@@ -13,7 +13,7 @@ class FencedGenerationWorker{
  async start(claim){return this.billing.withTransaction(async client=>{
   const row=await this.load(client,claim.job_id);this.match(row,claim);if(row.state!=='claimed')throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);
   await this.quotes.authorize(client,{kind:'customer',auth_user_id:row.auth_user_id},row.tenant_id,row.project_id,row.brand_id);
-  const binding=await this.quotes.binding(client,row.request);if(digest(binding.preview_profile)!==digest(row.profile.preview_profile))throw new QuoteError('QUOTE_CHANGED');await this.quotes.rights(client,row.request,row.brand_id);
+  const binding=await this.quotes.binding(client,row.request);if(digest(binding.preview_profile)!==digest(row.profile.preview_profile)||digest(binding.brand_snapshot)!==digest(row.profile.brand_snapshot))throw new QuoteError('QUOTE_CHANGED');await this.quotes.rights(client,row.request,row.brand_id);
   await client.query("update public.generation_execution_claims set state='calling',updated_at=$2 where job_id=$1",[claim.job_id,this.quotes.now()]);return row;
  });}
  async recovery(claim,reference=null){return this.billing.withTransaction(async client=>{
