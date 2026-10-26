@@ -222,9 +222,13 @@ class PostgresCampaignRepository extends CampaignRepository {
     const root = await client.query(`select * from public.campaigns where tenant_id=$1 and project_id=$2 and campaign_id=$3 ${lock ? "for update" : ""}`, [context.tenant_id, context.project_id, campaignId]);
     if (!root.rowCount) throw new CampaignResourceError();
     if(!lock)await this.fault('postgres_after_root_read');
-    const campaign = { ...root.rows[0], created_by: { kind: "customer", auth_user_id: root.rows[0].created_by }, brand_snapshots: new Map(), items: new Map(), approvals: new Map(), previews: new Map(), schedules: new Map(), attempts: new Map(), resolutions: new Map(), publications: new Map(), corrections: new Map(), events: [] };
     const query = async (table) => (await client.query(`select * from public.${table} where tenant_id=$1 and project_id=$2 and campaign_id=$3`, [context.tenant_id, context.project_id, campaignId])).rows;
-    const snapshots = (await client.query(`select s.* from public.campaign_brand_snapshots s where s.tenant_id=$1 and s.project_id=$2 and s.brand_id=$3 and (s.brand_snapshot_id=$4 or exists(select 1 from public.campaign_revisions r where r.campaign_id=$5 and r.brand_snapshot_id=s.brand_snapshot_id))`, [context.tenant_id, context.project_id, campaign.brand_id, campaign.initial_brand_snapshot_id, campaignId])).rows;
+    const snapshots = (await client.query(`select s.* from public.campaign_brand_snapshots s where s.tenant_id=$1 and s.project_id=$2 and s.brand_id=$3 and (s.brand_snapshot_id=$4 or exists(select 1 from public.campaign_revisions r where r.campaign_id=$5 and r.brand_snapshot_id=s.brand_snapshot_id))`, [context.tenant_id, context.project_id, root.rows[0].brand_id, root.rows[0].initial_brand_snapshot_id, campaignId])).rows;
+    return this._hydrateCampaign(root.rows[0],query,snapshots);
+  }
+
+  async _hydrateCampaign(root,query,snapshots) {
+    const campaign = { ...root, created_by: { kind: "customer", auth_user_id: root.created_by }, brand_snapshots: new Map(), items: new Map(), approvals: new Map(), previews: new Map(), schedules: new Map(), attempts: new Map(), resolutions: new Map(), publications: new Map(), corrections: new Map(), events: [] };
     snapshots.forEach((row) => campaign.brand_snapshots.set(row.brand_snapshot_id, row));
     const items = await query("campaign_content_items");
     const variants = await query("campaign_platform_variants");
@@ -284,9 +288,36 @@ class PostgresCampaignRepository extends CampaignRepository {
     finally{client?.release();}
   }
   async getCampaign(context,campaignId){return this._read(context,async client=>projection.decorate(await this._loadCampaign(client,context,campaignId)));}
-  async _list(client,context){const rows=await client.query(`select campaign_id from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id]);const campaigns=[];for(const row of rows.rows)campaigns.push(projection.decorate(await this._loadCampaign(client,context,row.campaign_id)));return campaigns;}
+  async _list(client,context) {
+    const roots=(await client.query(`select * from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id])).rows;
+    if(!roots.length)return [];
+    const ids=roots.map(r=>r.campaign_id),tables=['campaign_content_items','campaign_platform_variants','campaign_revisions','campaign_preview_evidence','campaign_approval_events','campaign_schedule_entries','campaign_manual_attempts','campaign_attempt_resolutions','campaign_publications','campaign_publication_corrections','campaign_events'];
+    const grouped=new Map();
+    for(const table of tables) {
+      const rows=(await client.query(`select * from public.${table} where tenant_id=$1 and project_id=$2 and campaign_id=any($3::uuid[])`,[context.tenant_id,context.project_id,ids])).rows;
+      const groups=new Map();for(const row of rows){if(!groups.has(row.campaign_id))groups.set(row.campaign_id,[]);groups.get(row.campaign_id).push(row);}grouped.set(table,groups);
+    }
+    const snapshots=(await client.query(`select s.* from public.campaign_brand_snapshots s where s.tenant_id=$1 and s.project_id=$2 and exists(select 1 from public.campaigns c where c.tenant_id=s.tenant_id and c.project_id=s.project_id and c.brand_id=s.brand_id and c.campaign_id=any($3::uuid[]) and (c.initial_brand_snapshot_id=s.brand_snapshot_id or exists(select 1 from public.campaign_revisions r where r.tenant_id=c.tenant_id and r.project_id=c.project_id and r.campaign_id=c.campaign_id and r.brand_snapshot_id=s.brand_snapshot_id)))`,[context.tenant_id,context.project_id,ids])).rows;
+    const bySnapshot=new Map(snapshots.map(row=>[row.brand_snapshot_id,row])),campaigns=[];
+    for(const root of roots) {
+      const query=async table=>grouped.get(table).get(root.campaign_id)||[];
+      const snapshotIds=new Set([root.initial_brand_snapshot_id,...(await query('campaign_revisions')).map(r=>r.brand_snapshot_id)]);
+      const owned=[...snapshotIds].map(id=>bySnapshot.get(id));
+      if(owned.some(row=>!row||row.brand_id!==root.brand_id))throw new CampaignPersistenceError();
+      campaigns.push(projection.decorate(await this._hydrateCampaign(root,query,owned)));
+    }
+    return campaigns;
+  }
   async listCampaigns(context){return this._read(context,client=>this._list(client,context));}
   async listCampaignEvents(context,campaignId) { return (await this.getCampaign(context,campaignId)).events; }
+  async listWorkspaceCalendar(context,q) {
+    const calendar=require('./workspaceCalendar');
+    return this._read(context,async client=>{
+      await client.query("set local statement_timeout='2000ms'");
+      const result=await client.query(calendar.SQL,[context.tenant_id,context.project_id,q.from,q.to,q.campaign_id||null,q.platform||null,q.workflow||null,!!q.after,q.after?.at||null,q.after?.id||null,q.limit+1]);
+      return calendar.page(q,projection.normalize(result.rows));
+    });
+  }
   async listCalendarEntries(context,range){return this._read(context,async client=>projection.calendar(await this._list(client,context),range));}
   async verifyCampaignProjection(context,campaignId){return projection.verify(await this.getCampaign(context,campaignId));}
   async close(){ if(typeof this.pool.end==="function") await this.pool.end(); }

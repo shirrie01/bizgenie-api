@@ -153,6 +153,11 @@ class InMemoryCampaignRepository extends CampaignRepository {
       .map(projection.decorate);
   }
 
+  async listWorkspaceCalendar(context, query) {
+    const calendar=require("./workspaceCalendar");
+    return calendar.page(query,calendar.memoryRows(await this.listCampaigns(context),query));
+  }
+
   async listCalendarEntries(context, { from, to }) {
     return projection.calendar(await this.listCampaigns(context),{from,to});
   }

@@ -84,6 +84,7 @@ const {
   PostgresGoalRecommendationRegistry,
   createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
+  createCustomerWorkspaceCalendarRouter,
   CampaignVariantGenerationService,
   InMemoryCampaignMeasurementRegistry,
   PostgresCampaignMeasurementRegistry,
@@ -295,6 +296,7 @@ function createApp({
   paidBetaCaptureService,
   billing,
   billingRepository,
+  commercialCatalog = null,
   env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
@@ -511,6 +513,11 @@ function createApp({
     customerVideoRouter
   );
 
+  app.use('/customer/calendar', createCustomerWorkspaceCalendarRouter({
+    repository:campaignRepository,tokenVerifier:customerTokenVerifier,
+    authorizationService:resolvedAuthorizationService,logger,
+  }));
+
   app.use(
     "/customer/campaigns",
     createCustomerCampaignRouter({
@@ -561,6 +568,7 @@ function createApp({
       "/customer/billing",
       createCustomerBillingRouter({
         repository: billingRepository,
+        commercialCatalog,
         tokenVerifier: customerTokenVerifier,
         authorizationService: resolvedAuthorizationService,
         logger,

@@ -2,7 +2,7 @@ const { z } = require("zod");
 const { OnboardingValidationError } = require("./errors");
 
 // Mirrors the Premium Studio sector keys (BG-STUDIO-007/008-FE). "neutral" is the explicit no-sector layout.
-const SECTOR_KEYS = Object.freeze(["leasing", "perfume", "aesthetics", "beverage", "charity", "takeaway", "neutral"]);
+const SECTOR_KEYS = Object.freeze(["leasing", "perfume", "aesthetics", "beverage", "charity", "takeaway", "neutral", "professional_services"]);
 // Lower-case keys. Channels are preferences for planning only; none implies a connection or publishing right.
 const CHANNEL_KEYS = Object.freeze(["instagram", "tiktok", "facebook", "linkedin", "email", "website"]);
 const SOURCES = Object.freeze(["customer", "inferred"]);

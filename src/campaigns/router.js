@@ -133,7 +133,9 @@ const manualResolutionBody = bodyScope.extend({
 const calendarQuery = queryScope.extend({
   from: z.string().datetime({ offset: true }),
   to: z.string().datetime({ offset: true }),
-}).strict();
+}).strict().refine(value => Date.parse(value.from) < Date.parse(value.to), {
+  path: ["to"], message: "Calendar window end must be after its start",
+});
 const measurementBody = bodyScope.extend({
   idempotency_key: identifier,
   metric: z.enum(["reach","views","impressions","clicks","enquiries","leads","conversions","sales","revenue","value"]),
@@ -561,6 +563,15 @@ function createCustomerCampaignRouter({
     });
   }
 
+  router.post('/:campaignId/variants/:variantId/unschedule',async(req,res)=>{
+    try {
+      const body=parse(bodyScope.extend({expected_campaign_version:expectedVersion,schedule_id:uuid}).strict(),req.body),campaignId=parse(uuid,req.params.campaignId),variantId=parse(uuid,req.params.variantId);
+      const context=await authorize({req,tokenVerifier,authorizationService,tenantId:body.tenant_id,projectId:body.project_id,action:'project:write'});
+      const result=await repository.executeCommand(context,command({body,campaignId,commandType:'unschedule',expectedVersion:body.expected_campaign_version,payload:{variant_id:variantId,schedule_id:body.schedule_id}}));
+      return res.json({result:safeResult(result),campaign:safeCampaign(await repository.getCampaign(context,campaignId),{detail:true})});
+    }catch(error){return sendCampaignError(error,res,logger);}
+  });
+
   router.get("/:campaignId/calendar", async (req, res) => {
     try {
       const query = parse(calendarQuery, req.query);
@@ -658,6 +669,18 @@ function createCustomerCampaignRouter({
   return router;
 }
 
+function createCustomerWorkspaceCalendarRouter({repository,tokenVerifier,authorizationService,logger=console}) {
+  const router=express.Router();
+  router.get('/',async(req,res)=>{
+    try {
+      const q=require('./workspaceCalendar').parseQuery(req.query);
+      const context=await authorize({req,tokenVerifier,authorizationService,tenantId:q.tenant_id,projectId:q.project_id,action:'project:read'});
+      return res.json(await repository.listWorkspaceCalendar(context,q));
+    } catch(error) {return sendCampaignError(error,res,logger);}
+  });
+  return router;
+}
+
 function createCustomerCampaignRecommendationRouter({
   recommendationRegistry = createDefaultGoalRecommendationRegistry(),
   measurementRegistry,
@@ -714,5 +737,6 @@ function createCustomerCampaignRecommendationRouter({
 module.exports = {
   createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
+  createCustomerWorkspaceCalendarRouter,
   safeCampaign,
 };

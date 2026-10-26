@@ -446,3 +446,34 @@ describe("customer campaign API", () => {
     });
   });
 });
+
+describe("DEC-023 explicit calendar window", () => {
+  it("rejects reversed, empty and equivalent-instant windows with the existing validation envelope", async () => {
+    const client = fixture();
+    const created = await customer(client.post("/customer/campaigns")).send(createBody());
+    assert.equal(created.status, 201);
+    const id = created.body.campaign.campaign_id;
+    for (const [from, to] of [
+      ["2026-10-26T00:00:00Z", "2026-10-25T00:00:00Z"],
+      ["2026-10-25T00:00:00Z", "2026-10-25T00:00:00Z"],
+      ["2026-10-25T12:00:00+01:00", "2026-10-25T11:00:00Z"],
+    ]) {
+      const query = new URLSearchParams({ tenant_id: "tenant_a", project_id: "project_a", from, to });
+      const response = await customer(client.get(`/customer/campaigns/${id}/calendar?${query}`));
+      assert.equal(response.status, 400, JSON.stringify(response.body));
+      assert.equal(response.body.error.code, "VALIDATION_ERROR");
+      assert.equal(response.body.error.message, "Request validation failed");
+    }
+  });
+  it("accepts chronological offsets and keeps foreign campaign reads unavailable", async () => {
+    const client = fixture();
+    const created = await customer(client.post("/customer/campaigns")).send(createBody());
+    assert.equal(created.status, 201);
+    const query = new URLSearchParams({ tenant_id: "tenant_a", project_id: "project_a", from: "2026-10-25T12:00:00+01:00", to: "2026-10-25T11:30:00Z" });
+    const route = `/customer/campaigns/${created.body.campaign.campaign_id}/calendar?${query}`;
+    const response = await customer(client.get(route));
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.deepEqual(response.body, { entries: [] });
+    assert.equal((await customer(client.get(route), "token-b")).status, 404);
+  });
+});
