@@ -317,7 +317,14 @@ class StripeSubscriptionService {
     }
   }
 
-  async processVerifiedEvent(event) {
+  async recoverVerifiedEvent(event) {
+    // Internal operator/reconciler entrypoint only; never accepts customer flags or bypasses signature/mode checks.
+    if(!this.repository.requiresStripeFence || this.billingService.repository!==this.repository)throw new StripeBillingStateError();
+    return this.processVerifiedEvent(event,{recoverProcessing:true});
+  }
+
+  async processVerifiedEvent(event, { recoverProcessing = false } = {}) {
+    if(this.repository.requiresStripeFence && this.billingService.repository!==this.repository)throw new StripeBillingStateError();
     if (Boolean(event.livemode) !== this.liveMode()) {
       throw new StripeEnvironmentMismatchError();
     }
@@ -340,11 +347,13 @@ class StripeSubscriptionService {
       livemode: event.livemode,
       intent_hash: eventHash,
       received_at: this.timestamp(),
+      recover_processing: recoverProcessing,
     });
     if (claim.replay) {
       return Object.freeze({ ...claim.result, replay: true });
     }
 
+    const apply = async () => {
     try {
       let effect;
       if (event.type.startsWith("customer.subscription.")) {
@@ -371,7 +380,11 @@ class StripeSubscriptionService {
       await this.repository.abandonStripeEvent(eventId);
       throw error;
     }
+    };
+    return typeof this.repository.withStripeEventFence==='function'
+      ? this.repository.withStripeEventFence(claim,apply) : apply();
   }
+
 
   async handleWebhook({ rawBody, signature }) {
     return this.processVerifiedEvent(this.verifyWebhook(rawBody, signature));
