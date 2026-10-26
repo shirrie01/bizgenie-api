@@ -11,20 +11,26 @@ class ExistingCreativeServicesAdapter{
   if(!owned||owned.status!=='active'||owned.source_kind!=='generated'||owned.generation_job_id!==job.job_id||owned.generation_id!==job.job_id)throw new QuoteError('PRIVATE_ASSET_UNAVAILABLE',503);
   return {status:'succeeded',...(reference?{provider_reference:reference}:{}),result:{asset_id:owned.asset_id,generation_id:job.job_id,media_kind:owned.media_kind,provenance:{origin:request.execution_mode==='hybrid'?'hybrid':'ai_generated',supplied_asset_ids:request.supplied_assets.map(a=>a.asset_id)}}};
  }
+ frozenService(service,job,profile){
+  const record=profile.brand_snapshot?.record;
+  if(!record||record.brand_id!==job.brand_id||record.project_id!==job.project_id||digest(record)!==profile.brand_snapshot.hash)throw new QuoteError('EXECUTION_BINDING_INVALID',503);
+  // Per-job view; do not mutate a shared service or read a changed live Brand Brain after confirmation.
+  const bound=Object.create(service);bound.brandBrainRepository={getByProjectAndBrand:async(project,brand)=>project===job.project_id&&brand===job.brand_id?structuredClone(record):null};return bound;
+ }
  async submit({idempotency_key,profile,request}){
   const job=await this.bound(idempotency_key,request,profile);if(!request.execution_brief)throw new QuoteError('CREATIVE_BRIEF_REQUIRED',422);
-  const common={execution_id:job.request_correlation_id,generation_id:job.job_id,user_id:job.actor_correlation.auth_user_id,project_id:job.project_id,brand_id:job.brand_id,campaign_id:request.campaign_id,topic:request.execution_brief,aspect_ratio:profile.aspect_ratio};
+  const common={execution_id:job.request_correlation_id,generation_id:job.job_id,user_id:job.actor_correlation.auth_user_id,project_id:job.project_id,brand_id:job.brand_id,campaign_id:request.campaign_id,topic:request.execution_brief,aspect_ratio:profile.aspect_ratio,...(profile.creative_target?.platform?{platform:profile.creative_target.platform}:{})};
   if(job.execution_class==='image.normal'&&this.imageService){
    if(this.imageService.provider.model!==profile.provider_model)throw new QuoteError('QUOTE_CHANGED');
    const input=ImageGenerationRequestSchema.parse({...common,image_purpose:request.execution_brief,reference_assets:request.supplied_assets.map(a=>({asset_id:a.asset_id}))});
-   const record=await this.imageService.generate(input,{job});return this.outcome(job,record.asset,request,record.provider_job_id);
+   const record=await this.frozenService(this.imageService,job,profile).generate(input,{job});return this.outcome(job,record.asset,request,record.provider_job_id);
   }
   if(['video.normal','video.premium'].includes(job.execution_class)&&this.videoService){
    const provider=this.videoService.provider;const expected=provider instanceof require('../video-generation/googleVeoProvider').GoogleVertexVeoProvider?require('../video-generation/googleVeoProvider').modelForQuality(job.execution_class.split('.')[1]):provider.modelForQuality?.(job.execution_class.split('.')[1]);
    if(expected!==profile.provider_model)throw new QuoteError('QUOTE_CHANGED');
    if(request.supplied_assets.length>1)throw new QuoteError('OPERATION_UNSUPPORTED',422);
    const input=VideoGenerationRequestSchema.parse({...common,video_purpose:request.execution_brief,quality:job.execution_class.split('.')[1],duration_seconds:profile.duration_seconds,...(request.supplied_assets.length?{input_image:{asset_id:request.supplied_assets[0].asset_id}}:{})});
-   const record=await this.videoService.submit(input,{job});return {status:'pending',provider_reference:record.provider_job_id};
+   const record=await this.frozenService(this.videoService,job,profile).submit(input,{job});return {status:'pending',provider_reference:record.provider_job_id};
   }
   throw new QuoteError('OPERATION_UNSUPPORTED',422);
  }
