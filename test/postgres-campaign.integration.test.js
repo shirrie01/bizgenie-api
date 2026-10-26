@@ -64,6 +64,21 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     try {await assert.rejects(repository.listWorkspaceCalendar(context,parseQuery(input)),{code:'RESOURCE_NOT_AVAILABLE'});}
     finally {await pool.query("insert into public.tenant_memberships(tenant_id,auth_user_id,role) values('tenant_a',$1,'owner') on conflict(tenant_id,auth_user_id) do update set role='owner'",[AUTH_A]);}
   });
+  it('campaign list batches descendants with constant query count and exact aggregate/tenant parity',async()=>{
+    const measure=async()=>{
+      let queries=0;const original=repository.pool;
+      repository.pool={connect:async()=>{const c=await pool.connect();return {query:(...args)=>{queries++;return c.query(...args);},release:()=>c.release()};}};
+      try{return {campaigns:await repository.listCampaigns(context),queries};}finally{repository.pool=original;}
+    };
+    for(let i=0;i<4;i++){const s=await scenario(repository);await s.add();}
+    const first=await measure();
+    for(let i=0;i<8;i++){const s=await scenario(repository);await s.add();}
+    const second=await measure();assert.equal(second.queries,first.queries);assert.ok(second.queries<=20);
+    assert.equal(second.campaigns.length,first.campaigns.length+8);
+    for(const listed of second.campaigns)assert.deepEqual(listed,await repository.getCampaign(context,listed.campaign_id));
+    assert.ok(second.campaigns.every(c=>c.tenant_id===context.tenant_id&&c.project_id===context.project_id));
+    console.log(JSON.stringify({campaignBatchQueries:second.queries,firstCampaigns:first.campaigns.length,secondCampaigns:second.campaigns.length}));
+  });
   regressionCases(()=>repository);
   it('reruns the unapplied I-B migration with existing disposable campaign evidence intact',async()=>{
     const s=await scenario(repository);await s.add();const before=await s.get();
