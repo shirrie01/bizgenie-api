@@ -66,7 +66,7 @@ async function deliverPreview(req, res, asset, storage, { timeoutMs = PREVIEW_TI
   try {
     const stat = await abortable(() => storage.statPreview({ key: asset.key, signal: controller.signal }), controller.signal);
     const max = asset.mediaKind === "video" ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
-    if (!Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.mimeType !== asset.mimeType ||
+    if ((asset.expectedGeneration && asset.expectedGeneration !== stat.generation) || !Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.mimeType !== asset.mimeType ||
         (asset.byteSize != null && Number(asset.byteSize) !== stat.size) || !/^[0-9]+$/.test(stat.generation)) throw unavailable();
     if (stat.size > max) throw new PreviewDeliveryError(413, "MEDIA_PREVIEW_TOO_LARGE", "This media exceeds the preview size limit");
     let range;

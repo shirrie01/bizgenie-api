@@ -116,6 +116,13 @@ class GoogleCloudMediaStorage {
       headers: range.partial ? { Range: `bytes=${range.start}-${range.end}` } : {} });
   }
 
+  async putImmutableObject({key,data,mimeType}) {
+    const url=new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o`);
+    url.searchParams.set('uploadType','media');url.searchParams.set('name',key);url.searchParams.set('ifGenerationMatch','0');
+    const response=await this.request(url.toString(),{method:'POST',redirect:'error',headers:{'content-type':mimeType},body:data});
+    await response.body?.cancel();
+  }
+
   async putObject({ key, data, mimeType }) {
     const url = new URL(
       `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o`
