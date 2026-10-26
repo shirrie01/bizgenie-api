@@ -7,14 +7,14 @@ class FencedGenerationWorker{
  match(row,claim){if(row.claim_token!==claim.token||Number(row.fence)!==claim.fence)throw new QuoteError('EXECUTION_FENCE_STALE');}
  async claim(jobId,{recoverBeforeCall=false}={}){return this.billing.withTransaction(async client=>{
   const row=await this.load(client,jobId);if(row.state!=='queued'&&!(recoverBeforeCall&&row.state==='claimed'))throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);
-  const actor={kind:'customer',auth_user_id:row.auth_user_id};await this.quotes.authorize(client,actor,row.tenant_id,row.project_id,row.brand_id);
+  const actor={kind:'customer',auth_user_id:row.auth_user_id};await this.quotes.authorize(client,actor,row.tenant_id,row.project_id,row.brand_id,true);
   const token=randomUUID(),fence=Number(row.fence)+1;
   await client.query("update public.generation_execution_claims set state='claimed',claim_token=$2,fence=$3,claimed_at=$4,updated_at=$4 where job_id=$1",[jobId,token,fence,this.quotes.now()]);
   return {job_id:jobId,token,fence};
  });}
  async start(claim){return this.billing.withTransaction(async client=>{
   const row=await this.load(client,claim.job_id);this.match(row,claim);if(row.state!=='claimed')throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);
-  await this.quotes.authorize(client,{kind:'customer',auth_user_id:row.auth_user_id},row.tenant_id,row.project_id,row.brand_id);
+  await this.quotes.authorize(client,{kind:'customer',auth_user_id:row.auth_user_id},row.tenant_id,row.project_id,row.brand_id,true);
   const binding=await this.quotes.binding(client,row.request);if(digest(binding.preview_profile)!==digest(row.profile.preview_profile)||digest(binding.brand_snapshot)!==digest(row.profile.brand_snapshot))throw new QuoteError('QUOTE_CHANGED');if(digest(await this.quotes.learning(client,{kind:'customer',auth_user_id:row.auth_user_id},row.request,row.brand_id))!==digest(row.profile.learning_context??null))throw new QuoteError('QUOTE_CHANGED');const refs=await this.quotes.rights(client,row.request,row.brand_id);if(digest(refs)!==digest(row.profile.reference_bindings||[]))throw new QuoteError('QUOTE_CHANGED');
   await client.query("update public.generation_execution_claims set state='calling',updated_at=$2 where job_id=$1",[claim.job_id,this.quotes.now()]);return row;
  });}
@@ -46,7 +46,7 @@ class FencedGenerationWorker{
   });
  }
  async run(claim){return bounded(this,'run',()=>this._run(claim));}
- async _run(claim){let row;try{row=await this.start(claim);}catch(error){if(['QUOTE_CHANGED','VERSION_CONFLICT','RESOURCE_NOT_AVAILABLE','OPERATION_UNSUPPORTED','PREVIEW_VERSION_UNAVAILABLE'].includes(error.code))await this.abortBeforeCall(claim,error.code);throw error;}try{
+ async _run(claim){let row;try{row=await this.start(claim);}catch(error){if(['CREATIVE_TARGET_UNAVAILABLE','QUOTE_CHANGED','VERSION_CONFLICT','RESOURCE_NOT_AVAILABLE','OPERATION_UNSUPPORTED','PREVIEW_VERSION_UNAVAILABLE'].includes(error.code))await this.abortBeforeCall(claim,error.code);throw error;}try{
   await this.fault('after_call_boundary_before_provider');
   const submit=()=>this.provider.submit({idempotency_key:claim.job_id,profile:row.profile,request:row.request});
   const outcome=await (this.executionPolicy?this.executionPolicy.runClaim(claim,submit):submit());

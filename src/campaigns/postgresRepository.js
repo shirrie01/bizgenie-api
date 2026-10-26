@@ -1,6 +1,6 @@
 const { randomUUID } = require("node:crypto");
 const { Pool } = require("pg");
-const { CampaignError, CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError } = require("./errors");
+const { CampaignError, CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError, CampaignTransitionError } = require("./errors");
 const { hashIntent, parseCommand } = require("./schema");
 const { CampaignRepository, InMemoryCampaignRepository } = require("./repository");
 const projection = require('./projection');
@@ -121,6 +121,11 @@ class PostgresCampaignRepository extends CampaignRepository {
 
       stage = "load_campaign";
       const before = command.campaign_id ? await this._loadCampaign(client, context, command.campaign_id, true) : null;
+      if(command.command_type==='begin_manual_publication'&&(await client.query("select to_regclass('public.social_dispatches') relation")).rows[0].relation){
+        // Root FOR UPDATE serializes this decision against enqueue's root FOR SHARE.
+        const blocked=await client.query("select dispatch_id from social_dispatches where tenant_id=$1 and project_id=$2 and campaign_id=$3 and variant_id=$4 and state in ('queued','claimed','sending','reconciliation_required','published') limit 1 for share",[context.tenant_id,context.project_id,command.campaign_id,command.payload.variant_id]);
+        if(blocked.rowCount)throw new CampaignTransitionError('PUBLICATION_ALREADY_STARTED');
+      }
       stage = "command";
       const memory = new InMemoryCampaignRepository({
         now: this.now, idFactory: this.idFactory,
