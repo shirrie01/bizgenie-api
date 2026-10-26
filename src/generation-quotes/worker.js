@@ -1,4 +1,6 @@
 const {randomUUID}=require('node:crypto');const {QuoteError,digest}=require('./service');
+const localSlots=new WeakMap();
+async function bounded(worker,kind,operation){const key=worker.billing.pool||worker.billing;let counts=localSlots.get(key);if(!counts){counts={run:0,reconcile:0,total:0};localSlots.set(key,counts);}if(counts.total>=2)throw new QuoteError('EXECUTION_BUSY',429);counts[kind]++;counts.total++;try{return await operation();}finally{counts[kind]--;counts.total--;}}
 class FencedGenerationWorker{
  constructor({quoteService,provider,executionPolicy=null,fault=async()=>{}}){this.quotes=quoteService;this.billing=quoteService.billing;this.provider=provider;this.executionPolicy=executionPolicy;this.fault=fault;if(executionPolicy?.mode==='quoted_v1'&&executionPolicy.quotes!==quoteService)throw new TypeError('Mismatched quote execution policy');if(executionPolicy?.mode==='quoted_v1'&&provider.executionPolicy!==executionPolicy)throw new TypeError('Provider must share durable execution policy');}
  async load(client,jobId){await this.quotes.preflight(client);const r=await client.query('select e.*,q.tenant_id,q.project_id,q.brand_id,q.auth_user_id,q.reservation_id,q.request,q.profile,q.credit_cost from public.generation_execution_claims e join public.generation_quotes q on q.quote_id=e.quote_id and q.job_id=e.job_id where e.job_id=$1 for update of e',[jobId]);if(r.rowCount!==1)throw new QuoteError('RESOURCE_NOT_AVAILABLE',404);return r.rows[0];}
@@ -13,7 +15,7 @@ class FencedGenerationWorker{
  async start(claim){return this.billing.withTransaction(async client=>{
   const row=await this.load(client,claim.job_id);this.match(row,claim);if(row.state!=='claimed')throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);
   await this.quotes.authorize(client,{kind:'customer',auth_user_id:row.auth_user_id},row.tenant_id,row.project_id,row.brand_id);
-  const binding=await this.quotes.binding(client,row.request);if(digest(binding.preview_profile)!==digest(row.profile.preview_profile)||digest(binding.brand_snapshot)!==digest(row.profile.brand_snapshot))throw new QuoteError('QUOTE_CHANGED');await this.quotes.rights(client,row.request,row.brand_id);
+  const binding=await this.quotes.binding(client,row.request);if(digest(binding.preview_profile)!==digest(row.profile.preview_profile)||digest(binding.brand_snapshot)!==digest(row.profile.brand_snapshot))throw new QuoteError('QUOTE_CHANGED');const refs=await this.quotes.rights(client,row.request,row.brand_id);if(digest(refs)!==digest(row.profile.reference_bindings||[]))throw new QuoteError('QUOTE_CHANGED');
   await client.query("update public.generation_execution_claims set state='calling',updated_at=$2 where job_id=$1",[claim.job_id,this.quotes.now()]);return row;
  });}
  async recovery(claim,reference=null){return this.billing.withTransaction(async client=>{
@@ -35,7 +37,8 @@ class FencedGenerationWorker{
    return {status:outcome.status,replay:false};
   });
  }
- async run(claim){const row=await this.start(claim);try{
+ async run(claim){return bounded(this,'run',()=>this._run(claim));}
+ async _run(claim){const row=await this.start(claim);try{
   await this.fault('after_call_boundary_before_provider');
   const submit=()=>this.provider.submit({idempotency_key:claim.job_id,profile:row.profile,request:row.request});
   const outcome=await (this.executionPolicy?this.executionPolicy.runClaim(claim,submit):submit());
@@ -44,7 +47,12 @@ class FencedGenerationWorker{
   return await this.finalize(claim,outcome);
  }catch(error){await this.recovery(claim).catch(()=>{});throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);}}
  async reconciliationClaim(jobId){return this.billing.withTransaction(async client=>{const row=await this.load(client,jobId);if(!['calling','recovery_required'].includes(row.state))throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);return {job_id:jobId,token:row.claim_token,fence:Number(row.fence)};});}
- async reconcile(claim){
+ async reconcile(claim){return bounded(this,'reconcile',()=>this.billing.withTransaction(async client=>{
+  const lock=await client.query('select pg_try_advisory_xact_lock(hashtextextended($1,0)) acquired',['quoted-reconcile:'+claim.job_id]);
+  if(!lock.rows[0].acquired)throw new QuoteError('EXECUTION_BUSY',429);
+  return this._reconcile(claim);
+ }));}
+ async _reconcile(claim){
   const row=await this.billing.withTransaction(async client=>{const r=await this.load(client,claim.job_id);this.match(r,claim);if(!['calling','recovery_required','succeeded','failed'].includes(r.state))throw new QuoteError('EXECUTION_FENCE_STALE');return r;});
   if(['succeeded','failed'].includes(row.state))return {status:row.state,replay:true};
   if(typeof this.provider.reconcile!=='function')throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);

@@ -200,6 +200,7 @@ function requireTrustedLineage(lineage) {
   return lineage;
 }
 
+const composedAuthority=new WeakSet();
 class DurableMediaAssetStore {
   constructor({ mediaKind, repository, storage, videoSourcePrefix, now = () => new Date() }) {
     this.mediaKind = mediaKind;
@@ -207,6 +208,13 @@ class DurableMediaAssetStore {
     this.storage = storage;
     this.videoSourcePrefix = videoSourcePrefix;
     this.now = now;
+  }
+
+  async saveComposed({data,lineage},{inspect}) {
+    if(this.mediaKind!=='video'||!Buffer.isBuffer(data)||data.length>32*1024*1024||typeof inspect!=='function')throw new MediaPersistenceError();
+    const measured=await inspect(data);
+    if(measured.status!=='measured'||measured.sha256!==sha(data)||measured.video?.codec!=='h264'||measured.audio?.length||measured.video.duration_seconds>60)throw new MediaPersistenceError();
+    const input={data,lineage,source:{mime_type:'video/mp4',width:measured.video.width,height:measured.video.height,duration_seconds:measured.video.duration_seconds}};composedAuthority.add(input);return this.save(input);
   }
 
   async save(input) {
@@ -225,7 +233,7 @@ class DurableMediaAssetStore {
       extension,
     });
     let stored;
-    if (this.mediaKind === "image") {
+    if (this.mediaKind === "image" || composedAuthority.has(input)) {
       stored = await this.storage.putObject({ key, data: input.data, mimeType });
     } else {
       stored = await this.storage.copyObject({
