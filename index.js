@@ -296,6 +296,7 @@ function createApp({
   paidBetaCaptureService,
   billing,
   billingRepository,
+  commercialCatalog = null,
   env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
@@ -567,6 +568,7 @@ function createApp({
       "/customer/billing",
       createCustomerBillingRouter({
         repository: billingRepository,
+        commercialCatalog,
         tokenVerifier: customerTokenVerifier,
         authorizationService: resolvedAuthorizationService,
         logger,
