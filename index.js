@@ -288,6 +288,7 @@ function createApp({
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
   mediaAssetRepository = null,
+  mediaIntakeService = null,
   mediaPreviewStorage = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
@@ -522,6 +523,8 @@ function createApp({
         : next(),
     customerVideoRouter
   );
+
+  app.use('/customer/assets',require('./src/media-intake/router').createMediaIntakeRouter({service:mediaIntakeService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/creative-jobs',require('./src/generation-quotes/jobsRouter').createCreativeJobsRouter({service:generationQuoteService?new(require('./src/generation-quotes/jobs').CreativeJobService)({quoteService:generationQuoteService,campaignRepository}):null,tokenVerifier:customerTokenVerifier}));
 
