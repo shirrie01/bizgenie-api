@@ -297,6 +297,7 @@ function createApp({
   billing,
   billingRepository,
   commercialCatalog = null,
+  generationQuoteService = null,
   env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
@@ -512,6 +513,8 @@ function createApp({
         : next(),
     customerVideoRouter
   );
+
+  app.use('/customer/generation-quotes',require('./src/generation-quotes/router').createGenerationQuoteRouter({service:generationQuoteService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/calendar', createCustomerWorkspaceCalendarRouter({
     repository:campaignRepository,tokenVerifier:customerTokenVerifier,
