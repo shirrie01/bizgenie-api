@@ -2,7 +2,7 @@ const {QuoteError,digest}=require('./service');
 const {ImageGenerationRequestSchema}=require('../image-generation/schema');const {VideoGenerationRequestSchema}=require('../video-generation/schema');
 // Bridge only: existing services/providers/storage remain authoritative. Never composed by default.
 class ExistingCreativeServicesAdapter{
- constructor({jobs,mediaAssets,imageService,videoService}){Object.assign(this,{jobs,mediaAssets,imageService,videoService});}
+ constructor({jobs,mediaAssets,imageService,videoService,executionPolicy=null}){this.executionPolicy=executionPolicy;if(executionPolicy?.mode==='quoted_v1'){if(imageService){const view=Object.create(imageService);view.provider=executionPolicy.provider(imageService.provider,'generate');imageService=view;}if(videoService){const view=Object.create(videoService);view.provider=executionPolicy.provider(videoService.provider,'submit');videoService=view;}}Object.assign(this,{jobs,mediaAssets,imageService,videoService});}
  async bound(id,request,profile){const job=await this.jobs.getById(id),stored=await this.jobs.getExecutionContent(id);
   if(!job||!stored||digest(stored.request)!==digest(request)||digest(stored.profile)!==digest(profile)||stored.request_fingerprint!==digest(request)||job.tenant_id!==request.tenant_id||job.project_id!==request.project_id||job.execution_class!==request.execution_class)throw new QuoteError('EXECUTION_BINDING_INVALID',503);
   return job;

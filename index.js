@@ -299,10 +299,17 @@ function createApp({
   billingRepository,
   commercialCatalog = null,
   generationQuoteService = null,
+  generationExecutionPolicy = null,
   env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
 } = {}) {
+  const {GenerationExecutionPolicy}=require('./src/generation-quotes/executionPolicy');
+  const executionPolicy=generationExecutionPolicy||new GenerationExecutionPolicy();
+  if(!(executionPolicy instanceof GenerationExecutionPolicy)||executionPolicy.mode==='quoted_v1'&&executionPolicy.quotes!==generationQuoteService)throw new TypeError('Incompatible durable generation composition');
+  scriptGenerator=executionPolicy.guard(scriptGenerator);
+  imageProvider=executionPolicy.provider(imageProvider,'generate');
+  videoProvider=executionPolicy.provider(videoProvider,'submit');
   const resolvedBranding = BrandingConfigSchema.parse(branding);
   const resolvedAuthorizationService =
     authorizationService || new AuthorizationService({
@@ -378,6 +385,7 @@ function createApp({
   }
 
   app.use(express.json());
+  app.use(executionPolicy.legacyBoundary({tokenVerifier:customerTokenVerifier,requireAdmin}));
   if (billing) app.use("/internal/launch-proof/paid-beta", createPaidBetaLaunchProofRouter({ billing, env, logger }));
   const scriptHandler = createGenerateScriptHandler({
     brandBrainRepository,
