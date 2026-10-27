@@ -553,4 +553,4 @@ class CampaignVariantGenerationService {
   }
 }
 
-module.exports = { CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, deriveAllowableEvidenceAnchors, findVariant, renderEvidenceAnchorCatalog, resolveEvidenceAnchorReferences, validateDraftExecutionFidelity, validateFinalDraftStrategyFidelity, validateSelectedStrategy };
+module.exports = { renderSelectedStrategyExecutionContract, CAMPAIGN_CREATIVE_BRIEF, CampaignStrategyValidationError, CampaignVariantGenerationService, compileCampaignPrompt, deriveAllowableEvidenceAnchors, findVariant, renderEvidenceAnchorCatalog, resolveEvidenceAnchorReferences, validateDraftExecutionFidelity, validateFinalDraftStrategyFidelity, validateSelectedStrategy };

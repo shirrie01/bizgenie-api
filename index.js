@@ -294,6 +294,7 @@ function createApp({
   creativeIntelligenceService = null,
   growthReadModel = null,
   productIntelligenceService = null,
+  strategyWorkflowService = null,
   mediaPreviewStorage = null,
   runtimeDeliveryLimits = null,
   generationJobService,
@@ -529,6 +530,9 @@ function createApp({
         : next(),
     customerVideoRouter
   );
+
+  if(strategyWorkflowService&&strategyWorkflowService.quotes!==generationQuoteService)throw new TypeError('Strategy workflow must share generation quote service');
+  app.use('/customer/strategy-workflows',require('./src/strategy-workflows/router').createStrategyRouter({service:strategyWorkflowService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/product-intelligence',require('./src/product-intelligence/router').createProductRouter({service:productIntelligenceService,tokenVerifier:customerTokenVerifier}));
 

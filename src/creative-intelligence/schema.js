@@ -11,7 +11,7 @@ const DnaInput = z.object({
 const unknownDna = () => ({ schema_version:'content-dna.v1', classification_version:'unclassified.v1',hook_type:'unknown',narrative_framework:'unknown',engagement_trigger_type:'unknown',cta_type:'unknown',hook:null,context:null,value:null,engagement_trigger:null,closure_cta:null });
 function plan(request,binding) {
   return { ...DnaInput.parse(request.content_dna || unknownDna()), provenance:request.content_dna?'customer_declared_plan':'unclassified',verified_against_output:false,
-    customer_objective:binding.goal,platform:binding.platform,placement:binding.placement,format:binding.format,
+    customer_objective:binding.goal,measurement_objective:binding.measurement_objective||null,platform:binding.platform,placement:binding.placement,format:binding.format,
     brand_snapshot_id:binding.brand_snapshot.id,brand_snapshot_hash:binding.brand_snapshot.hash };
 }
 const Assignment=z.object({variant_id:uuid,revision_id:uuid,label:label,audience_ref:identifier.nullable()}).strict();
