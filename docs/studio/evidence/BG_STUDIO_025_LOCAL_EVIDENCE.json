@@ -74,10 +74,21 @@
     "bg025-final-suite.log": "707cc6a9431f6f2e70b44e1581acb4571dfc86c80cc26a33f9e5cf995da99de3",
     "bg025-focused-final2.log": "39d00cdfb373b6398b4608ccec5734d539eaf34593f399ca20ef4556f7dfb8fe",
     "bg025-pg.log": "edc287a35640f31a6f2c22dc015319fe8b01ec3cff5418457bd6d8e688df4f54",
-    "bg025-restore-final.log": "f760ce5cbe2f66cb82a601bc119b850bc4b048f44eb9551a18613098ec8be830"
+    "bg025-restore-final.log": "f760ce5cbe2f66cb82a601bc119b850bc4b048f44eb9551a18613098ec8be830",
+    "bg025-exact-code.log": "faa893887b1403096847a5fa041534ffcecc48580306ebabe06dd7fb467b4f0f"
   },
   "meta_documentation": "403; contents not verified",
   "hosted_ci": "UNKNOWN; GraphQL Forbidden",
   "live_activated": false,
-  "shared_migrations": false
+  "shared_migrations": false,
+  "verified_code_sha": "e653ed346c41887261ff6861342e3861995edcc0",
+  "exact_commit_suite": {
+    "pass": 966,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0,
+    "duration_ms": 26485.815356,
+    "node22_path_prepend": true
+  },
+  "draft_creation": "GraphQL Forbidden; prepared comparison/body, no PR created"
 }
