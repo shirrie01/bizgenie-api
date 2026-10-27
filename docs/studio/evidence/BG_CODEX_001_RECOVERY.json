@@ -24,9 +24,19 @@
     "recovered-full.log": "ae8e7cba6eb8bf94ee26b564ddadf404a0976188bd573e7ddb542cf414ed5bb8",
     "recovery-focused.log": "6b961f4afc64dba7d46b4f42ffccfb71b5ad9b7d61832e0139b9f85bea7ec919",
     "final-full.log": "c17181f4b6e97b74d75331445b95d59356ff61e4a5aaebfe62550103dd1019d9",
-    "financial-campaign-pg.log": "515c5a03b130e3d035d4d7fb2d64d3ac0d00f0735954e68f8d757a85606dd8f0"
+    "financial-campaign-pg.log": "515c5a03b130e3d035d4d7fb2d64d3ac0d00f0735954e68f8d757a85606dd8f0",
+    "exact-head-full.log": "18f45a0ad8136ee6feb456b4461fa1364c0b5a6087d635c3570c4557924b6225"
   },
   "hosted_ci": "UNKNOWN; GitHub GraphQL Forbidden",
   "frontend_56": "205a9830ceb84a497b9bf09b551e5a5f1241fdc6",
-  "production_changes": false
+  "production_changes": false,
+  "verified_code_sha": "44f849c54827036ceb84c98bb40ba3925644bc25",
+  "exact_head_full_suite": {
+    "pass": 961,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0,
+    "duration_ms": 28912.589454
+  },
+  "draft_creation": "Forbidden; no PR created"
 }
