@@ -125,3 +125,11 @@ Update existing BG-STUDIO-022-BE task with this dependent branch/SHA, contract/m
 Node22.23.3, disposable PostgreSQL17.11. Full suite966/966, zero failed/cancelled/skipped (28.191s). Focused OAuth/expiry/learning/strategy9/9. Separate billing/campaign PostgreSQL57/57. Syntax313 files and git diff whitespace clean. Final populated dump/restore PASS, including preserved pending reservation and same-job idempotent replay. All provider/authorization-code exchanges synthetic. No real external call except unsuccessful public documentation/Git metadata reads. Hosted CI UNKNOWN because GitHub API Forbidden; no GREEN release claim.
 
 Commands: `TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5433/postgres node --test`; focused selection in recovery log; separate node --test test/postgres-billing.integration.test.js test/postgres-campaign.integration.test.js; `BIZGENIE_DISPOSABLE_RESTORE_PROOF=1 node scripts/local-onboarding-restore-proof.cjs`. Use existing Node22 tool path, no package installation. Raw local logs under /workspace/recovery/20261027T172123Z; versioned evidence JSON supplies hashes.
+
+## Exact-code publication checkpoint
+
+Application/test SHA **e653ed346c41887261ff6861342e3861995edcc0**, pushed and remote-ref verified on bg-studio-025-social-contract. Full suite rerun at that exact commit with Node22 prepended to PATH: **966/966**, zero failed/cancelled/skipped,26.486s. Subsequent evidence commit changes documentation/JSON only.
+
+Draft creation against base bg-studio-022-staged-strategy failed `Post "https://api.github.com/graphql": Forbidden`. No PR number or hosted success claimed. Authorized maintainer can open [this dependent comparison](https://github.com/shirrie01/bizgenie-api/compare/bg-studio-022-staged-strategy...bg-studio-025-social-contract) as a draft and verify both exact-head CI jobs. Prepared body: /workspace/recovery/20261027T172123Z/bg025-draft-body.md. No broader credentials requested.
+
+Next frontend step: Claude uses this exact code for #59 authorize_url/display_name and uncertain503 wording, then F2 job/attach/receipt approval and F3 calendar+dispatch overlay, F5 canonical/historical observation rows. Live Meta configuration and general hybrid engine remain explicit unresolved work, not reasons to duplicate existing backend models.
