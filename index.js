@@ -291,7 +291,12 @@ function createApp({
   mediaIntakeService = null,
   socialPublishingService = null,
   learningService = null,
+  creativeIntelligenceService = null,
+  growthReadModel = null,
+  productIntelligenceService = null,
+  strategyWorkflowService = null,
   mediaPreviewStorage = null,
+  runtimeDeliveryLimits = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   campaignGenerationService,
@@ -526,6 +531,13 @@ function createApp({
     customerVideoRouter
   );
 
+  if(strategyWorkflowService&&strategyWorkflowService.quotes!==generationQuoteService)throw new TypeError('Strategy workflow must share generation quote service');
+  app.use('/customer/strategy-workflows',require('./src/strategy-workflows/router').createStrategyRouter({service:strategyWorkflowService,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/product-intelligence',require('./src/product-intelligence/router').createProductRouter({service:productIntelligenceService,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/intelligence',require('./src/creative-intelligence/router').createCreativeIntelligenceRouter({service:creativeIntelligenceService,growth:growthReadModel,tokenVerifier:customerTokenVerifier}));
+
   app.use('/customer/insights',require('./src/learning-persistence/router').createLearningRouter({service:learningService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/social',require('./src/social-publishing/router').createSocialRouter({service:socialPublishingService,tokenVerifier:customerTokenVerifier}));
@@ -551,6 +563,7 @@ function createApp({
       campaignGenerationService: resolvedCampaignGenerationService,
       measurementRegistry: campaignMeasurementRegistry,
       mediaPreviewStorage,
+      runtimeDeliveryLimits,
       logger,
     })
   );
