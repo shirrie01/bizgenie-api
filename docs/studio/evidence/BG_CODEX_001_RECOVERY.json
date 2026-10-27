@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-27",
+  "classification": "agent-run disposable local evidence; not staging or hosted CI",
+  "branch": "bg-studio-022-staged-strategy",
+  "original_head": "589573c7dc9c284049d2a12d58adfff707d3b780",
+  "recovery_archive_sha256": "e027c62b08874de7778817a0cd2bc579a063b2f06afdc1cf69707b478460e477",
+  "node": "22.23.3",
+  "postgres": "17.11",
+  "full_suite": {
+    "pass": 960,
+    "fail": 0,
+    "skip": 0
+  },
+  "additional_http": {
+    "pass": 1
+  },
+  "focused": {
+    "pass": 4
+  },
+  "separate_pg": {
+    "pass": 57
+  },
+  "log_hashes": {
+    "recovered-full.log": "ae8e7cba6eb8bf94ee26b564ddadf404a0976188bd573e7ddb542cf414ed5bb8",
+    "recovery-focused.log": "6b961f4afc64dba7d46b4f42ffccfb71b5ad9b7d61832e0139b9f85bea7ec919",
+    "final-full.log": "c17181f4b6e97b74d75331445b95d59356ff61e4a5aaebfe62550103dd1019d9",
+    "financial-campaign-pg.log": "515c5a03b130e3d035d4d7fb2d64d3ac0d00f0735954e68f8d757a85606dd8f0"
+  },
+  "hosted_ci": "UNKNOWN; GitHub GraphQL Forbidden",
+  "frontend_56": "205a9830ceb84a497b9bf09b551e5a5f1241fdc6",
+  "production_changes": false
+}
