@@ -114,3 +114,13 @@ Hosted CI remains UNKNOWN until an authorized maintainer opens/dispatches the de
 -308 JS files syntax-checked before the standalone HTTP file; that file separately parsed and executed successfully. `git diff --check` clean.
 - No current SQL join/recovery-test failure reproduced. Original failure trace absent; existing recovered correction retained. General live-provider recovery remains unknown/fail-closed.
 - Logs and original recovery manifest retained outside checkout; hashes in version-controlled evidence JSON. Hosted CI not verified.
+
+## Exact-code publication verification
+
+Application/test commit **44f849c54827036ceb84c98bb40ba3925644bc25** pushed on existing `bg-studio-022-staged-strategy`; native remote SHA matched. Exact-commit full suite: **961/961**, zero failures/cancelled/skips,28.913s (`exact-head-full.log`). Working tree was clean. A subsequent evidence-only commit records these results without changing application/tests.
+
+Full-history bundle `/workspace/recovery/20261027T172123Z/recovered-branch.bundle` verified by Git; SHA256 `b49f08c2cb8f00da525fe40bd021e75bfb94fa33e8c39354790c0b8a6ecf7074`. This supplements the original uncommitted-work archive.
+
+Draft creation with base `bg-studio-021-backend-integration` failed `Post "https://api.github.com/graphql": Forbidden`. No draft number or hosted CI claimed. Prepared body is in recovery directory. Authorised maintainer can open [the dependent comparison](https://github.com/shirrie01/bizgenie-api/compare/bg-studio-021-backend-integration...bg-studio-022-staged-strategy) as a draft and inspect exact-head CI. This is a publishing boundary, not a source/test failure.
+
+Next engineering/integration task: Claude should run its frontend56 integration harness against this exact backend code, adopt creative-job outputs/attach and existing social/insights routes, and use explicit separately confirmed strategy stages. Preserve default-off controls and existing current-version approval. Backend follow-up remains populated BG022 logical restore/read-model freshness review; real provider recovery and approved currency budgets require trustworthy contracts. No new architecture or task created.
