@@ -76,3 +76,30 @@ test("refuses to construct router without a decoder", () => {
     repository: {}, storage: {}, scanImage: async () => true,
   }), /requires/);
 });
+
+
+test("rejects content-encoded upload without invoking any provider", async () => {
+  const { app, calls } = fixture();
+  const res = await request(app).post(endpoint)
+    .set("Authorization", "Bearer fixture-token")
+    .set("Content-Type", "image/png")
+    .set("Content-Encoding", "gzip")
+    .send(png);
+  assert.equal(res.status, 415);
+  assert.deepEqual(calls, []);
+});
+
+test("rejects invalid verifier identity before authorization", async () => {
+  const calls = [];
+  const router = createCustomerReferenceImageRouter({
+    tokenVerifier: { async verifyAccessToken() { calls.push("verify"); return null; } },
+    authorizationService: { async authorizeProjectBrand() { calls.push("authorize"); return null; } },
+    repository: { async create() { calls.push("create"); } },
+    storage: { bucket: "private-media", async putObject() { calls.push("store"); }, async delete() {} },
+    decodeImage: async () => true, scanImage: async () => true,
+  });
+  const app = express(); app.use("/customer/references", router);
+  const res = await upload(app);
+  assert.equal(res.status, 401);
+  assert.deepEqual(calls, ["verify"]);
+});
