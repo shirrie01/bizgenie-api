@@ -5,7 +5,7 @@ const { CustomerReferenceImageService, detectImageMime } = require("../src/media
 const png = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,0]);
 const authority = { verified:true, tenant_id:"tenant-a", project_id:"project-a", brand_id:"brand-a" };
 
-function harness({ scanner = async () => true, createFails = false } = {}) {
+function harness({ scanner = async () => true, decoder = async () => true, createFails = false } = {}) {
   const events = [];
   const storage = {
     bucket:"private-media",
@@ -15,7 +15,7 @@ function harness({ scanner = async () => true, createFails = false } = {}) {
   const repository = {
     async create(asset) { events.push(["create", asset]); if (createFails) throw new Error("db"); return asset; },
   };
-  return { service:new CustomerReferenceImageService({repository, storage, scanImage:scanner}), events };
+  return { service:new CustomerReferenceImageService({repository, storage, scanImage:scanner, decodeImage:decoder}), events };
 }
 
 test("detectImageMime identifies supported signature", () => {
@@ -82,4 +82,24 @@ test("does not allow client supplied brand or storage fields to override trusted
   assert.equal(asset.brand_id,authority.brand_id);
   assert.notEqual(asset.storage_key,"public/evil");
   assert.equal(asset.allowed_uses.includes("campaign.publish"),false);
+});
+
+
+test("rejects truncated or undecodable images before scanning or storage", async () => {
+  let scans = 0;
+  const { service, events } = harness({ decoder: async () => false, scanner: async () => { scans++; return true; } });
+  await assert.rejects(service.ingest({ authority, data: png, mimeType: "image/png" }));
+  assert.equal(scans, 0);
+  assert.equal(events.length, 0);
+});
+
+test("fails closed if decoder is unavailable or throws", async () => {
+  for (const decoder of [async () => { throw Error("decoder offline"); }, async () => undefined]) {
+    const { service, events } = harness({ decoder });
+    await assert.rejects(service.ingest({ authority, data: png, mimeType: "image/png" }));
+    assert.equal(events.length, 0);
+  }
+  assert.throws(() => new CustomerReferenceImageService({
+    repository: { create() {} }, storage: { putObject() {}, delete() {} }, scanImage: async () => true,
+  }), /requires/);
 });
