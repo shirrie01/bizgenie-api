@@ -64,6 +64,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Prepare required video test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg util-linux
+          node scripts/check-video-test-toolchain.js
+
       - name: Run automated tests
         run: npm test
 
@@ -72,6 +78,9 @@ jobs:
 
       - name: Run real PostgreSQL campaign persistence tests
         run: npm run test:campaign:postgres
+
+      - name: Run real PostgreSQL onboarding security tests
+        run: npm run test:onboarding:postgres
 
       - name: Check JavaScript syntax
         shell: bash

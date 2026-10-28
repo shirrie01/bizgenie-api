@@ -1,9 +1,11 @@
 const { randomUUID } = require("node:crypto");
 const { Pool } = require("pg");
-const { CampaignError, CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError } = require("./errors");
+const { CampaignError, CampaignResourceError, CampaignPersistenceError, CampaignIdempotencyError, CampaignTransitionError } = require("./errors");
 const { hashIntent, parseCommand } = require("./schema");
 const { CampaignRepository, InMemoryCampaignRepository } = require("./repository");
 const projection = require('./projection');
+const { creativePreview } = require('./creativePreview');
+const { mediaPreviewAsset } = require('./mediaPreviewAsset');
 const { authorization } = require('./schema');
 
 const RELATIONS = Object.freeze([
@@ -95,7 +97,7 @@ class PostgresCampaignRepository extends CampaignRepository {
     if (!result.rowCount) throw new CampaignResourceError();
   }
 
-  async executeCommand(context, input, requestId) {
+  async executeCommand(context, input, requestId, transactionEffect = null) {
     const command = parseCommand(input);
     let client;
     let stage = "connect";
@@ -111,6 +113,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       const intentHash = hashIntent({ ...command, actor: context.actor });
       if (existing.rowCount) {
         if (existing.rows[0].intent_hash !== intentHash) throw new CampaignIdempotencyError();
+        if(transactionEffect)await transactionEffect(client,{command,result:existing.rows[0].result});
         stage = "commit_replay";
         await client.query("commit");
         return clone(existing.rows[0].result);
@@ -118,6 +121,12 @@ class PostgresCampaignRepository extends CampaignRepository {
 
       stage = "load_campaign";
       const before = command.campaign_id ? await this._loadCampaign(client, context, command.campaign_id, true) : null;
+      if(command.command_type==='begin_manual_publication'&&(await client.query("select to_regclass('public.social_dispatches') relation")).rows[0].relation){
+        // Root FOR UPDATE serializes this decision against enqueue's root FOR SHARE.
+        const blocked=await client.query("select dispatch_id from social_dispatches where tenant_id=$1 and project_id=$2 and campaign_id=$3 and variant_id=$4 and state in ('queued','claimed','sending','reconciliation_required','published') limit 1 for share",[context.tenant_id,context.project_id,command.campaign_id,command.payload.variant_id]);
+        if(blocked.rowCount)throw new CampaignTransitionError('PUBLICATION_ALREADY_STARTED');
+      }
+      if(before?.platform_publications?.has(command.payload.variant_id)&&['save_revision','submit_review','acknowledge_preview','approve','request_changes','revoke_approval','schedule','reschedule','unschedule'].includes(command.command_type))throw new CampaignTransitionError('PLATFORM_PUBLICATION_IMMUTABLE');
       stage = "command";
       const memory = new InMemoryCampaignRepository({
         now: this.now, idFactory: this.idFactory,
@@ -135,6 +144,7 @@ class PostgresCampaignRepository extends CampaignRepository {
       if(!projection.verify(after).valid)throw new CampaignPersistenceError();
       stage = "persist";
       await this._persistCampaign(client, before, after, command, context, intentHash, result);
+      if(transactionEffect)await transactionEffect(client,{command,result});
       stage = "constraints_immediate";
       await client.query("set constraints all immediate");
       await client.query("select set_config('bizgenie.campaign_command','off',true)");
@@ -211,8 +221,8 @@ class PostgresCampaignRepository extends CampaignRepository {
     return projection.normalize(found.rows[0]) || { brand_snapshot_id: this.idFactory(), tenant_id: context.tenant_id, project_id: context.project_id, brand_id: brandId, source_version: row.version, source_updated_at: new Date(row.updated_at).toISOString(), source_schema_version: "brand-brain.v1", snapshot, snapshot_hash: snapshotHash, captured_at: this.now().toISOString() };
   }
 
-  async _resolveMedia(client,context,assetId,brandId) {
-    const result=await client.query(`select a.*,j.brand_id,j.job_id from public.media_assets a join public.generation_jobs j on j.job_id=a.generation_job_id and j.tenant_id=a.tenant_id and j.project_id=a.project_id where a.asset_id=$1 and a.tenant_id=$2 and a.project_id=$3 and j.brand_id=$4 and a.status='active' and a.source_kind='generated' and split_part(j.execution_class,'.',1)=a.media_kind for share of a,j`,[assetId,context.tenant_id,context.project_id,brandId]);
+  async _resolveMedia(client,context,assetId,brandId,lock=true) {
+    const result=await client.query(`select a.*,j.brand_id,j.job_id from public.media_assets a join public.generation_jobs j on j.job_id=a.generation_job_id and j.tenant_id=a.tenant_id and j.project_id=a.project_id where a.asset_id=$1 and a.tenant_id=$2 and a.project_id=$3 and j.brand_id=$4 and a.status='active' and a.source_kind='generated' and split_part(j.execution_class,'.',1)=a.media_kind ${lock ? 'for share of a,j' : ''}`,[assetId,context.tenant_id,context.project_id,brandId]);
     if(!result.rowCount)return null;
     const a=result.rows[0];
     return {...a,manifest:{asset_id:a.asset_id,mime_type:a.mime_type,width:a.width,height:a.height,duration_ms:a.duration_seconds===null?null:Math.round(Number(a.duration_seconds)*1000),byte_size:a.byte_size===null?null:Number(a.byte_size)}};
@@ -222,9 +232,18 @@ class PostgresCampaignRepository extends CampaignRepository {
     const root = await client.query(`select * from public.campaigns where tenant_id=$1 and project_id=$2 and campaign_id=$3 ${lock ? "for update" : ""}`, [context.tenant_id, context.project_id, campaignId]);
     if (!root.rowCount) throw new CampaignResourceError();
     if(!lock)await this.fault('postgres_after_root_read');
-    const campaign = { ...root.rows[0], created_by: { kind: "customer", auth_user_id: root.rows[0].created_by }, brand_snapshots: new Map(), items: new Map(), approvals: new Map(), previews: new Map(), schedules: new Map(), attempts: new Map(), resolutions: new Map(), publications: new Map(), corrections: new Map(), events: [] };
     const query = async (table) => (await client.query(`select * from public.${table} where tenant_id=$1 and project_id=$2 and campaign_id=$3`, [context.tenant_id, context.project_id, campaignId])).rows;
-    const snapshots = (await client.query(`select s.* from public.campaign_brand_snapshots s where s.tenant_id=$1 and s.project_id=$2 and s.brand_id=$3 and (s.brand_snapshot_id=$4 or exists(select 1 from public.campaign_revisions r where r.campaign_id=$5 and r.brand_snapshot_id=s.brand_snapshot_id))`, [context.tenant_id, context.project_id, campaign.brand_id, campaign.initial_brand_snapshot_id, campaignId])).rows;
+    const snapshots = (await client.query(`select s.* from public.campaign_brand_snapshots s where s.tenant_id=$1 and s.project_id=$2 and s.brand_id=$3 and (s.brand_snapshot_id=$4 or exists(select 1 from public.campaign_revisions r where r.campaign_id=$5 and r.brand_snapshot_id=s.brand_snapshot_id))`, [context.tenant_id, context.project_id, root.rows[0].brand_id, root.rows[0].initial_brand_snapshot_id, campaignId])).rows;
+    const campaign=await this._hydrateCampaign(root.rows[0],query,snapshots);await this._platformPublications(client,context,[campaign]);return campaign;
+  }
+
+  async _platformPublications(client,context,campaigns){
+    if(!campaigns.length||!(await client.query("select to_regclass('public.verified_campaign_publications') relation")).rows[0].relation)return;
+    const rows=(await client.query('select * from verified_campaign_publications where tenant_id=$1 and project_id=$2 and campaign_id=any($3::uuid[]) order by published_at,dispatch_id',[context.tenant_id,context.project_id,campaigns.map(c=>c.campaign_id)])).rows;
+    for(const c of campaigns)c.platform_publications=new Map(rows.filter(r=>r.campaign_id===c.campaign_id).map(r=>[r.variant_id,projection.normalize(r)]));
+  }
+  async _hydrateCampaign(root,query,snapshots) {
+    const campaign = { ...root, created_by: { kind: "customer", auth_user_id: root.created_by }, brand_snapshots: new Map(), items: new Map(), approvals: new Map(), previews: new Map(), schedules: new Map(), attempts: new Map(), resolutions: new Map(), publications: new Map(), corrections: new Map(), events: [] };
     snapshots.forEach((row) => campaign.brand_snapshots.set(row.brand_snapshot_id, row));
     const items = await query("campaign_content_items");
     const variants = await query("campaign_platform_variants");
@@ -284,9 +303,54 @@ class PostgresCampaignRepository extends CampaignRepository {
     finally{client?.release();}
   }
   async getCampaign(context,campaignId){return this._read(context,async client=>projection.decorate(await this._loadCampaign(client,context,campaignId)));}
-  async _list(client,context){const rows=await client.query(`select campaign_id from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id]);const campaigns=[];for(const row of rows.rows)campaigns.push(projection.decorate(await this._loadCampaign(client,context,row.campaign_id)));return campaigns;}
+  async getCreativePreview(context,campaignId,options) {
+    return this._read(context,async client=>creativePreview({ ...options, context,
+      campaign:projection.decorate(await this._loadCampaign(client,context,campaignId)),
+      resolveMedia:(_context,assetId,brandId)=>this._resolveMedia(client,context,assetId,brandId,false),
+      validatePreview:async(_context,preview)=>Boolean((await client.query(
+        "select 1 from public.campaign_preview_profiles where profile_id=$1 and profile_version=$2 and profile_hash=$3 and status='active'",
+        [preview.profile_id,preview.profile_version,preview.profile_hash])).rowCount),
+    }));
+  }
+  async getMediaPreviewAsset(context,campaignId,options) {
+    return this._read(context,async client=>mediaPreviewAsset({ ...options, context,
+      campaign:projection.decorate(await this._loadCampaign(client,context,campaignId)),
+      resolveMedia:(_context,assetId,brandId)=>this._resolveMedia(client,context,assetId,brandId,false),
+    }));
+  }
+  async _list(client,context) {
+    const roots=(await client.query(`select * from public.campaigns where tenant_id=$1 and project_id=$2 and archived_at is null order by updated_at desc,campaign_id`,[context.tenant_id,context.project_id])).rows;
+    if(!roots.length)return [];
+    const ids=roots.map(r=>r.campaign_id),tables=['campaign_content_items','campaign_platform_variants','campaign_revisions','campaign_preview_evidence','campaign_approval_events','campaign_schedule_entries','campaign_manual_attempts','campaign_attempt_resolutions','campaign_publications','campaign_publication_corrections','campaign_events'];
+    const grouped=new Map();
+    for(const table of tables) {
+      const rows=(await client.query(`select * from public.${table} where tenant_id=$1 and project_id=$2 and campaign_id=any($3::uuid[])`,[context.tenant_id,context.project_id,ids])).rows;
+      const groups=new Map();for(const row of rows){if(!groups.has(row.campaign_id))groups.set(row.campaign_id,[]);groups.get(row.campaign_id).push(row);}grouped.set(table,groups);
+    }
+    const snapshots=(await client.query(`select s.* from public.campaign_brand_snapshots s where s.tenant_id=$1 and s.project_id=$2 and exists(select 1 from public.campaigns c where c.tenant_id=s.tenant_id and c.project_id=s.project_id and c.brand_id=s.brand_id and c.campaign_id=any($3::uuid[]) and (c.initial_brand_snapshot_id=s.brand_snapshot_id or exists(select 1 from public.campaign_revisions r where r.tenant_id=c.tenant_id and r.project_id=c.project_id and r.campaign_id=c.campaign_id and r.brand_snapshot_id=s.brand_snapshot_id)))`,[context.tenant_id,context.project_id,ids])).rows;
+    const bySnapshot=new Map(snapshots.map(row=>[row.brand_snapshot_id,row])),campaigns=[];
+    for(const root of roots) {
+      const query=async table=>grouped.get(table).get(root.campaign_id)||[];
+      const snapshotIds=new Set([root.initial_brand_snapshot_id,...(await query('campaign_revisions')).map(r=>r.brand_snapshot_id)]);
+      const owned=[...snapshotIds].map(id=>bySnapshot.get(id));
+      if(owned.some(row=>!row||row.brand_id!==root.brand_id))throw new CampaignPersistenceError();
+      campaigns.push(projection.decorate(await this._hydrateCampaign(root,query,owned)));
+    }
+    await this._platformPublications(client,context,campaigns);return campaigns;
+  }
+  async discoverCampaigns(context,q){const d=require('./discovery');return this._read(context,async client=>{await client.query("set local statement_timeout='2000ms'");const r=await client.query(d.SQL,[context.tenant_id,context.project_id,q.archived,q.after?.at||null,q.after?.id||null,q.limit+1]);return d.page(q,projection.normalize(r.rows));});}
   async listCampaigns(context){return this._read(context,client=>this._list(client,context));}
+  async listPublicationHistory(context,id,q){return this._read(context,c=>require('./publicationHistory').publicationHistory(c,context,id,q));}
   async listCampaignEvents(context,campaignId) { return (await this.getCampaign(context,campaignId)).events; }
+  async listWorkspaceCalendar(context,q) {
+    const calendar=require('./workspaceCalendar');
+    return this._read(context,async client=>{
+      await client.query("set local statement_timeout='2000ms'");
+      const projected=!!(await client.query("select to_regclass('public.verified_campaign_publications') relation")).rows[0].relation;
+      const result=await client.query(projected?calendar.platformSQL:calendar.SQL,[context.tenant_id,context.project_id,q.from,q.to,q.campaign_id||null,q.platform||null,q.workflow||null,!!q.after,q.after?.at||null,q.after?.id||null,q.limit+1]);
+      const rows=projection.normalize(result.rows);for(const row of rows)if(row.evidence_kind===null){delete row.evidence_kind;delete row.provider_publication_id;}return calendar.page(q,rows);
+    });
+  }
   async listCalendarEntries(context,range){return this._read(context,async client=>projection.calendar(await this._list(client,context),range));}
   async verifyCampaignProjection(context,campaignId){return projection.verify(await this.getCampaign(context,campaignId));}
   async close(){ if(typeof this.pool.end==="function") await this.pool.end(); }

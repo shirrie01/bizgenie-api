@@ -22,6 +22,30 @@ async function scenario(repository) {
 }
 function regressionCases(getRepository) {
   const setup=async()=>scenario(await getRepository());
+  it('customer reload preserves safe schedule, attempt and corrected attestation facts without internal maps',async()=>{
+    const {safeCampaign}=require('../../src/campaigns/router');const s=await setup(),a=await s.approve(await s.add());const planned=await s.schedule(a);
+    let dto=safeCampaign(await s.get(),{detail:true}).items[0].variants[0];assert.equal(dto.current_schedule.schedule_id,planned.created_ids.schedule_ids[0]);assert.equal(dto.current_schedule.scheduled_for,'2026-09-03T11:00:00.000Z');assert.equal(dto.manual_publication,null);
+    const attempt=await s.begin(a);dto=safeCampaign(await s.get(),{detail:true}).items[0].variants[0];assert.equal(dto.manual_publication.attempt_id,attempt.attempt_id);
+    await s.cmd('confirm_manual_publication',{...attempt,published_at:NOW,attested_published:true});const publication=(await s.variant(a)).publication_id;await s.cmd('correct_publication',{variant_id:a.variant_id,publication_id:publication,published_at:NOW,publication_url:'https://example.test/corrected',external_reference:null,note:null,reason:'Correct link'});
+    const reloaded=safeCampaign(await s.get(),{detail:true});dto=reloaded.items[0].variants[0];assert.equal(dto.current_schedule,null);assert.equal(dto.manual_publication,null);assert.equal(dto.publication.record_id,publication);assert.equal(dto.publication.publication_url,'https://example.test/corrected');assert.equal(dto.publication.evidence_kind,'customer_attestation');assert.ok(dto.publication.correction_id);assert.doesNotMatch(JSON.stringify(reloaded),/auth_user_id|active_schedule_id|pending_attempt_id|publication_id|brand_snapshots/);
+  });
+  it('bounded discovery returns archived campaigns with scope/filter-bound cursors and projection parity',async()=>{
+    const d=require('../../src/campaigns/discovery'),s=await setup();await s.add();const t=await scenario(s.repository);await t.approve(await t.add());await t.cmd('archive_campaign',{reason:'Synthetic archived discovery'});
+    const q=d.parseQuery({tenant_id:'tenant_a',project_id:'project_a',archived:'all',limit:1},context.actor);const first=await s.repository.discoverCampaigns(context,q);assert.equal(first.campaigns.length,1);assert.ok(first.next_cursor);const seen=[...first.campaigns];let cursor=first.next_cursor;
+    for(let n=0;cursor&&n<100;n++){const next=await s.repository.discoverCampaigns(context,d.parseQuery({tenant_id:'tenant_a',project_id:'project_a',archived:'all',limit:1,cursor},context.actor));seen.push(...next.campaigns);cursor=next.next_cursor;}
+    assert.equal(new Set(seen.map(c=>c.campaign_id)).size,seen.length);for(const id of [s.id,t.id]){const actual=seen.find(c=>c.campaign_id===id);assert.ok(actual);assert.deepEqual(actual,d.summary(await s.repository.getCampaign(context,id)));}
+    assert.throws(()=>d.parseQuery({tenant_id:'tenant_a',project_id:'project_a',archived:'archived',cursor:first.next_cursor},context.actor));assert.throws(()=>d.parseQuery({tenant_id:'tenant_b',project_id:'project_b',archived:'all',cursor:first.next_cursor},context.actor));assert.throws(()=>d.parseQuery({tenant_id:'tenant_a',project_id:'project_a',limit:101},context.actor));
+    const archived=await s.repository.discoverCampaigns(context,d.parseQuery({tenant_id:'tenant_a',project_id:'project_a',archived:'archived'},context.actor));assert.ok(archived.campaigns.some(c=>c.campaign_id===t.id));assert.ok(archived.campaigns.every(c=>c.archived_at));
+  });
+  it('unscheduling preserves approval/history and replays durably without accepting stale or foreign schedule identity',async()=>{
+    const s=await setup(),a=await s.approve(await s.add()),scheduled=await s.schedule(a);
+    const input={contract_version:'campaign-spine.v1',idempotency_key:randomUUID(),expected_campaign_version:scheduled.campaign_version,command_type:'unschedule',tenant_id:context.tenant_id,project_id:context.project_id,campaign_id:s.id,payload:{variant_id:a.variant_id,schedule_id:scheduled.created_ids.schedule_ids[0]}};
+    await s.unchanged(()=>s.repository.executeCommand(context,{...input,idempotency_key:randomUUID(),payload:{...input.payload,schedule_id:randomUUID()}}));
+    const first=await s.repository.executeCommand(context,input);assert.deepEqual(await s.repository.executeCommand(context,input),first);
+    assert.equal((await s.variant(a)).workflow,'approved');assert.equal((await s.get()).schedules.size,1);
+    await s.unchanged(()=>s.repository.executeCommand(context,{...input,idempotency_key:randomUUID()}));
+    assert.equal((await s.repository.verifyCampaignProjection(context,s.id)).valid,true);
+  });
   it('Published rejects revisions; replay and reconstruction preserve original publication',async()=>{const s=await setup(),t=await s.add(),a=await s.approve(t);await s.publish(a);await s.unchanged(()=>s.cmd('save_revision',{variant_id:t.variant_id,content,change_reason:'Must reject'}));assert.equal((await s.repository.verifyCampaignProjection(context,s.id)).valid,true);});
   it('revocation goes to Review and cancels schedule without deleting evidence',async()=>{const s=await setup(),a=await s.approve(await s.add());await s.schedule(a);await s.cmd('revoke_approval',{variant_id:a.variant_id,approval_id:a.approval_id,reason:'Review again'});assert.equal((await s.variant(a)).workflow,'review');assert.equal((await s.variant(a)).active_schedule_id,null);assert.equal((await s.get()).schedules.size,1);assert.equal((await s.repository.verifyCampaignProjection(context,s.id)).valid,true);});
   it('unknown/internal command methods and invalid metadata reject atomically',async()=>{const s=await setup();for(const name of ['result','apply','constructor','toString'])await s.unchanged(()=>s.cmd(name,{}));await s.unchanged(()=>s.cmd('update_campaign_details',{name:{bad:true},display_timezone:'not-a-zone'}));await s.unchanged(()=>s.cmd('update_campaign_details',{name:'Valid',display_timezone:'not-a-zone'}));});

@@ -1,4 +1,5 @@
 const express = require("express");
+const { deliverPreview, PreviewDeliveryError } = require("../media/previewDelivery");
 const { z } = require("zod");
 const {
   AuthenticationRequiredError,
@@ -133,7 +134,9 @@ const manualResolutionBody = bodyScope.extend({
 const calendarQuery = queryScope.extend({
   from: z.string().datetime({ offset: true }),
   to: z.string().datetime({ offset: true }),
-}).strict();
+}).strict().refine(value => Date.parse(value.from) < Date.parse(value.to), {
+  path: ["to"], message: "Calendar window end must be after its start",
+});
 const measurementBody = bodyScope.extend({
   idempotency_key: identifier,
   metric: z.enum(["reach","views","impressions","clicks","enquiries","leads","conversions","sales","revenue","value"]),
@@ -208,7 +211,12 @@ function stageAction(campaign) {
   return { code: "create_content_item", label: "Create content item" };
 }
 
-function safeVariant(variant, item) {
+function safeVariant(variant, item, campaign) {
+  const schedule=campaign.schedules.get(variant.active_schedule_id);
+  const attempt=campaign.attempts.get(variant.pending_attempt_id);
+  const original=campaign.publications.get(variant.publication_id);
+  const publication=original?(require('./projection').latestCorrection(campaign,original.publication_id)||original):null;
+  const platformPublication=campaign.platform_publications?.get(variant.variant_id);
   const current = variant.revisions.get(variant.current_revision_id);
   return {
     variant_id: variant.variant_id,
@@ -216,9 +224,13 @@ function safeVariant(variant, item) {
     platform: variant.platform,
     placement: variant.placement,
     destination_label: variant.destination_label,
-    workflow: variant.workflow,
+    workflow: platformPublication?'published':variant.workflow,
+    platform_publication:platformPublication?{dispatch_id:platformPublication.dispatch_id,provider_publication_id:platformPublication.provider_publication_id,revision_id:platformPublication.revision_id,platform:platformPublication.platform,destination:platformPublication.destination_account,publication_url:platformPublication.publication_url,published_at:platformPublication.published_at,evidence_kind:'platform_api',reconciliation_status:platformPublication.reconciliation_status,dna_id:platformPublication.dna_id}:null,
     current_revision_id: variant.current_revision_id,
     current_content: current?.content || null,
+    current_schedule:schedule?{schedule_id:schedule.schedule_id,revision_id:schedule.revision_id,scheduled_for:schedule.scheduled_for,timezone:schedule.timezone}:null,
+    manual_publication:attempt?{attempt_id:attempt.attempt_id,revision_id:attempt.revision_id,started_at:attempt.started_at,method:'manual'}:null,
+    publication:publication?{record_id:original.publication_id,revision_id:original.revision_id,published_at:publication.published_at,publication_url:publication.publication_url,method:'manual',evidence_kind:'customer_attestation',correction_id:publication.correction_id||null}:null,
     updated_at: variant.updated_at,
   };
 }
@@ -232,6 +244,7 @@ function campaignVariant(campaign, variantId) {
 }
 
 function safeCampaign(campaign, { detail = false } = {}) {
+  if(campaign.platform_publications?.size){campaign=structuredClone(campaign);for(const i of campaign.items.values())for(const v of i.variants.values())if(campaign.platform_publications.has(v.variant_id))v.workflow='published';campaign=require('./projection').decorate(campaign);}
   const base = {
     campaign_id: campaign.campaign_id,
     tenant_id: campaign.tenant_id,
@@ -260,7 +273,7 @@ function safeCampaign(campaign, { detail = false } = {}) {
       archived_at: item.archived_at,
       created_at: item.created_at,
       updated_at: item.updated_at,
-      variants: [...item.variants.values()].map((variant) => safeVariant(variant, item)),
+      variants: [...item.variants.values()].map((variant) => safeVariant(variant, item, campaign)),
     })),
   };
 }
@@ -332,6 +345,8 @@ function createCustomerCampaignRouter({
   previewRegistry,
   campaignGenerationService,
   measurementRegistry,
+  mediaPreviewStorage,
+  runtimeDeliveryLimits=null,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -370,6 +385,13 @@ function createCustomerCampaignRouter({
       return res.status(201).json({ generation_id: result.generation_id, campaign: safeCampaign(result.campaign, { detail: true }) });
     } catch (error) { return sendCampaignError(error, res, logger); }
   });
+
+  router.get('/discovery',async(req,res)=>{try{
+    const scope=parse(queryScope, {tenant_id:req.query.tenant_id,project_id:req.query.project_id});
+    const context=await authorize({req,tokenVerifier,authorizationService,tenantId:scope.tenant_id,projectId:scope.project_id,action:'project:read'});
+    const q=require('./discovery').parseQuery(req.query,context.actor);
+    return res.json(await repository.discoverCampaigns(context,q));
+  }catch(error){return sendCampaignError(error,res,logger);}});
 
   router.get("/", async (req, res) => {
     try {
@@ -477,6 +499,43 @@ function createCustomerCampaignRouter({
     }
   });
 
+  router.get("/:campaignId/variants/:variantId/creative-preview", async (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    res.vary("Authorization");
+    try {
+      const query = parse(queryScope.extend({
+        revision_id: uuid,
+        expected_campaign_version: z.string().regex(/^(0|[1-9][0-9]*)$/).transform(Number).pipe(expectedVersion),
+      }).strict(), req.query);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const variantId = parse(uuid, req.params.variantId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: query.tenant_id, projectId: query.project_id, action: "project:read" });
+      const preview = await repository.getCreativePreview(context, campaignId, {
+        variantId, revisionId: query.revision_id, expectedVersion: query.expected_campaign_version,
+      });
+      return res.json({ preview });
+    } catch (error) { return sendCampaignError(error, res, logger); }
+  });
+
+  // Express also dispatches HEAD to this GET handler; HEAD checks authority and stats only.
+  router.get("/:campaignId/variants/:variantId/revisions/:revisionId/assets/:assetId/preview", async (req, res) => {
+    res.set("Cache-Control", "private, no-store"); res.vary("Authorization");
+    try {
+      const query = parse(queryScope.extend({ expected_campaign_version: z.string().regex(/^(0|[1-9][0-9]*)$/).transform(Number).pipe(expectedVersion) }).strict(), req.query);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: query.tenant_id, projectId: query.project_id, action: "project:read" });
+      const asset = await repository.getMediaPreviewAsset(context, campaignId, {
+        variantId: parse(uuid, req.params.variantId), revisionId: parse(uuid, req.params.revisionId), assetId: parse(uuid, req.params.assetId), expectedVersion: query.expected_campaign_version,
+      });
+      if(runtimeDeliveryLimits)asset.reserveDelivery=({method})=>runtimeDeliveryLimits.preview({tenant_id:context.tenant_id,method});
+      await deliverPreview(req, res, asset, mediaPreviewStorage);
+    } catch (error) {
+      if (res.destroyed || res.headersSent) return;
+      if (error instanceof PreviewDeliveryError) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
+      return sendCampaignError(error, res, logger);
+    }
+  });
+
   router.post("/:campaignId/variants/:variantId/preview-renders", async (req, res) => {
     try {
       if (!previewRegistry) throw new CampaignPersistenceError();
@@ -561,6 +620,16 @@ function createCustomerCampaignRouter({
     });
   }
 
+  router.post('/:campaignId/variants/:variantId/unschedule',async(req,res)=>{
+    try {
+      const body=parse(bodyScope.extend({expected_campaign_version:expectedVersion,schedule_id:uuid}).strict(),req.body),campaignId=parse(uuid,req.params.campaignId),variantId=parse(uuid,req.params.variantId);
+      const context=await authorize({req,tokenVerifier,authorizationService,tenantId:body.tenant_id,projectId:body.project_id,action:'project:write'});
+      const result=await repository.executeCommand(context,command({body,campaignId,commandType:'unschedule',expectedVersion:body.expected_campaign_version,payload:{variant_id:variantId,schedule_id:body.schedule_id}}));
+      return res.json({result:safeResult(result),campaign:safeCampaign(await repository.getCampaign(context,campaignId),{detail:true})});
+    }catch(error){return sendCampaignError(error,res,logger);}
+  });
+
+  router.get('/:campaignId/publication-history',async(req,res)=>{try{const {tenant_id,project_id,...q}=req.query;const scope=parse(queryScope,{tenant_id,project_id}),id=parse(uuid,req.params.campaignId);const context=await authorize({req,tokenVerifier,authorizationService,tenantId:scope.tenant_id,projectId:scope.project_id,action:'project:read'});if(!repository.listPublicationHistory)throw new CampaignPersistenceError();return res.json(await repository.listPublicationHistory(context,id,q));}catch(e){return sendCampaignError(e,res,logger);}});
   router.get("/:campaignId/calendar", async (req, res) => {
     try {
       const query = parse(calendarQuery, req.query);
@@ -658,10 +727,23 @@ function createCustomerCampaignRouter({
   return router;
 }
 
+function createCustomerWorkspaceCalendarRouter({repository,tokenVerifier,authorizationService,logger=console}) {
+  const router=express.Router();
+  router.get('/',async(req,res)=>{
+    try {
+      const q=require('./workspaceCalendar').parseQuery(req.query);
+      const context=await authorize({req,tokenVerifier,authorizationService,tenantId:q.tenant_id,projectId:q.project_id,action:'project:read'});
+      return res.json(await repository.listWorkspaceCalendar(context,q));
+    } catch(error) {return sendCampaignError(error,res,logger);}
+  });
+  return router;
+}
+
 function createCustomerCampaignRecommendationRouter({
   recommendationRegistry = createDefaultGoalRecommendationRegistry(),
   measurementRegistry,
   brandBrainRepository,
+  onboardingRepository = null,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -687,10 +769,17 @@ function createCustomerCampaignRecommendationRouter({
       const brandBrain = brandBrainRepository
         ? await brandBrainRepository.getByProjectAndBrand(context.project_id, body.brand_id)
         : null;
+      // Saved preferences only reorder deterministic candidates; a lookup failure must not block a recommendation.
+      const onboarding = onboardingRepository
+        ? await onboardingRepository.get({ tenant_id: context.tenant_id, project_id: context.project_id, brand_id: body.brand_id }).catch(() => null)
+        : null;
+      const baseContext = onboarding && onboarding.status === "completed"
+        ? { ...context, onboarding_preferences: { sector_key: onboarding.sector_key, channels: onboarding.channels } }
+        : context;
       const recommendation = await recommendationRegistry.recommend(
         brandBrain?.metadata?.status === "approved" || brandBrain?.status === "approved"
-          ? { ...context, brand_brain: brandBrain }
-          : context,
+          ? { ...baseContext, brand_brain: brandBrain }
+          : baseContext,
         body,
         { evidence }
       );
@@ -706,5 +795,6 @@ function createCustomerCampaignRecommendationRouter({
 module.exports = {
   createCustomerCampaignRecommendationRouter,
   createCustomerCampaignRouter,
+  createCustomerWorkspaceCalendarRouter,
   safeCampaign,
 };

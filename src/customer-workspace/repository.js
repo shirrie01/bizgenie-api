@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const { CustomerWorkspacePersistenceError } = require("./errors");
 
 function clone(value) {
   return value ? structuredClone(value) : null;
@@ -69,6 +70,8 @@ class InMemoryCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
   constructor({ workspaces = [] } = {}) {
     super();
     this.workspaces = new Map();
+    // Tenant existence outlives membership, as in the PostgreSQL adapter.
+    this.createdTenantIds = new Set(workspaces.map(item => item.workspace.tenant_id));
     for (const item of workspaces) {
       const list = this.workspaces.get(item.auth_user_id) || [];
       list.push(clone(item.workspace));
@@ -90,6 +93,7 @@ class InMemoryCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
     if (existing.length) return clone(existing[0]);
 
     const ids = defaultWorkspaceIds(auth_user_id);
+    if (this.createdTenantIds.has(ids.tenant_id)) throw new CustomerWorkspacePersistenceError();
     const businessName = business_name || "BizGenie Workspace";
     const workspace = workspaceDto({
       ...ids,
@@ -98,6 +102,7 @@ class InMemoryCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
       brand_name: businessName,
       role: "owner",
     });
+    this.createdTenantIds.add(ids.tenant_id);
     this.workspaces.set(auth_user_id, [workspace]);
     return clone(workspace);
   }

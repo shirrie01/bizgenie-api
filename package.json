@@ -11,7 +11,8 @@
     "test": "node --test",
     "test:billing:postgres": "node --test test/postgres-billing.integration.test.js",
     "test:campaign:postgres": "node --test test/postgres-campaign.integration.test.js",
-    "test:brand-brain:integration": "node --test scripts/brand-brain-postgres-integration.js"
+    "test:brand-brain:integration": "node --test scripts/brand-brain-postgres-integration.js",
+    "test:onboarding:postgres": "node --test test/workspace-onboarding.integration.test.js"
   },
   "dependencies": {
     "@google-cloud/vertexai": "^1.0.0",
@@ -23,5 +24,8 @@
   },
   "devDependencies": {
     "supertest": "^7.2.2"
+  },
+  "overrides": {
+    "qs": "6.16.1"
   }
 }

@@ -1,5 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const {
+  CampaignError,
+  CampaignPersistenceError,
   CampaignIdempotencyError,
   CampaignResourceError,
   CampaignTransitionError,
@@ -8,6 +10,8 @@ const {
 } = require("./errors");
 const { content: contentSchema, emptyContent, hashIntent, parseCommand, authorization, previewReceipt } = require("./schema");
 const projection = require('./projection');
+const { creativePreview } = require('./creativePreview');
+const { mediaPreviewAsset } = require('./mediaPreviewAsset');
 
 const clone = (value) => structuredClone(value);
 const iso = (value) => new Date(value).toISOString();
@@ -15,6 +19,8 @@ const iso = (value) => new Date(value).toISOString();
 class CampaignRepository {
   async executeCommand() { throw new Error("Not implemented"); }
   async getCampaign() { throw new Error("Not implemented"); }
+  async getCreativePreview() { throw new Error("Not implemented"); }
+  async getMediaPreviewAsset() { throw new Error("Not implemented"); }
   async listCampaigns() { throw new Error("Not implemented"); }
   async listCalendarEntries() { throw new Error("Not implemented"); }
   async listCampaignEvents() { throw new Error("Not implemented"); }
@@ -144,6 +150,26 @@ class InMemoryCampaignRepository extends CampaignRepository {
     return projection.decorate(campaign);
   }
 
+  async getCreativePreview(context, campaignId, options) {
+    try {
+      return await creativePreview({ ...options, context, campaign: await this.getCampaign(context, campaignId),
+        resolveMedia: this.resolveMedia, validatePreview: this.validatePreview });
+    } catch (error) {
+      if (error instanceof CampaignError) throw error;
+      throw new CampaignPersistenceError();
+    }
+  }
+
+  async getMediaPreviewAsset(context, campaignId, options) {
+    try { return await mediaPreviewAsset({ ...options, context, campaign: await this.getCampaign(context, campaignId), resolveMedia: this.resolveMedia }); }
+    catch (error) { if (error instanceof CampaignError) throw error; throw new CampaignPersistenceError(); }
+  }
+
+  async discoverCampaigns(context,q) {
+    if(!authorization.safeParse(context).success||!(await this.authorize(clone(context))))throw new CampaignResourceError();
+    const d=require('./discovery');const campaigns=[...this.state.campaigns.values()].filter(c=>c.tenant_id===context.tenant_id&&c.project_id===context.project_id).map(projection.decorate);
+    return d.page(q,d.memoryRows(campaigns,q));
+  }
   async listCampaigns(context) {
     if(!authorization.safeParse(context).success)throw new CampaignResourceError();
     if (!(await this.authorize(clone(context)))) throw new CampaignResourceError();
@@ -151,6 +177,11 @@ class InMemoryCampaignRepository extends CampaignRepository {
       .filter((row) => row.tenant_id === context.tenant_id && row.project_id === context.project_id && !row.archived_at)
       .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.campaign_id.localeCompare(b.campaign_id))
       .map(projection.decorate);
+  }
+
+  async listWorkspaceCalendar(context, query) {
+    const calendar=require("./workspaceCalendar");
+    return calendar.page(query,calendar.memoryRows(await this.listCampaigns(context),query));
   }
 
   async listCalendarEntries(context, { from, to }) {
@@ -279,7 +310,7 @@ class CampaignTransaction {
     requireFields(this.command.payload, ["content_item_id","reason"]);
     const item = this.item(campaign, this.command.payload.content_item_id);
     if (campaign.archived_at || Boolean(item.archived_at) === archive ||
-        [...item.variants.values()].some((variant) => variant.pending_attempt_id || variant.active_schedule_id)) throw new CampaignTransitionError(archive ? "INVALID_TRANSITION" : "CAMPAIGN_ARCHIVED");
+        [...item.variants.values()].some((variant) => variant.pending_attempt_id || variant.active_schedule_id&&campaign.platform_publications?.get(variant.variant_id)?.schedule_id!==variant.active_schedule_id)) throw new CampaignTransitionError(archive ? "INVALID_TRANSITION" : "CAMPAIGN_ARCHIVED");
     item.archived_at = archive ? this.now : null; item.updated_at = this.now;
     this.event(`content_item.${archive ? "archived" : "restored"}`, { content_item_id: item.content_item_id, reason: this.command.payload.reason });
   }
@@ -435,7 +466,7 @@ class CampaignTransaction {
   restoreCampaign(campaign) { this._campaignArchive(campaign, false); }
   _campaignArchive(campaign, archive) {
     requireFields(this.command.payload, ["reason"]);
-    if (Boolean(campaign.archived_at) === archive || [...campaign.items.values()].some((item) => [...item.variants.values()].some((v) => v.pending_attempt_id || v.active_schedule_id))) throw new CampaignTransitionError();
+    if (Boolean(campaign.archived_at) === archive || [...campaign.items.values()].some((item) => [...item.variants.values()].some((v) => v.pending_attempt_id || v.active_schedule_id&&campaign.platform_publications?.get(v.variant_id)?.schedule_id!==v.active_schedule_id))) throw new CampaignTransitionError();
     campaign.archived_at = archive ? this.now : null; this.event(`campaign.${archive ? "archived" : "restored"}`, { reason: this.command.payload.reason });
   }
   result() {

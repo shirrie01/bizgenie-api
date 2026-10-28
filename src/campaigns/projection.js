@@ -110,9 +110,10 @@ function calendar(campaigns,{from,to}) {
   for(const campaign of campaigns) for(const item of campaign.items.values()) {
     if(campaign.archived_at||item.archived_at)continue;
     for(const v of item.variants.values()) {
+      const platformPublication=campaign.platform_publications?.get(v.variant_id);
       const publication=campaign.publications.get(v.publication_id);
-      const instant=publication?(latestCorrection(campaign,v.publication_id)||publication).published_at:campaign.schedules.get(v.active_schedule_id)?.scheduled_for;
-      if(instant && instant>=new Date(from).toISOString() && instant<new Date(to).toISOString())entries.push({campaign_id:campaign.campaign_id,content_item_id:item.content_item_id,variant_id:v.variant_id,workflow:v.workflow,occurrence_at:instant});
+      const instant=platformPublication?.published_at||(publication?(latestCorrection(campaign,v.publication_id)||publication).published_at:campaign.schedules.get(v.active_schedule_id)?.scheduled_for);
+      if(instant && instant>=new Date(from).toISOString() && instant<new Date(to).toISOString())entries.push({campaign_id:campaign.campaign_id,content_item_id:item.content_item_id,variant_id:v.variant_id,workflow:platformPublication?'published':v.workflow,occurrence_at:instant});
     }
   }
   return entries.sort((a,b)=>a.occurrence_at.localeCompare(b.occurrence_at)||a.variant_id.localeCompare(b.variant_id));

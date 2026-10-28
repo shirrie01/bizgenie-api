@@ -2,6 +2,7 @@ const { Pool } = require("pg");
 const { BrandBrainSchema } = require("./schema");
 const { BrandBrainRepository } = require("./repository");
 const {
+  BrandBrainError,
   BrandBrainConfigurationError,
   BrandBrainOwnershipError,
   BrandBrainPersistenceError,
@@ -157,6 +158,36 @@ class PostgresBrandBrainRepository extends BrandBrainRepository {
       }
       throw new BrandBrainPersistenceError();
     }
+  }
+
+  async guardedUpsert({ record, expected, scope, auth_user_id, admin = false }) {
+    const { checkWrite, denied } = require("./writePolicy");
+    let client;
+    try {
+      client = await this.pool.connect();
+      await client.query("BEGIN");
+      let role;
+      if (!admin) {
+        const authority = await client.query(`select tm.role from public.tenant_memberships tm
+          join public.projects p on p.tenant_id=tm.tenant_id
+          where tm.auth_user_id=$1 and tm.tenant_id=$2 and p.project_id=$3
+          for share of tm,p`, [auth_user_id, scope.tenant_id, scope.project_id]);
+        if (authority.rowCount !== 1 || scope.brand_id !== record.brand_id || scope.project_id !== record.project_id) throw denied();
+        role = authority.rows[0].role;
+      }
+      const result = await client.query(`SELECT ${SELECT_COLUMNS} FROM public.brand_brains
+        WHERE project_id=$1 AND brand_id=$2 FOR UPDATE`, [record.project_id, record.brand_id]);
+      const current = mapRow(result.rows[0]);
+      if (!admin && current?.metadata.status !== "approved") throw denied();
+      checkWrite({ current, expected, record, role });
+      const saved = await new PostgresBrandBrainRepository({ pool: client }).upsert(record);
+      await client.query("COMMIT");
+      return saved;
+    } catch (error) {
+      try { await client?.query("ROLLBACK"); } catch {}
+      if (error instanceof BrandBrainError) throw error;
+      throw new BrandBrainPersistenceError();
+    } finally { client?.release(); }
   }
 
   async upsert(record) {

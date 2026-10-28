@@ -30,6 +30,10 @@ class InMemoryMediaAssetRepository extends MediaAssetRepository {
     return copy(asset);
   }
 
+  async findGeneratedForJob({jobId,tenantId,projectId}) {
+    return [...this.assets.values()].filter(a=>a.generation_job_id===jobId&&a.tenant_id===tenantId&&a.project_id===projectId&&a.source_kind==='generated'&&a.status==='active').slice(0,2).map(copy);
+  }
+
   async findOwned({ assetId, tenantId, projectId }) {
     const asset = this.assets.get(assetId);
     if (!asset || asset.tenant_id !== tenantId || asset.project_id !== projectId || asset.status !== "active") return null;
@@ -114,6 +118,11 @@ class PostgresMediaAssetRepository extends MediaAssetRepository {
     } catch (_error) {
       throw new MediaPersistenceError();
     }
+  }
+
+  async findGeneratedForJob({jobId,tenantId,projectId}) {
+    try {const r=await this.pool.query("select * from public.media_assets where generation_job_id=$1 and tenant_id=$2 and project_id=$3 and source_kind='generated' and status='active' order by asset_id limit 2",[jobId,tenantId,projectId]);return r.rows.map(row=>this.toAsset(row));}
+    catch {throw new MediaPersistenceError();}
   }
 
   async findOwned({ assetId, tenantId, projectId }) {

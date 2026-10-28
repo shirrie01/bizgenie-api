@@ -77,6 +77,52 @@ class GoogleCloudMediaStorage {
     }
   }
 
+  async previewRequest(url, { signal, headers = {} }) {
+    try {
+      const token = await this.accessTokenProvider();
+      signal.throwIfAborted();
+      if (typeof token !== "string" || !token.trim()) throw new MediaPersistenceError();
+      const response = await this.fetchImpl(url, { method: "GET", redirect: "error", signal,
+        headers: { authorization: `Bearer ${token}`, "Accept-Encoding": "identity", ...headers } });
+      if (![200, 206].includes(response.status)) { await response.body?.cancel(); throw new MediaPersistenceError(); }
+      return response;
+    } catch { throw new MediaPersistenceError(); }
+  }
+
+  async statPreview({ key, signal }) {
+    const url = new URL(`https://storage.googleapis.com/storage/v1/b/${encodeURIComponent(this.bucket)}/o/${encodeURIComponent(key)}`);
+    url.searchParams.set("fields", "size,contentType,generation");
+    const response = await this.previewRequest(url.toString(), { signal });
+    if (response.status !== 200) { await response.body?.cancel(); throw new MediaPersistenceError(); }
+    const reader = response.body.getReader();
+    const chunks = []; let bytes = 0;
+    try {
+      while (true) {
+        const part = await reader.read(); if (part.done) break;
+        bytes += part.value.length; if (bytes > 16 * 1024) throw new MediaPersistenceError();
+        chunks.push(Buffer.from(part.value));
+      }
+      const metadata = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      return { size: Number(metadata.size), mimeType: metadata.contentType, generation: metadata.generation };
+    } catch { await reader.cancel(); throw new MediaPersistenceError(); }
+    finally { reader.releaseLock(); }
+  }
+
+  async openPreview({ key, generation, range, signal }) {
+    const url = new URL(`https://storage.googleapis.com/download/storage/v1/b/${encodeURIComponent(this.bucket)}/o/${encodeURIComponent(key)}`);
+    url.searchParams.set("alt", "media"); url.searchParams.set("generation", generation);
+    url.searchParams.set("ifGenerationMatch", generation);
+    return this.previewRequest(url.toString(), { signal,
+      headers: range.partial ? { Range: `bytes=${range.start}-${range.end}` } : {} });
+  }
+
+  async putImmutableObject({key,data,mimeType}) {
+    const url=new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o`);
+    url.searchParams.set('uploadType','media');url.searchParams.set('name',key);url.searchParams.set('ifGenerationMatch','0');
+    const response=await this.request(url.toString(),{method:'POST',redirect:'error',headers:{'content-type':mimeType},body:data});
+    await response.body?.cancel();
+  }
+
   async putObject({ key, data, mimeType }) {
     const url = new URL(
       `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o`
@@ -120,7 +166,7 @@ class GoogleCloudMediaStorage {
         return { byteSize: Number(result.resource.size) || undefined };
       }
       token = result?.rewriteToken;
-      if (typeof token !== "string" || !token) throw new MediaPersistenceError();
+      if (typeof token !== "string" || !token.trim()) throw new MediaPersistenceError();
     } while (token);
     throw new MediaPersistenceError();
   }
@@ -154,6 +200,7 @@ function requireTrustedLineage(lineage) {
   return lineage;
 }
 
+const composedAuthority=new WeakSet();
 class DurableMediaAssetStore {
   constructor({ mediaKind, repository, storage, videoSourcePrefix, now = () => new Date() }) {
     this.mediaKind = mediaKind;
@@ -161,6 +208,13 @@ class DurableMediaAssetStore {
     this.storage = storage;
     this.videoSourcePrefix = videoSourcePrefix;
     this.now = now;
+  }
+
+  async saveComposed({data,lineage},{inspect}) {
+    if(this.mediaKind!=='video'||!Buffer.isBuffer(data)||data.length>32*1024*1024||typeof inspect!=='function')throw new MediaPersistenceError();
+    const measured=await inspect(data);
+    if(measured.status!=='measured'||measured.sha256!==sha(data)||measured.video?.codec!=='h264'||measured.audio?.length||measured.video.duration_seconds>60)throw new MediaPersistenceError();
+    const input={data,lineage,source:{mime_type:'video/mp4',width:measured.video.width,height:measured.video.height,duration_seconds:measured.video.duration_seconds}};composedAuthority.add(input);return this.save(input);
   }
 
   async save(input) {
@@ -179,7 +233,7 @@ class DurableMediaAssetStore {
       extension,
     });
     let stored;
-    if (this.mediaKind === "image") {
+    if (this.mediaKind === "image" || composedAuthority.has(input)) {
       stored = await this.storage.putObject({ key, data: input.data, mimeType });
     } else {
       stored = await this.storage.copyObject({
