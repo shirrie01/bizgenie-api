@@ -16,7 +16,7 @@ const MAX_REQUEST_BYTES = DEFAULT_MAX_CUSTOMER_IMAGE_BYTES;
  */
 function createCustomerReferenceImageRouter({ tokenVerifier, authorizationService, repository, storage, scanImage, decodeImage }) {
   if (!tokenVerifier?.verifyAccessToken || !authorizationService?.authorizeProjectBrand || !repository || !storage || typeof scanImage !== "function" || typeof decodeImage !== "function") {
-    throw new TypeError("Customer reference router requires authentication, brand policy, storage and scanner");
+    throw new TypeError("Customer reference router requires authentication, brand policy, storage, decoder and scanner");
   }
   const ingestion = new CustomerReferenceImageService({ repository, storage, scanImage, decodeImage });
   const router = express.Router();
@@ -27,11 +27,13 @@ function createCustomerReferenceImageRouter({ tokenVerifier, authorizationServic
     inflate: false,
   }), async (req, res) => {
     try {
+      if (req.header("content-encoding")) return res.status(415).json({ error: { code: "UNSUPPORTED_CONTENT_ENCODING" } });
       const parsed = scope.safeParse(req.query);
       if (!parsed.success) return res.status(400).json({ error: { code: "INVALID_SCOPE" } });
       const tokenMatch = req.header("authorization")?.match(/^Bearer ([^\s,]+)$/i);
       if (!tokenMatch) return res.status(401).json({ error: { code: "AUTHENTICATION_REQUIRED" } });
       const actor = await tokenVerifier.verifyAccessToken(tokenMatch[1]);
+      if (!actor || typeof actor !== "object") return res.status(401).json({ error: { code: "AUTHENTICATION_REQUIRED" } });
       const { tenant_id, project_id, brand_id } = parsed.data;
       const granted = await authorizationService.authorizeProjectBrand({
         actor, tenantId: tenant_id, projectId: project_id, brandId: brand_id,
