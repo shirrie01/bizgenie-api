@@ -79,6 +79,9 @@ jobs:
       - name: Run real PostgreSQL campaign persistence tests
         run: npm run test:campaign:postgres
 
+      - name: Run real PostgreSQL onboarding security tests
+        run: npm run test:onboarding:postgres
+
       - name: Check JavaScript syntax
         shell: bash
         run: |
