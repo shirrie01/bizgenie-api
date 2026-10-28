@@ -14,11 +14,11 @@ const MAX_REQUEST_BYTES = DEFAULT_MAX_CUSTOMER_IMAGE_BYTES;
  * verifyBrandScope must construct authority from the verified access token and
  * approved project/brand write policy, never from client-controlled flags.
  */
-function createCustomerReferenceImageRouter({ tokenVerifier, authorizationService, repository, storage, scanImage }) {
-  if (!tokenVerifier?.verifyAccessToken || !authorizationService?.authorizeProjectBrand || !repository || !storage || typeof scanImage !== "function") {
+function createCustomerReferenceImageRouter({ tokenVerifier, authorizationService, repository, storage, scanImage, decodeImage }) {
+  if (!tokenVerifier?.verifyAccessToken || !authorizationService?.authorizeProjectBrand || !repository || !storage || typeof scanImage !== "function" || typeof decodeImage !== "function") {
     throw new TypeError("Customer reference router requires authentication, brand policy, storage and scanner");
   }
-  const ingestion = new CustomerReferenceImageService({ repository, storage, scanImage });
+  const ingestion = new CustomerReferenceImageService({ repository, storage, scanImage, decodeImage });
   const router = express.Router();
 
   router.post("/images", express.raw({
