@@ -20,12 +20,12 @@ function detectImageMime(data) {
  * The caller MUST enforce HTTP request limits and scan/decode images before calling.
  */
 class CustomerReferenceImageService {
-  constructor({ repository, storage, scanImage, now = () => new Date(), maxBytes = DEFAULT_MAX_CUSTOMER_IMAGE_BYTES }) {
-    if (!repository?.create || !storage?.putObject || !storage?.delete || typeof scanImage !== "function") {
+  constructor({ repository, storage, scanImage, decodeImage, now = () => new Date(), maxBytes = DEFAULT_MAX_CUSTOMER_IMAGE_BYTES }) {
+    if (!repository?.create || !storage?.putObject || !storage?.delete || typeof scanImage !== "function" || typeof decodeImage !== "function") {
       throw new TypeError("Reference ingestion requires repository, storage and a scanner");
     }
     if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_IMAGE_BYTES) throw new TypeError("Invalid image limit");
-    Object.assign(this, { repository, storage, scanImage, now, maxBytes });
+    Object.assign(this, { repository, storage, scanImage, decodeImage, now, maxBytes });
   }
 
   async ingest({ authority, data, mimeType }) {
@@ -35,6 +35,11 @@ class CustomerReferenceImageService {
     if (!Buffer.isBuffer(data) || !data.length || data.length > this.maxBytes) throw new MediaPersistenceError();
     const detected = detectImageMime(data);
     if (!detected || !Object.hasOwn(MIME, mimeType) || detected !== mimeType) throw new MediaPersistenceError();
+    // File signatures alone are insufficient: a decoder must validate the entire image.
+    // This is deliberately a separate mandatory gate from malware scanning.
+    let decoded;
+    try { decoded = await this.decodeImage({ data, mimeType }); } catch { throw new MediaPersistenceError(); }
+    if (decoded !== true) throw new MediaPersistenceError();
     // Scanner is fail-closed; any rejected, errored or unavailable scan blocks storage.
     let scan;
     try { scan = await this.scanImage({ data, mimeType }); } catch { throw new MediaPersistenceError(); }
