@@ -25,13 +25,31 @@ const { socialFixture } = require("./helpers/social-local");
 const url = process.env.TEST_DATABASE_URL;
 const actor = context.actor;
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j5XkAAAAASUVORK5CYII=", "base64");
-const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypmp42"), Buffer.alloc(40, 1)]); // opaque bytes: the Veo path copies by reference and the stored asset is what is asserted
+const { execFileSync } = require("node:child_process");
+const os = require("node:os");
+const { createVideoInspector } = require("../src/media/videoInspection");
+let haveFfmpeg = true; try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); execFileSync("ffprobe", ["-version"], { stdio: "ignore" }); } catch { haveFfmpeg = false; }
+// REAL encoded files made with ffmpeg (no network, no paid call) so the real ffprobe inspector measures actual bytes.
+const fixtures = {};
+function makeFixtures() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bg-video-fx-")); const enc = (name, input, out) => { execFileSync("ffmpeg", ["-loglevel", "error", "-y", ...input, ...out, path.join(dir, name)]); return fs.readFileSync(path.join(dir, name)); };
+  const src = (size, dur = 4) => ["-f", "lavfi", "-i", `testsrc=size=${size}:rate=24:duration=${dur}`];
+  fixtures.good = enc("good.mp4", src("720x1280"), ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-an"]);
+  fixtures.audio = enc("audio.mp4", [...src("720x1280"), "-f", "lavfi", "-i", "sine=d=4"], ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"]);
+  fixtures.wrongAspect = enc("wide.mp4", src("1280x720"), ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-an"]);
+  fixtures.wrongLength = enc("long.mp4", src("720x1280", 7), ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-an"]);
+  fixtures.vp9 = enc("vp9.mp4", src("720x1280"), ["-c:v", "libvpx-vp9", "-an"]);
+  fixtures.truncated = fixtures.good.subarray(0, Math.floor(fixtures.good.length / 2));
+  fixtures.corrupt = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypmp42"), Buffer.alloc(40, 1)]);
+  fs.rmSync(dir, { recursive: true, force: true });
+}
 const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true", TEXT_GENERATION_MODEL: "text-model-1", VIDEO_DURATION_SECONDS: "4" };
 
-(url ? describe : describe.skip)("premium composition and worker against disposable PostgreSQL", { concurrency: 1 }, () => {
+(url && haveFfmpeg ? describe : describe.skip)("premium composition and worker against disposable PostgreSQL", { concurrency: 1 }, () => {
   let admin, pool, db, billing, billingService, campaigns, clock, kit, media, providerCalls, transportState, premium, brandRepo, videoRepo, imageBehaviour;
 
   before(async () => {
+    makeFixtures();
     admin = new Pool({ connectionString: url }); const c = await admin.connect();
     try { await c.query("select pg_advisory_lock(734921)"); await c.query("do $$ begin if not exists(select 1 from pg_roles where rolname='anon')then create role anon nologin;end if;if not exists(select 1 from pg_roles where rolname='authenticated')then create role authenticated nologin;end if;if not exists(select 1 from pg_roles where rolname='service_role')then create role service_role nologin;end if;end $$"); } finally { await c.query("select pg_advisory_unlock(734921)"); c.release(); }
     db = "launch_proof_" + randomUUID().replaceAll("-", ""); await admin.query(`create database ${db}`);
@@ -55,14 +73,16 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
     // stand-in storage copy for the provider output prefix
     const OUT = "gs://standin-bucket/veo-out/"; const outputs = new Map();
     kit.storage.copyObject = async ({ source, destinationKey, allowedSourcePrefix }) => { if (!source.startsWith(allowedSourcePrefix) || !outputs.has(source)) throw new Error("copy refused"); return kit.storage.putObject({ key: destinationKey, data: outputs.get(source), mimeType: "video/mp4" }); };
-    transportState = { readyAfter: 0, operations: new Map(), fail: false };
+    transportState = { readyAfter: 0, operations: new Map(), fail: false, output: () => fixtures.good, inspectorDown: false };
+    kit.storage.download = async ({ key, maximumBytes }) => { const o = kit.objects.get(key); if (!o || o.data.length > maximumBytes) throw new Error('missing'); return Buffer.from(o.data); };
+    kit.storage.delete = async ({ key }) => { kit.objects.delete(key); };
     const transport = { post: async (u, body) => {
       const m = /\/(projects\/[^/]+\/locations\/[^/]+\/publishers\/google\/models\/[^:]+):(predictLongRunning|fetchPredictOperation)$/.exec(u);
       if (m[2] === "predictLongRunning") { providerCalls.video += 1; const id = randomUUID(); const name = `${m[1]}/operations/${id}`; transportState.operations.set(name, { uri: `${OUT}${id}/sample_0.mp4`, polls: 0 }); return { name }; }
       const op = transportState.operations.get(body.operationName); op.polls += 1;
       if (transportState.fail) return { name: body.operationName, done: true, error: { code: 3 } };
       if (op.polls <= transportState.readyAfter) return { name: body.operationName, done: false };
-      outputs.set(op.uri, mp4); return { name: body.operationName, done: true, response: { videos: [{ gcsUri: op.uri, mimeType: "video/mp4" }] } };
+      outputs.set(op.uri, transportState.output()); return { name: body.operationName, done: true, response: { videos: [{ gcsUri: op.uri, mimeType: "video/mp4" }] } };
     } };
     const imageStore = new DurableMediaAssetStore({ mediaKind: "image", repository: assets, storage: kit.storage, now: () => clock });
     imageBehaviour = { fail: false };
@@ -70,13 +90,14 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       mediaEnabled: true, imageEnabled: true, videoEnabled: true, mediaAssetRepository: assets, mediaPreviewStorage: kit.storage,
       imageProvider: { model: "image-model-1", generate: async ({ metadata }) => { providerCalls.image += 1; if (imageBehaviour.fail) throw new Error("synthetic provider outage"); const saved = await imageStore.save({ data: png, mime_type: "image/png", width: 1, height: 1, lineage: metadata }); const { byte_size, ...asset } = saved; return { provider: "synthetic", provider_job_id: "synthetic_image_op", asset }; } },
       videoProvider: new GoogleVertexVeoProvider({ projectId: "standin-project", outputStorageUri: OUT, transport }),
-      videoAssetStore: new DurableMediaAssetStore({ mediaKind: "video", repository: assets, storage: kit.storage, videoSourcePrefix: OUT, now: () => clock }),
+      videoAssetStore: new DurableMediaAssetStore({ mediaKind: "video", repository: assets, storage: kit.storage, videoSourcePrefix: OUT, now: () => clock, requireVideoValidation: true,
+        videoInspector: async (bytes) => (transportState.inspectorDown ? { status: "unavailable", reason: "INSPECTION_TOOL_UNAVAILABLE" } : createVideoInspector({ isolation: "local" })(bytes)) }),
       videoReferenceAssetLoader: new (require("../src/video-generation").UnconfiguredVideoReferenceAssetLoader)(),
     };
   });
   after(async () => { await pool?.end(); if (db) await admin.query(`drop database ${db}`); await admin?.end(); });
   beforeEach(async () => {
-    clock = new Date("2026-10-31T12:00:00Z"); providerCalls = { image: 0, video: 0, text: 0 }; transportState.readyAfter = 0; transportState.fail = false; imageBehaviour.fail = false;
+    clock = new Date("2026-10-31T12:00:00Z"); providerCalls = { image: 0, video: 0, text: 0 }; transportState.readyAfter = 0; transportState.fail = false; transportState.output = () => fixtures.good; transportState.inspectorDown = false; imageBehaviour.fail = false;
     const key = randomUUID(); await billingService.adjustCredits({ tenantId: "tenant_a", amount: 100, direction: "credit", transactionCorrelationId: key, idempotencyKey: key });
     { const c = await pool.connect(); try { await c.query("set session_replication_role=replica"); await c.query("update generation_execution_claims set state='cancelled', claim_token=null where state in ('queued','claimed','calling','recovery_required')"); } finally { await c.query("reset session_replication_role"); c.release(); } } // test isolation only, on the disposable database: leftovers from a previous case are not this case's
     premium = await build();
@@ -157,6 +178,31 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       assert.equal((await claimState(job.job_id)).state, "succeeded"); assert.equal(providerCalls.video, 1, "never submitted twice");
       assert.deepEqual(await ledger(job.job_id), { reservation: 1, debit: 1 });
       const asset = (await pool.query("select media_kind, mime_type, status, source_kind from media_assets where generation_job_id=$1", [job.job_id])).rows; assert.deepEqual(asset, [{ media_kind: "video", mime_type: "video/mp4", status: "active", source_kind: "generated" }]);
+    });
+    it("the stored Veo asset carries what was MEASURED from its bytes, not what the provider claimed", async () => {
+      const { job } = await confirmed("video.normal", "tiktok", "video"); await loop({ minBackoffMs: 1 }).tick(); clock = new Date(clock.getTime() + 5000); await loop({ minBackoffMs: 1 }).tick();
+      const a = (await pool.query("select width,height,duration_seconds::float d,byte_size from media_assets where generation_job_id=$1", [job.job_id])).rows[0];
+      assert.deepEqual([a.width, a.height, a.d, Number(a.byte_size)], [720, 1280, 4, fixtures.good.length]);
+    });
+    for (const [name, key, reason] of [["audio track", "audio", "AUDIO_UNSUPPORTED"], ["wrong aspect ratio", "wrongAspect", "ASPECT_RATIO_MISMATCH"], ["wrong duration", "wrongLength", "DURATION_MISMATCH"], ["unsupported codec", "vp9", "VIDEO_CODEC_UNSUPPORTED"], ["truncated file", "truncated", null], ["corrupt bytes", "corrupt", null]]) {
+      it(`a finished Veo job whose output has ${name} fails definitively: no asset exists, nothing is charged, the reservation is released`, async () => {
+        transportState.output = () => fixtures[key]; const before = await balance(); const { job } = await confirmed("video.normal", "tiktok", "video"); const l = loop({ minBackoffMs: 1 });
+        await l.tick(); clock = new Date(clock.getTime() + 5000); await l.tick();
+        assert.equal((await claimState(job.job_id)).state, "failed"); assert.equal((await ledger(job.job_id)).debit || 0, 0); assert.equal(await balance(), before);
+        assert.equal((await pool.query("select count(*)::int n from media_assets where generation_job_id=$1", [job.job_id])).rows[0].n, 0, "no asset row, so nothing to approve or publish");
+        assert.equal([...kit.objects.keys()].filter((k) => k.endsWith(".mp4") && k.includes(job.job_id)).length, 0);
+        const v = (await pool.query("select status,error_code from video_generations where generation_job_id=$1", [job.job_id])).rows[0]; assert.deepEqual(v, { status: "failed", error_code: "VIDEO_OUTPUT_INVALID" });
+        void reason;
+      });
+    }
+    it("when the inspection tool is unavailable the job stays recoverable (never approved), and completes once inspection works", async () => {
+      transportState.inspectorDown = true; const { job } = await confirmed("video.normal", "tiktok", "video"); const l = loop({ minBackoffMs: 1 });
+      await l.tick(); clock = new Date(clock.getTime() + 5000); await l.tick();
+      assert.equal((await claimState(job.job_id)).state, "recovery_required"); assert.equal((await pool.query("select count(*)::int n from media_assets where generation_job_id=$1", [job.job_id])).rows[0].n, 0);
+      transportState.inspectorDown = false; clock = new Date(clock.getTime() + 60000); await l.tick(); assert.equal((await claimState(job.job_id)).state, "succeeded"); assert.equal(providerCalls.video, 1);
+    });
+    it("composition refuses to enable video without an inspector", async () => {
+      assert.throws(() => new DurableMediaAssetStore({ mediaKind: "video", repository: {}, storage: {}, requireVideoValidation: true }));
     });
     it("a provider-reported Veo failure is final: the reservation is released and nothing is charged", async () => {
       transportState.fail = true; const before = await balance(); const { job } = await confirmed("video.normal", "tiktok", "video"); const l = loop({ minBackoffMs: 1 });
