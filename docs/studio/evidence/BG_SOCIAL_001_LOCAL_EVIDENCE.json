@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-31",
+  "status": "PARTIAL: callback relay and provider-neutral vault boundary; TikTok wire adapter and draft upload BLOCKED",
+  "base_pr": 222,
+  "base_sha": "d2eecc3a57e93ae37697d73417718b6d5705961d",
+  "branch": "bg-social-001-tiktok",
+  "redirect_uri": "https://getbizgenie.com/customer/social/oauth/callback/tiktok",
+  "redirect_publicly_deployed": false,
+  "node": "22.23.3",
+  "postgres": "17.11",
+  "full": {
+    "pass": 1025,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0
+  },
+  "postgres_tests": {
+    "pass": 57
+  },
+  "focused": {
+    "pass": 4
+  },
+  "hosted_ci": "UNKNOWN; GraphQL Forbidden",
+  "official_contract_access": "TikTok public documentation403, including escalated retry",
+  "new_shared_migrations": false,
+  "live_calls": false,
+  "files": {
+    "focused.log": "928df8529e3359e220a6dba2c1091ae9d2c619a9c96c9fd003c433bc662e7e9e",
+    "final-full.log": "65c6ade0f0c7165b53ceb39ef10dd3b95d54ce36efee6d8d23c3983d1e06102b",
+    "postgres.log": "224a02fcd7859419618edad567024d2e8ea28c61855f5cbbabe1cb671c877c6d"
+  }
+}
