@@ -5,13 +5,18 @@ const { mkdtemp, writeFile, chmod, rm } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const path = require("node:path");
 
+const { limits, prlimitArgs } = require("./inspectionLimits");
 const result = (status, reason) => Object.freeze({ status, reason });
 
-function createVideoDecodeCheck({ executable = "/usr/bin/ffmpeg", timeoutMs = 20000, isolation = "local" } = {}) {
+function createVideoDecodeCheck({ executable = "/usr/bin/ffmpeg", timeoutMs = limits.decode.timeoutMs, isolation = "local" } = {}) {
   if (!["local", "bubblewrap"].includes(isolation) || !path.isAbsolute(executable) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000) throw new TypeError("Invalid decode configuration");
   let active = 0;
   return async function decodeVideo(bytes, { signal } = {}) {
     if (!Buffer.isBuffer(bytes) || bytes.length < 16) return result("invalid", "INVALID_BYTES");
+    if (bytes.length > limits.input.maxBytes) return result("invalid", "OBJECT_TOO_LARGE");
+    // Only a real ISO MP4 reaches ffmpeg: a playlist, concat script or other container could otherwise make it open other files. The demuxer is also forced below.
+    const boxSize = bytes.readUInt32BE(0);
+    if (bytes.toString("ascii", 4, 8) !== "ftyp" || boxSize < 16 || boxSize > bytes.length || boxSize > 4096) return result("invalid", "INVALID_MP4_HEADER");
     if (signal?.aborted) return result("unavailable", "CANCELLED");
     if (active >= 2) return result("unavailable", "DECODE_BUSY");
     active += 1; let directory;
@@ -21,10 +26,10 @@ function createVideoDecodeCheck({ executable = "/usr/bin/ffmpeg", timeoutMs = 20
       await writeFile(file, Buffer.from(bytes), { flag: "wx", mode: 0o600 });
       if (isolation === "bubblewrap") await chmod(file, 0o444);
       const input = isolation === "bubblewrap" ? "/input/asset.mp4" : file;
-      const ffArgs = ["-nostdin", "-v", "error", "-xerror", "-max_alloc", "268435456", "-threads", "1", "-protocol_whitelist", "file", "-i", input, "-map", "0:v:0", "-f", "null", "-"];
+      const ffArgs = ["-nostdin", "-v", "error", "-xerror", "-max_alloc", String(limits.decode.maxAlloc), "-threads", "1", "-protocol_whitelist", limits.common.allowedProtocols, "-format_whitelist", limits.common.allowedFormats, "-enable_drefs", "0", "-use_absolute_path", "0", "-i", input, "-map", "0:v:0", "-f", "null", "-"];
       const inner = isolation === "bubblewrap"
         ? ["/usr/bin/bwrap", "--unshare-all", "--unshare-net", "--unshare-user", "--disable-userns", "--assert-userns-disabled", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--uid", "65534", "--gid", "65534",
-          "--ro-bind", "/usr", "/usr", "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev", "--size", "1048576", "--tmpfs", "/tmp", "--dir", "/input",
+          "--ro-bind", "/usr", "/usr", "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev", "--size", String(limits.common.sandboxTmpfsBytes), "--tmpfs", "/tmp", "--dir", "/input",
           "--ro-bind", file, input, "--chdir", "/input", "--clearenv", "--setenv", "LANG", "C", "--setenv", "LC_ALL", "C", "--", executable, ...ffArgs]
         : [executable, ...ffArgs];
       const outcome = await new Promise((resolve) => {
@@ -33,7 +38,7 @@ function createVideoDecodeCheck({ executable = "/usr/bin/ffmpeg", timeoutMs = 20
         const timer = setTimeout(() => stop("DECODE_TIMEOUT"), timeoutMs);
         signal?.addEventListener("abort", () => stop("CANCELLED"), { once: true });
         try {
-          child = spawn("/usr/bin/prlimit", ["--as=2147483648", "--cpu=30", "--nofile=64", "--core=0", "--", ...inner], { shell: false, cwd: directory, env: { LANG: "C", LC_ALL: "C" }, stdio: ["ignore", "ignore", "pipe"] });
+          child = spawn("/usr/bin/prlimit", [...prlimitArgs("decode"), "--", ...inner], { shell: false, cwd: directory, env: { LANG: "C", LC_ALL: "C" }, stdio: ["ignore", "ignore", "pipe"] });
         } catch { clearTimeout(timer); resolve({ unavailable: "DECODE_TOOL_UNAVAILABLE" }); return; }
         child.stderr.on("data", (c) => { if (stderr.length < 4096) stderr += c.toString("utf8").slice(0, 4096 - stderr.length); });
         child.on("error", () => { stopped ||= "DECODE_TOOL_UNAVAILABLE"; });

@@ -21,7 +21,7 @@ const tool = (n) => { const r = spawnSync("sh", ["-c", `command -v ${n}`], { enc
 (async () => {
   // ---- 1. what this runtime provides (no founder action) ---------------------------------------------------------------------------------------------------------------
   add("runtime", "node", "Node 22", process.versions.node.startsWith("22."), process.versions.node);
-  for (const t of ["ffmpeg", "ffprobe", "prlimit"]) add("runtime", "media toolchain", `${t} installed`, Boolean(tool(t)), tool(t) || "missing: build Dockerfile.staging or install it");
+  for (const t of ["ffmpeg", "ffprobe", "prlimit"]) add("runtime", "media toolchain", `${t} installed`, Boolean(tool(t)), tool(t) || "missing: use the production Dockerfile image (it installs the pinned toolchain) or install it");
   try { const out = execFileSync("node", [path.join(__dirname, "toolchain-selftest.js")], { env: { ...env, VIDEO_INSPECTION_ISOLATION: env.VIDEO_INSPECTION_ISOLATION || "local" }, encoding: "utf8", timeout: 60000 }); add("runtime", "media toolchain", "measure + full-decode self-test", JSON.parse(out).ok, "real H.264 file measured, decoded; damaged copy rejected"); }
   catch (e) { add("runtime", "media toolchain", "measure + full-decode self-test", false, "failed: " + String(e.stdout || e.message).slice(0, 120)); }
   add("runtime", "isolation", "VIDEO_INSPECTION_ISOLATION", ["local", "bubblewrap"].includes(env.VIDEO_INSPECTION_ISOLATION || "bubblewrap"), `${env.VIDEO_INSPECTION_ISOLATION || "bubblewrap (default)"}; bubblewrap needs /usr/bin/bwrap and user namespaces${tool("bwrap") ? "" : " (bwrap not installed here)"}`);

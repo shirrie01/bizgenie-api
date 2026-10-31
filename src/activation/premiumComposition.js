@@ -26,8 +26,10 @@ const positiveInt = (env, name, fallback = null) => {
 async function createPremiumComposition({
   pool, billing, media, brandBrainRepository, videoGenerationRepository, scriptGenerator, branding,
   env = process.env, logger = console, now = () => new Date(),
+  toolchainCheck = require("../media/toolchainSelfTest").runToolchainSelfTest, // test seam only; not reachable from the environment
   mediaInspector = null, connectors = null, workflowStageHandlerFactory = null,
 } = {}) {
+  let unscannedAccepted = false;
   const flags = Object.fromEntries(FLAGS.map((name) => [name, activationFlag(env, name)]));
   const enabled = Object.values(flags).some(Boolean);
   const off = Object.freeze({
@@ -98,21 +100,37 @@ async function createPremiumComposition({
 
   if (flags.MEDIA_INTAKE_ENABLED) {
     need(media?.mediaEnabled && media.mediaPreviewStorage && typeof media.mediaPreviewStorage.putImmutableObject === "function", "MEDIA_INTAKE_ENABLED requires durable media storage (MEDIA_STORAGE_ENABLED)");
-    // The structural inspector (byte-level image checks, ffprobe + full decode for video) is real. It is not a malware scan: production needs an injected `mediaInspector` that
-    // includes a scanner; isolated staging may opt in to the unscanned structural inspector explicitly (and the engine name then says UNSCANNED).
-    if (!mediaInspector && env.MEDIA_INTAKE_STRUCTURAL_INSPECTION === "true") {
-      need(env.BIZGENIE_ENVIRONMENT === "staging" && env.MEDIA_INTAKE_ALLOW_UNSCANNED === "true", "MEDIA_INTAKE_STRUCTURAL_INSPECTION without a malware scanner is only allowed in staging with MEDIA_INTAKE_ALLOW_UNSCANNED=true");
+    // Upload inspection = real structural checks (byte-level image checks, ffprobe + full decode for video) PLUS a malware scan. Three ways to get an inspector:
+    //   1. inject `mediaInspector` (tests, or a future managed scanner);
+    //   2. MALWARE_SCANNER=clamd with MALWARE_SCANNER_HOST/PORT: a ClamAV daemon running outside this process (allowed in staging and production);
+    //   3. isolated staging only: MEDIA_INTAKE_STRUCTURAL_INSPECTION=true + MEDIA_INTAKE_ALLOW_UNSCANNED=true. Such assets are labelled UNSCANNED and the intake service refuses
+    //      them unless it was explicitly told to accept them, which only this staging branch does. Production can never take path 3.
+    if (!mediaInspector && (env.MALWARE_SCANNER || env.MEDIA_INTAKE_STRUCTURAL_INSPECTION === "true")) {
+      const local = env.VIDEO_INSPECTION_ISOLATION === "local";
+      need(!local || env.BIZGENIE_ENVIRONMENT === "staging", "VIDEO_INSPECTION_ISOLATION=local is only allowed in disposable isolated staging; production requires hardened (bubblewrap) isolation");
       const { createHardenedVideoInspector, createVideoInspector } = require("../media/videoInspection");
       const { createVideoDecodeCheck } = require("../media/videoDecode");
       const { createUploadInspector } = require("../media-intake/uploadInspector");
-      const local = env.VIDEO_INSPECTION_ISOLATION === "local";
-      mediaInspector = createUploadInspector({ videoInspector: local ? createVideoInspector({ isolation: "local" }) : createHardenedVideoInspector(), videoDecode: createVideoDecodeCheck({ isolation: local ? "local" : "bubblewrap" }), allowUnscanned: true });
+      const ready = await toolchainCheck({ isolation: local ? "local" : "bubblewrap" });
+      need(ready?.ok, `Customer uploads are enabled but media inspection is not ready (${local ? "local" : "bubblewrap"}): ${ready?.failure || "UNKNOWN"}`);
+      const parts = { videoInspector: local ? createVideoInspector({ isolation: "local" }) : createHardenedVideoInspector(), videoDecode: createVideoDecodeCheck({ isolation: local ? "local" : "bubblewrap" }) };
+      if (env.MALWARE_SCANNER) {
+        need(env.MALWARE_SCANNER === "clamd", "MALWARE_SCANNER must be clamd (the only supported scanner adapter)");
+        need(env.MALWARE_SCANNER_HOST, "MALWARE_SCANNER=clamd requires MALWARE_SCANNER_HOST (and optionally MALWARE_SCANNER_PORT, default 3310)");
+        const { createClamdScanner } = require("../media-intake/clamdScanner");
+        let scanner; try { scanner = createClamdScanner({ host: env.MALWARE_SCANNER_HOST, port: positiveInt(env, "MALWARE_SCANNER_PORT", 3310), timeoutMs: positiveInt(env, "MALWARE_SCANNER_TIMEOUT_MS", 8000), maxSignatureAgeHours: positiveInt(env, "MALWARE_SCANNER_MAX_SIGNATURE_AGE_HOURS", 72), now }); } catch (error) { need(false, error.message); }
+        mediaInspector = createUploadInspector({ ...parts, malwareScanner: scanner });
+      } else {
+        need(env.BIZGENIE_ENVIRONMENT === "staging" && env.MEDIA_INTAKE_ALLOW_UNSCANNED === "true", "MEDIA_INTAKE_STRUCTURAL_INSPECTION without a malware scanner is only allowed in staging with MEDIA_INTAKE_ALLOW_UNSCANNED=true");
+        mediaInspector = createUploadInspector({ ...parts, allowUnscanned: true });
+        unscannedAccepted = true;
+      }
     }
-    need(mediaInspector && typeof mediaInspector.inspect === "function", "MEDIA_INTAKE_ENABLED requires an upload inspector with a malware scanner (inject mediaInspector), or MEDIA_INTAKE_STRUCTURAL_INSPECTION=true in staging with MEDIA_INTAKE_ALLOW_UNSCANNED=true");
+    need(mediaInspector && typeof mediaInspector.inspect === "function", "MEDIA_INTAKE_ENABLED requires a malware scanner: set MALWARE_SCANNER=clamd with MALWARE_SCANNER_HOST (or, in isolated staging only, MEDIA_INTAKE_STRUCTURAL_INSPECTION=true with MEDIA_INTAKE_ALLOW_UNSCANNED=true)");
     need(env.MEDIA_RIGHTS_POLICY_VERSION && env.MEDIA_RIGHTS_POLICY_STATEMENT, "MEDIA_INTAKE_ENABLED requires MEDIA_RIGHTS_POLICY_VERSION and MEDIA_RIGHTS_POLICY_STATEMENT (reviewed rights wording)");
     const { CustomerMediaIntakeService } = require("../media-intake/service");
     mediaIntakeService = new CustomerMediaIntakeService({
-      billingRepository, storage: media.mediaPreviewStorage, inspector: mediaInspector, enabled: true, now,
+      billingRepository, storage: media.mediaPreviewStorage, inspector: mediaInspector, enabled: true, allowUnscanned: unscannedAccepted, now,
       rightsPolicy: { version: env.MEDIA_RIGHTS_POLICY_VERSION, statement: env.MEDIA_RIGHTS_POLICY_STATEMENT, allowed_uses: ["campaign.preview", "image.generate.reference", "video.generate.reference"] },
     });
     capabilities.mediaIntake = true;
