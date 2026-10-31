@@ -127,6 +127,36 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     }
   });
 
+  it("denies all table-level client write and metadata privileges on sensitive new tables", async () => {
+    const tables = [
+      "customer_media_intakes", "customer_media_intake_audit",
+      "social_oauth_intents", "social_connections", "social_dispatches", "social_dispatch_audit",
+      "campaign_performance_objectives", "platform_performance_observations",
+      "performance_evidence_snapshots", "learning_recommendations", "learning_customer_feedback",
+    ];
+    const privileges = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"];
+    for (const table of tables) {
+      const { rows } = await pool.query(
+        `select c.oid::regclass::text as relation, c.relrowsecurity as rls_enabled,
+                c.relforcerowsecurity as rls_forced
+           from pg_class c join pg_namespace n on n.oid=c.relnamespace
+          where n.nspname='public' and c.relname=$1 and c.relkind='r'`,
+        [table]
+      );
+      assert.equal(rows.length, 1, `${table}: missing migration relation`);
+      assert.equal(rows[0].rls_enabled, true, `${table}: RLS must be enabled`);
+      for (const role of ["anon", "authenticated", "service_role"]) {
+        for (const privilege of privileges) {
+          const { rows: check } = await pool.query(
+            "select has_table_privilege($1, $2, $3) as granted",
+            [role, rows[0].relation, privilege]
+          );
+          assert.equal(check[0].granted, false, `${table}: ${role} must not have ${privilege}`);
+        }
+      }
+    }
+  });
+
   it("saves, resumes after a fresh service instance, and survives a retry after restart", async () => {
     const first = body({ sector_key: "perfume", channels: ["email", "instagram"], draft: { goal: "Sell scent" }, current_step: 3 });
     const saved = await service.save({ actor: actor(AUTH_A, SCOPE_A), request: first });
