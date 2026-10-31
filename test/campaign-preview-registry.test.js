@@ -135,7 +135,7 @@ describe("locked destination/media profile boundaries", () => {
     assert.equal(result.profile_id, `${platform}.${placement}.${format}`);
   });
   for (const [platform, placement, format] of [
-    ["instagram", "feed", "video"], ["instagram", "shorts", "video"], ["tiktok", "feed", "image"],
+    ["instagram", "shorts", "video"], ["tiktok", "feed", "image"],
   ]) it(`does not borrow another profile for ${platform}/${placement}/${format}`, async () => {
     const c = campaign(); const item = c.items.get(ITEM_ID); item.format = format;
     Object.assign(item.variants.get(VARIANT_ID), { platform, placement });

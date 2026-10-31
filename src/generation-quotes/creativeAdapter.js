@@ -45,7 +45,7 @@ class ExistingCreativeServicesAdapter{
   if(job.execution_class.startsWith('video.')&&this.videoService){
    let record;try{record=await this.videoService.get(job.job_id);}catch{return {status:'unknown'};}
    if(record.generation_job_id!==job.job_id||record.tenant_id!==job.tenant_id||!record.provider_job_id)return {status:'unknown'};
-   try{record=await this.videoService.poll(job.job_id);}catch(error){if(error.code==='VIDEO_PROVIDER_FAILED')return {status:'failed',definitive:true,provider_reference:record.provider_job_id};return {status:'unknown',provider_reference:record.provider_job_id};}
+   try{record=await this.videoService.poll(job.job_id);}catch(error){if(error.code==='VIDEO_PROVIDER_FAILED'||error.code==='VIDEO_OUTPUT_INVALID')return {status:'failed',definitive:true,provider_reference:record.provider_job_id};return {status:'unknown',provider_reference:record.provider_job_id};}
    return record.status==='completed'?this.outcome(job,record.asset,stored.request,record.provider_job_id):{status:'pending',provider_reference:record.provider_job_id};
   }
   return {status:'unknown'};

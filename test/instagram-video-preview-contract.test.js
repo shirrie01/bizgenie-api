@@ -35,20 +35,23 @@ test("proposed contract and registry identity have independently pinned digests"
   assert.equal(proposal.status, "proposal_not_provisionable");
 });
 
-test("all historical SQL seed hashes match memory; candidate is absent from both default registries", () => {
-  const sql = fs.readFileSync(path.join(__dirname, "../supabase/migrations/20260908100000_create_campaign_preview_registry.sql"), "utf8");
-  const rows = [...sql.matchAll(/\('([^']+)', 1, '[^']+', '[^']+', '[^']+', '[^']+', '([a-f0-9]{64})', 'active'\)/g)];
+test("every SQL seed hash (historical and launch migrations) matches memory; the dedicated proposed renderer identity stays unprovisioned", () => {
+  const dir = path.join(__dirname, "../supabase/migrations");
+  const rows = ["20260908100000_create_campaign_preview_registry.sql", "20261031120000_add_launch_media_preview_profiles.sql"]
+    .flatMap((file) => [...fs.readFileSync(path.join(dir, file), "utf8").matchAll(/\('([^']+)', 1, '[^']+', '[^']+', '[^']+', '[^']+', '([a-f0-9]{64})', 'active'\)/g)]);
   const registry = new InMemoryPreviewRegistry();
   assert.equal(rows.length, registry.profiles.size);
   for (const [, id, digest] of rows) assert.equal(registry.profiles.get(`${id}:1`).profile_hash, digest);
-  assert.equal(registry.activeProfile(proposal.registry_identity), undefined);
-  assert.ok(!rows.some(([, id]) => id === profile().profile_id));
+  // BG-LAUNCH-002 provisions instagram.feed.video under the generic renderer; the proposal's dedicated renderer/hash is still not registered anywhere.
+  assert.equal(registry.activeProfile(proposal.registry_identity).renderer_version, "bizgenie-preview-renderer.v1");
+  assert.notEqual(registry.activeProfile(proposal.registry_identity).profile_hash, "858e82f419c2efba01d40052076895e6e86c1fa1e82c05a18c5046769492babb");
+  assert.ok(![...registry.profiles.values()].some((p) => p.renderer_version === proposal.registry_identity.renderer_version));
 });
 
-test("Instagram video remains fail-closed without explicit synthetic registration", async () => {
-  const f = await integrationFixture({ kind: "video", platform: "instagram" });
-  await assert.rejects(() => render(f), { code: "PREVIEW_VERSION_UNAVAILABLE" });
-  assert.equal(f.registry.receipts.size, 0);
+test("an unknown placement stays fail-closed: no profile is borrowed for instagram/shorts video", () => {
+  const registry = new InMemoryPreviewRegistry();
+  assert.equal(registry.activeProfile({ platform: "instagram", placement: "shorts", format: "video" }), undefined);
+  assert.ok(registry.activeProfile({ platform: "instagram", placement: "feed", format: "video" }));
 });
 
 test("candidate receipt binds exact revision and identity; explicit same-actor approval leaves publishing untouched", async () => {

@@ -95,8 +95,14 @@ for (const format of ["image", "video"]) {
   test(`authorised generated ${format} references disclose no private storage or invented URL`, async () => {
     const f = await fixture({ format, media: true });
     const r = await f.get(); assert.equal(r.status, 200);
-    assert.deepEqual(r.body.preview.media, [{ asset_id: f.assetId, role: "primary", media_kind: format, mime_type: format === "video" ? "video/mp4" : "image/png",
+    const { platform_suitability: suitability, width, height, duration_ms: durationMs, byte_size: byteSize, ...disclosed } = r.body.preview.media[0];
+    assert.deepEqual([disclosed], [{ asset_id: f.assetId, role: "primary", media_kind: format, mime_type: format === "video" ? "video/mp4" : "image/png",
       source_kind: "generated", status: "unavailable", reason: "PRIVATE_MEDIA_DELIVERY_UNAVAILABLE", url: null }]);
+    // BG-LAUNCH-002: stored facts and the platform-suitability verdict are disclosed; unknown facts never count as suitable.
+    assert.deepEqual([width, height, byteSize], [1200, 1200, 1000]);
+    assert.equal(suitability.profile_id, `instagram.feed.${format}`);
+    if (format === "image") assert.deepEqual([suitability.status, suitability.suitable, suitability.reasons], ["suitable", true, []]);
+    else assert.deepEqual([suitability.status, suitability.suitable, suitability.reasons.map((x) => x.code)], ["not_suitable", false, ["DURATION_UNKNOWN"]]);
     assert.equal(r.body.preview.content_status, "unavailable"); assert.equal(r.body.preview.copy_status, "available");
     assert.doesNotMatch(JSON.stringify(r.body), /private-key|storage_bucket|storage_key|job_1/);
     f.revoke(); const revoked = await f.get(); assert.equal(revoked.status, 200);

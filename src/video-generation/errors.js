@@ -68,6 +68,13 @@ class VideoAssetPersistenceError extends VideoGenerationError {
   }
 }
 
+// The provider finished, but the file it produced failed BizGenie's media validation. Final: the job fails and the reservation is released.
+class VideoOutputInvalidError extends VideoGenerationError {
+  constructor(reasons = []) {
+    super(502, "VIDEO_OUTPUT_INVALID", "The generated video did not pass BizGenie's media checks", { reasons });
+  }
+}
+
 class VideoReferenceAssetUnavailableError extends VideoGenerationError {
   constructor() {
     super(503, "VIDEO_REFERENCE_ASSET_UNAVAILABLE", "An approved video reference asset could not be resolved");
@@ -108,6 +115,7 @@ function sendVideoGenerationError(error, res) {
 
 module.exports = {
   VideoAssetPersistenceError,
+  VideoOutputInvalidError,
   VideoContextUnavailableError,
   VideoGenerationConflictError,
   VideoGenerationError,

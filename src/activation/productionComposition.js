@@ -18,6 +18,7 @@ const {
   MediaConfigurationError,
 } = require("../media");
 const { activationFlag, requireActivationEnvironment } = require("./config");
+const { createVideoInspector, createHardenedVideoInspector } = require("../media/videoInspection");
 
 function googleProject(env) {
   return env.GOOGLE_CLOUD_PROJECT || env.GCLOUD_PROJECT || env.GCP_PROJECT;
@@ -93,6 +94,10 @@ async function createMediaProductionComposition({
     repository: mediaAssetRepository,
     storage,
     videoSourcePrefix: env.VIDEO_PROVIDER_OUTPUT_STORAGE_URI,
+    // Provider video is measured from its real bytes before an asset can exist (BG-LAUNCH-002). Isolation defaults to bubblewrap; "local" must be chosen explicitly
+    // (e.g. a container that cannot run bwrap). If the tool is unavailable the job stays recoverable and is never approved.
+    videoInspector: videoEnabled ? (env.VIDEO_INSPECTION_ISOLATION === "local" ? createVideoInspector({ isolation: "local" }) : createHardenedVideoInspector()) : null,
+    requireVideoValidation: videoEnabled,
     now,
   });
 
