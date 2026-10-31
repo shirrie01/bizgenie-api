@@ -96,6 +96,37 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     }
   });
 
+  it("enforces direct SQL denial for all three client roles on new customer data tables", async () => {
+    const tables = [
+      "customer_media_intakes", "customer_media_intake_audit",
+      "social_oauth_intents", "social_connections", "social_dispatches", "social_dispatch_audit",
+      "campaign_performance_objectives", "platform_performance_observations",
+      "performance_evidence_snapshots", "learning_recommendations", "learning_customer_feedback",
+    ];
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(`set local role ${role}`);
+        for (const table of tables) {
+          await client.query("savepoint privilege_probe");
+          try {
+            await assert.rejects(
+              () => client.query(`select * from public.${table} limit 0`),
+              /permission denied/,
+              `${role} must not read ${table}`
+            );
+          } finally {
+            await client.query("rollback to savepoint privilege_probe");
+          }
+        }
+      } finally {
+        await client.query("rollback");
+        client.release();
+      }
+    }
+  });
+
   it("saves, resumes after a fresh service instance, and survives a retry after restart", async () => {
     const first = body({ sector_key: "perfume", channels: ["email", "instagram"], draft: { goal: "Sell scent" }, current_step: 3 });
     const saved = await service.save({ actor: actor(AUTH_A, SCOPE_A), request: first });
