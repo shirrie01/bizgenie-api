@@ -1,5 +1,15 @@
 const { CampaignResourceError, CampaignVersionError } = require("./errors");
 const { hashIntent } = require("./schema");
+const { loadProfiles, assess } = require("../media/platformMediaProfiles");
+const mediaProfiles = loadProfiles(process.env.MEDIA_PROFILE_OVERRIDES);
+
+// Customer-visible answer to "will this asset suit the placement it is planned for?" BizGenie's own check, from stored facts; the platform has the final say.
+function suitability(variant, item, manifest) {
+  const profile = mediaProfiles.get(`${variant.platform}.${variant.placement}.${item.format}`);
+  if (!profile) return { status: "no_profile", suitable: null, reasons: [{ code: "NO_MEDIA_PROFILE" }] };
+  const result = assess(profile, { media_kind: item.format, mime_type: manifest.mime_type, width: manifest.width ?? undefined, height: manifest.height ?? undefined, duration_seconds: manifest.duration_ms == null ? undefined : manifest.duration_ms / 1000, byte_size: manifest.byte_size ?? undefined });
+  return { status: result.suitable ? "suitable" : "not_suitable", suitable: result.suitable, profile_id: result.profile_id, profile_version: result.profile_version, requirements_status: result.requirements_status, reasons: result.reasons };
+}
 
 // Read-only projection. It never renders, acknowledges, approves, signs URLs or fetches media.
 async function creativePreview({ campaign, context, variantId, revisionId, expectedVersion, resolveMedia, validatePreview }) {
@@ -25,6 +35,8 @@ async function creativePreview({ campaign, context, variantId, revisionId, expec
       asset_id: ref.asset_id, role: ref.role, media_kind: asset.media_kind,
       mime_type: asset.manifest.mime_type,
       source_kind: "generated", status: "unavailable", reason: "PRIVATE_MEDIA_DELIVERY_UNAVAILABLE",
+      width: asset.manifest.width ?? null, height: asset.manifest.height ?? null, duration_ms: asset.manifest.duration_ms ?? null, byte_size: asset.manifest.byte_size ?? null,
+      platform_suitability: suitability(variant, item, asset.manifest),
       url: null,
     } : {
       asset_id: ref.asset_id, role: ref.role, media_kind: null, source_kind: null,
@@ -59,4 +71,4 @@ async function creativePreview({ campaign, context, variantId, revisionId, expec
   };
 }
 
-module.exports = { creativePreview };
+module.exports = { creativePreview, suitability };
