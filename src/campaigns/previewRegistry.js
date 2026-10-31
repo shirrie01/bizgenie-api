@@ -16,6 +16,12 @@ const DEFAULT_PROFILES = Object.freeze([
   { profile_id: "instagram.feed.image", platform: "instagram", placement: "feed", format: "image" },
   { profile_id: "facebook.feed.text", platform: "facebook", placement: "feed", format: "text" },
   { profile_id: "linkedin.feed.text", platform: "linkedin", placement: "feed", format: "text" },
+  // BG-LAUNCH-002: launch image/video placements. The media requirements themselves live in src/media/platformMediaProfiles.js (versioned, configurable).
+  { profile_id: "instagram.feed.video", platform: "instagram", placement: "feed", format: "video" },
+  { profile_id: "facebook.feed.image", platform: "facebook", placement: "feed", format: "image" },
+  { profile_id: "facebook.feed.video", platform: "facebook", placement: "feed", format: "video" },
+  { profile_id: "linkedin.feed.image", platform: "linkedin", placement: "feed", format: "image" },
+  { profile_id: "linkedin.feed.video", platform: "linkedin", placement: "feed", format: "video" },
   { profile_id: "tiktok.feed.video", platform: "tiktok", placement: "feed", format: "video" },
   { profile_id: "youtube.shorts.video", platform: "youtube", placement: "shorts", format: "video" },
   { profile_id: "email.message.text", platform: "email", placement: "message", format: "text" },
@@ -241,6 +247,20 @@ class PostgresPreviewRegistry {
     }
   }
 
+  // No platform preview (so no acknowledgement, approval, schedule or publish) for media that does not meet the placement's requirements.
+  async requireSuitableMedia(client, campaign, item, variant, revision) {
+    if (item.format !== "image" && item.format !== "video") return;
+    const refs = revision.content.asset_refs || [];
+    if (!refs.length) throw new CampaignTransitionError("CONTENT_INCOMPLETE");
+    const { suitability } = require("./creativePreview");
+    for (const ref of refs) {
+      const row = (await client.query("select media_kind,mime_type,width,height,duration_seconds,byte_size,status from public.media_assets where asset_id=$1 and tenant_id=$2 and project_id=$3", [ref.asset_id, campaign.tenant_id, campaign.project_id])).rows[0];
+      if (!row || row.status !== "active" || row.media_kind !== item.format) throw new CampaignTransitionError("MEDIA_NOT_SUITABLE");
+      const result = suitability(variant, item, { mime_type: row.mime_type, width: row.width, height: row.height, duration_ms: row.duration_seconds == null ? null : Math.round(Number(row.duration_seconds) * 1000), byte_size: row.byte_size == null ? null : Number(row.byte_size) });
+      if (result.suitable !== true) throw new CampaignTransitionError("MEDIA_NOT_SUITABLE");
+    }
+  }
+
   async activeProfile(client, { platform, placement, format }) {
     const result = await client.query(`
       select * from public.campaign_preview_profiles
@@ -269,6 +289,7 @@ class PostgresPreviewRegistry {
         format: item.format,
       });
       if (!profile) throw new CampaignTransitionError("PREVIEW_VERSION_UNAVAILABLE");
+      await this.requireSuitableMedia(client, campaign, item, variant, revision);
       const renderedAt = iso(this.now());
       const renderInput = {
         tenant_id: campaign.tenant_id,
