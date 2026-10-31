@@ -1,6 +1,7 @@
 const { createHash, randomUUID } = require("node:crypto");
 const { MediaAssetUnavailableError, MediaConfigurationError, MediaPersistenceError, MediaValidationError } = require("./errors");
 const { GENERATED_VIDEO, validateGeneratedVideo } = require("./platformMediaProfiles");
+const { inspectImage, validateGeneratedImage } = require("./imageInspection");
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
@@ -211,10 +212,11 @@ const composedAuthority=new WeakSet();
 class DurableMediaAssetStore {
   // videoInspector: trusted byte inspection (createVideoInspector / createHardenedVideoInspector). With requireVideoValidation (the production composition always sets it)
   // a provider video is downloaded back from OUR bucket after the copy and measured; no asset row exists unless it passes, so nothing unvalidated can be approved or published.
-  constructor({ mediaKind, repository, storage, videoSourcePrefix, videoInspector = null, requireVideoValidation = false, now = () => new Date() }) {
+  constructor({ mediaKind, repository, storage, videoSourcePrefix, videoInspector = null, requireVideoValidation = false, requireImageValidation = false, now = () => new Date() }) {
     if (requireVideoValidation && mediaKind === "video" && typeof videoInspector !== "function") throw new MediaPersistenceError();
     this.videoInspector = videoInspector;
     this.requireVideoValidation = requireVideoValidation;
+    this.requireImageValidation = requireImageValidation; // generated images are measured from their bytes before they are stored (BG-LAUNCH-003)
     this.mediaKind = mediaKind;
     this.repository = repository;
     this.storage = storage;
@@ -252,6 +254,13 @@ class DurableMediaAssetStore {
     if (!extension || (this.mediaKind === "image") !== mimeType.startsWith("image/")) {
       throw new MediaPersistenceError();
     }
+    let imageFacts = null;
+    if (this.mediaKind === "image" && this.requireImageValidation) {
+      const measured = inspectImage(input.data);
+      const reasons = validateGeneratedImage(measured, { mime_type: mimeType, width: input.width, height: input.height });
+      if (reasons.length) throw new MediaValidationError(reasons);
+      imageFacts = measured;
+    }
     const assetId = randomUUID();
     const key = objectKey({
       tenantId: lineage.tenant_id,
@@ -286,6 +295,7 @@ class DurableMediaAssetStore {
         storage_bucket: this.storage.bucket,
         storage_key: key,
         mime_type: mimeType,
+        ...(imageFacts ? { width: imageFacts.width, height: imageFacts.height } : {}),
         ...(measured ? { width: measured.video.width, height: measured.video.height, duration_seconds: Math.round(measured.video.duration_seconds * 1000) / 1000 }
           : { ...(input.width || input.source?.width ? { width: input.width || input.source.width } : {}),
               ...(input.height || input.source?.height ? { height: input.height || input.source.height } : {}),

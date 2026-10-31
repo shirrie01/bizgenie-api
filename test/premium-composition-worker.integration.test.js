@@ -192,6 +192,7 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
         assert.equal((await pool.query("select count(*)::int n from media_assets where generation_job_id=$1", [job.job_id])).rows[0].n, 0, "no asset row, so nothing to approve or publish");
         assert.equal([...kit.objects.keys()].filter((k) => k.endsWith(".mp4") && k.includes(job.job_id)).length, 0);
         const v = (await pool.query("select status,error_code from video_generations where generation_job_id=$1", [job.job_id])).rows[0]; assert.deepEqual(v, { status: "failed", error_code: "VIDEO_OUTPUT_INVALID" });
+        const shown = (await pool.query("select error_code from generation_execution_claims where job_id=$1", [job.job_id])).rows[0]; assert.equal(shown.error_code, "VIDEO_OUTPUT_INVALID", "job history can say why");
         void reason;
       });
     }
@@ -200,6 +201,13 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       await l.tick(); clock = new Date(clock.getTime() + 5000); await l.tick();
       assert.equal((await claimState(job.job_id)).state, "recovery_required"); assert.equal((await pool.query("select count(*)::int n from media_assets where generation_job_id=$1", [job.job_id])).rows[0].n, 0);
       transportState.inspectorDown = false; clock = new Date(clock.getTime() + 60000); await l.tick(); assert.equal((await claimState(job.job_id)).state, "succeeded"); assert.equal(providerCalls.video, 1);
+    });
+    it("media intake composes the real structural upload inspector only with the explicit staging opt-in, and labels it UNSCANNED", async () => {
+      const base = { BIZGENIE_ENVIRONMENT: "staging", MEDIA_INTAKE_ENABLED: "true", MEDIA_RIGHTS_POLICY_VERSION: "rights.v1", MEDIA_RIGHTS_POLICY_STATEMENT: "Reviewed wording placeholder for staging", VIDEO_INSPECTION_ISOLATION: "local" };
+      await assert.rejects(build({ ...base }), /malware scanner/);
+      await assert.rejects(build({ ...base, MEDIA_INTAKE_STRUCTURAL_INSPECTION: "true" }), /only allowed in staging with MEDIA_INTAKE_ALLOW_UNSCANNED/);
+      const ok = await build({ ...base, MEDIA_INTAKE_STRUCTURAL_INSPECTION: "true", MEDIA_INTAKE_ALLOW_UNSCANNED: "true" });
+      assert.ok(ok.mediaIntakeService);
     });
     it("composition refuses to enable video without an inspector", async () => {
       assert.throws(() => new DurableMediaAssetStore({ mediaKind: "video", repository: {}, storage: {}, requireVideoValidation: true }));

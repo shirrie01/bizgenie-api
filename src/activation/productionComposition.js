@@ -87,6 +87,7 @@ async function createMediaProductionComposition({
     mediaKind: "image",
     repository: mediaAssetRepository,
     storage,
+    requireImageValidation: imageEnabled,
     now,
   });
   const videoAssetStore = new DurableMediaAssetStore({

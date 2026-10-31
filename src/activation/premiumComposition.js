@@ -98,7 +98,17 @@ async function createPremiumComposition({
 
   if (flags.MEDIA_INTAKE_ENABLED) {
     need(media?.mediaEnabled && media.mediaPreviewStorage && typeof media.mediaPreviewStorage.putImmutableObject === "function", "MEDIA_INTAKE_ENABLED requires durable media storage (MEDIA_STORAGE_ENABLED)");
-    need(mediaInspector && typeof mediaInspector.inspect === "function", "MEDIA_INTAKE_ENABLED requires a configured malware/decoder inspector; none is composed by default");
+    // The structural inspector (byte-level image checks, ffprobe + full decode for video) is real. It is not a malware scan: production needs an injected `mediaInspector` that
+    // includes a scanner; isolated staging may opt in to the unscanned structural inspector explicitly (and the engine name then says UNSCANNED).
+    if (!mediaInspector && env.MEDIA_INTAKE_STRUCTURAL_INSPECTION === "true") {
+      need(env.BIZGENIE_ENVIRONMENT === "staging" && env.MEDIA_INTAKE_ALLOW_UNSCANNED === "true", "MEDIA_INTAKE_STRUCTURAL_INSPECTION without a malware scanner is only allowed in staging with MEDIA_INTAKE_ALLOW_UNSCANNED=true");
+      const { createHardenedVideoInspector, createVideoInspector } = require("../media/videoInspection");
+      const { createVideoDecodeCheck } = require("../media/videoDecode");
+      const { createUploadInspector } = require("../media-intake/uploadInspector");
+      const local = env.VIDEO_INSPECTION_ISOLATION === "local";
+      mediaInspector = createUploadInspector({ videoInspector: local ? createVideoInspector({ isolation: "local" }) : createHardenedVideoInspector(), videoDecode: createVideoDecodeCheck({ isolation: local ? "local" : "bubblewrap" }), allowUnscanned: true });
+    }
+    need(mediaInspector && typeof mediaInspector.inspect === "function", "MEDIA_INTAKE_ENABLED requires an upload inspector with a malware scanner (inject mediaInspector), or MEDIA_INTAKE_STRUCTURAL_INSPECTION=true in staging with MEDIA_INTAKE_ALLOW_UNSCANNED=true");
     need(env.MEDIA_RIGHTS_POLICY_VERSION && env.MEDIA_RIGHTS_POLICY_STATEMENT, "MEDIA_INTAKE_ENABLED requires MEDIA_RIGHTS_POLICY_VERSION and MEDIA_RIGHTS_POLICY_STATEMENT (reviewed rights wording)");
     const { CustomerMediaIntakeService } = require("../media-intake/service");
     mediaIntakeService = new CustomerMediaIntakeService({
