@@ -170,8 +170,14 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
         await client.query("begin");
         await client.query(`set local role ${role}`);
         for (const table of tables) {
+          const { rows: columns } = await pool.query(
+            "select column_name from information_schema.columns where table_schema='public' and table_name=$1 order by ordinal_position limit 1",
+            [table]
+          );
+          assert.equal(columns.length, 1, `${table}: missing table column`);
+          const column = columns[0].column_name;
           for (const statement of [
-            `update public.${table} set tenant_id=tenant_id where false`,
+            `update public.${table} set ${column}=${column} where false`,
             `delete from public.${table} where false`,
           ]) {
             await client.query("savepoint mutation_probe");
