@@ -6,6 +6,7 @@ function createSocialRouter({service=null,tokenVerifier}){const r=express.Router
  r.get('/connections',run((a,q)=>{const {scope,payload}=split(q.query);return service.listConnections(a,scope,{limit:payload.limit?Number(payload.limit):25,cursor:payload.cursor||null});}));
  r.post('/oauth-intents',run((a,q)=>{const {scope,payload}=split(q.body);return service.oauthIntent(a,scope,payload);}));
  r.post('/oauth-complete',run((a,q)=>{const {scope,payload}=split(q.body);return service.connect(a,scope,payload);}));
+ r.post('/connections/:id/refresh',run((a,q)=>service.refreshConnection(a,q.params.id,Scope.parse(q.body))));
  r.post('/connections/:id/disconnect',run((a,q)=>service.disconnect(a,q.params.id,Scope.parse(q.body))));
  r.get('/calendar',run((a,q)=>{const {scope,payload}=split(q.query);return service.calendar(a,scope,payload);}));
  r.get('/dispatches',run((a,q)=>{const {scope,payload}=split(q.query);return service.list(a,scope,{limit:payload.limit?Number(payload.limit):25,cursor:payload.cursor||null});}));
