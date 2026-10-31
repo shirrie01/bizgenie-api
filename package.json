@@ -13,7 +13,9 @@
     "test:billing:postgres": "node --test test/postgres-billing.integration.test.js",
     "test:campaign:postgres": "node --test test/postgres-campaign.integration.test.js",
     "test:brand-brain:integration": "node --test scripts/brand-brain-postgres-integration.js",
-    "test:onboarding:postgres": "node --test test/workspace-onboarding.integration.test.js"
+    "test:onboarding:postgres": "node --test test/workspace-onboarding.integration.test.js",
+    "staging:preflight": "node scripts/staging/preflight.js --env-file scripts/staging/staging.env",
+    "staging:selftest": "node scripts/staging/toolchain-selftest.js"
   },
   "dependencies": {
     "@google-cloud/vertexai": "^1.0.0",

@@ -6,8 +6,9 @@ const { tmpdir } = require("node:os");
 const path = require("node:path");
 const toolchain = require("../../runtime/video-inspection-toolchain.v1.json");
 const candidate = require("../../docs/media/contracts/instagram-feed-video-preview.v1.proposed.json");
-const MAX_BYTES = 32 * 1024 * 1024;
-const MAX_OUTPUT = 256 * 1024;
+const { limits, prlimitArgs } = require("./inspectionLimits");
+const MAX_BYTES = limits.input.maxBytes;
+const MAX_OUTPUT = limits.probe.maxOutputBytes;
 const measuredResults = new WeakSet();
 const result = (status, reason) => Object.freeze({ status, reason });
 const number = value => { const n = Number(value); return value !== undefined && value !== null && value !== "" && Number.isFinite(n) && n >= 0 ? n : null; };
@@ -57,7 +58,7 @@ function parseProbe(probe, bytes, expectedVersion) {
 }
 
 // Tool path is operator configuration, never a request field; no shell is involved.
-function createVideoInspector({ executable = "/usr/bin/ffprobe", timeoutMs = 5000, isolation = "local" } = {}) {
+function createVideoInspector({ executable = "/usr/bin/ffprobe", timeoutMs = limits.probe.timeoutMs, isolation = "local" } = {}) {
   if (!["local", "bubblewrap"].includes(isolation) || (isolation === "bubblewrap" && executable !== "/usr/bin/ffprobe") || !path.isAbsolute(executable) || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) throw new TypeError("Invalid inspection configuration");
   let active = 0, cleanupUnavailable = false;
   return async function inspectVideo(bytes, { signal } = {}) {
@@ -97,10 +98,10 @@ function createVideoInspector({ executable = "/usr/bin/ffprobe", timeoutMs = 500
             "-show_program_version", "-show_format", "-show_streams", "-of", "json"];
           const command = isolation === "bubblewrap" ? ["/usr/bin/bwrap", "--unshare-all", "--unshare-net", "--unshare-user", "--disable-userns", "--assert-userns-disabled", "--die-with-parent", "--new-session",
             "--cap-drop", "ALL", "--uid", "65534", "--gid", "65534", "--ro-bind", "/usr", "/usr", "--ro-bind", "/lib", "/lib",
-            "--ro-bind", "/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev", "--size", "1048576", "--tmpfs", "/tmp", "--dir", "/input",
+            "--ro-bind", "/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev", "--size", String(limits.common.sandboxTmpfsBytes), "--tmpfs", "/tmp", "--dir", "/input",
             "--ro-bind", filename, inputPath, "--chdir", "/input", "--clearenv", "--setenv", "LANG", "C", "--setenv", "LC_ALL", "C",
             "--", executable, ...probeArgs] : [executable, ...probeArgs];
-          child = spawn("/usr/bin/prlimit", ["--as=1073741824", "--cpu=5", "--nofile=64", "--core=0", "--", ...command],
+          child = spawn("/usr/bin/prlimit", [...prlimitArgs("probe"), "--", ...command],
             { shell: false, cwd: directory, env: { LANG: "C", LC_ALL: "C" }, stdio: ["ignore", "pipe", "pipe"] });
           // Read at most a small diagnostic prefix only to distinguish sandbox setup failure; never expose it.
           child.stderr.on("data", chunk => { if (diagnostic.length < 4096) diagnostic += chunk.toString("utf8").slice(0, 4096 - diagnostic.length); });

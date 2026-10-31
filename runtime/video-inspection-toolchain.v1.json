@@ -1,12 +1,13 @@
 {
-  "status": "isolated_review_candidate_not_activated",
+  "status": "pinned_to_production_base_image_pending_security_review",
   "platform": "linux",
-  "distribution_observed": "Debian 13",
-  "ffprobe_version": "7.1.5-0+deb13u1",
-  "ffmpeg_package": "7:7.1.5-0+deb13u1",
-  "bubblewrap_package": "0.12.0-1~deb13u1",
-  "util_linux_package": "2.41.5-0+deb13u1",
+  "distribution_observed": "Debian 12 (bookworm), the base of node:22-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d (read from the CI build of the production Dockerfile)",
+  "ffprobe_version": "5.1.9-0+deb12u1",
+  "ffmpeg_package": "7:5.1.9-0+deb12u1",
+  "bubblewrap_package": "0.8.0-2+deb12u1",
   "network": "new_unshared_namespace_no_fallback",
   "filesystem": "system_libraries_and_one_readonly_input_only",
-  "provisionable": false
+  "provisionable": false,
+  "supersedes": "Debian 13 candidate: ffprobe 7.1.5-0+deb13u1, ffmpeg 7:7.1.5-0+deb13u1, bubblewrap 0.12.0-1~deb13u1, util-linux 2.41.5-0+deb13u1 (not installable on the production base image)",
+  "update_rule": "scripts/install-media-toolchain.sh installs exactly these versions and fails the image build if they are unavailable or differ; a Debian security update therefore needs a reviewed change to this file, not a silent drift"
 }
