@@ -67,3 +67,7 @@ These tests exercise actual new boundaries but are not TikTok API conformance, l
 Mission Control proposal only: append this partial checkpoint under existing social/R11 and BG-SOCIAL-001 authority, exact branch/SHA/tests and official-doc403; mark token boundary/callback locally implemented, TikTok wire/draft upload/real vault BLOCKED. Preserve #222 and previous verified PASS. No duplicate tasks, register IDs or live writes created. Reviewable dependent draft should target #222, explicitly partial, not ready-for-activation.
 
 Final local validation: full1025/1025, zero failures/cancelled/skips (28.162s); separate billing/campaign PostgreSQL57/57; focused4/4; five changed JS files syntax checked; git diff --check clean. No TikTok conformance/draft-upload success is claimed.
+
+## Published checkpoint
+
+Code/test SHA5c714aa9afb3b22f42fb2495159e844255e5654f pushed and remote verified. Parent222 remains d2eecc3a57e93ae37697d73417718b6d5705961d. Working tree clean before this evidence-only update. Draft creation failed `Post "https://api.github.com/graphql": Forbidden`; hosted CI is UNKNOWN. Prepared draft body /workspace/recovery/bg-social-001/draft-body.md. Authorized maintainer may create a draft from [the dependent comparison](https://github.com/shirrie01/bizgenie-api/compare/bg-launch-001-production-composition...bg-social-001-tiktok); retain partial/blocker wording. No broader credentials requested.
