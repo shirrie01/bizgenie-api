@@ -157,6 +157,42 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     }
   });
 
+  it("rejects restricted-role UPDATE and DELETE SQL even when no rows match", async () => {
+    const tables = [
+      "customer_media_intakes", "customer_media_intake_audit",
+      "social_oauth_intents", "social_connections", "social_dispatches", "social_dispatch_audit",
+      "campaign_performance_objectives", "platform_performance_observations",
+      "performance_evidence_snapshots", "learning_recommendations", "learning_customer_feedback",
+    ];
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(`set local role ${role}`);
+        for (const table of tables) {
+          for (const statement of [
+            `update public.${table} set tenant_id=tenant_id where false`,
+            `delete from public.${table} where false`,
+          ]) {
+            await client.query("savepoint mutation_probe");
+            try {
+              await assert.rejects(
+                () => client.query(statement),
+                /permission denied/,
+                `${role}: mutation must be denied for ${table}`
+              );
+            } finally {
+              await client.query("rollback to savepoint mutation_probe");
+            }
+          }
+        }
+      } finally {
+        await client.query("rollback");
+        client.release();
+      }
+    }
+  });
+
   it("saves, resumes after a fresh service instance, and survives a retry after restart", async () => {
     const first = body({ sector_key: "perfume", channels: ["email", "instagram"], draft: { goal: "Sell scent" }, current_step: 3 });
     const saved = await service.save({ actor: actor(AUTH_A, SCOPE_A), request: first });
