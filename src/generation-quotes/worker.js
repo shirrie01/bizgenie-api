@@ -41,7 +41,7 @@ class FencedGenerationWorker{
    const account=await this.billing.requireLockedAccount(client,row.tenant_id),reservation=await this.billing.requireRelatedEntry(client,account,row.reservation_id,'reservation');
    const success=outcome.status==='succeeded';
    await this.billing.appendLocked(client,account,{tenant_id:row.tenant_id,entry_type:success?'debit':'reservation_release',amount:reservation.amount,balance_delta:success?-reservation.amount:0,reserved_delta:-reservation.amount,project_id:reservation.project_id,generation_id:reservation.generation_id,execution_id:reservation.execution_id,transaction_correlation_id:reservation.transaction_correlation_id,reservation_entry_id:reservation.ledger_entry_id,idempotency_key:`quote:settle:${row.quote_id}`});
-   await client.query('update public.generation_execution_claims set state=$2,provider_reference=$3,result=$4,updated_at=$5 where job_id=$1',[claim.job_id,outcome.status,outcome.provider_reference||row.provider_reference,outcome,this.quotes.now()]);if(this.quotes.executionLimits)await this.quotes.executionLimits.releaseCompleted(client,claim.job_id);await this.fault('settlement_before_commit');
+   await client.query('update public.generation_execution_claims set state=$2,provider_reference=$3,result=$4,updated_at=$5,error_code=coalesce($6,error_code) where job_id=$1',[claim.job_id,outcome.status,outcome.provider_reference||row.provider_reference,outcome,this.quotes.now(),!success&&/^[A-Z][A-Z0-9_]{2,63}$/.test(outcome.error_code||'')?outcome.error_code:null]);if(this.quotes.executionLimits)await this.quotes.executionLimits.releaseCompleted(client,claim.job_id);await this.fault('settlement_before_commit');
    return {status:outcome.status,replay:false};
   });
  }

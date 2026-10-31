@@ -127,6 +127,14 @@ jobs:
       - name: Smoke test Dockerfile image
         run: bash scripts/smoke-container.sh "$DOCKER_IMAGE" bizgenie-ci-docker
 
+      - name: Build the isolated staging image and prove the media toolchain runs in it
+        shell: bash
+        run: |
+          docker build --file Dockerfile.staging --tag bizgenie-api:ci-staging .
+          docker run --rm bizgenie-api:ci-staging sh -c 'ffprobe -version | head -1 && ffmpeg -version | head -1 && test -x /usr/bin/prlimit && node --version'
+          # a real, tiny H.264 file is measured and fully decoded inside the image by the same code the worker uses
+          docker run --rm --env VIDEO_INSPECTION_ISOLATION=local bizgenie-api:ci-staging node scripts/staging/toolchain-selftest.js
+
       - name: Install pinned pack CLI
         shell: bash
         run: |
