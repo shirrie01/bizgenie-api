@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-31",
+  "status": "TikTok Web OAuth, encrypted vault driver and inbox FILE_UPLOAD adapter implemented locally; live activation gated",
+  "base_sha": "0f8f3f8cb777e3ba449b8f7f6abe82a9412fdcf1",
+  "existing_pr": 224,
+  "branch": "bg-social-001-tiktok",
+  "parent_pr": 222,
+  "parent_sha": "d2eecc3a57e93ae37697d73417718b6d5705961d",
+  "contract_source": "Founder-provided official TikTok excerpts in current session; local documentation HTTP403 not independent live-read proof",
+  "redirect_uri": "https://getbizgenie.com/customer/social/oauth/callback/tiktok",
+  "publicly_deployed": false,
+  "node": "22.23.3",
+  "postgres": "17.11",
+  "full": {
+    "pass": 1040,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0
+  },
+  "wire": {
+    "pass": 8
+  },
+  "focused_pg": {
+    "pass": 7
+  },
+  "financial_pg": {
+    "pass": 57
+  },
+  "syntax_files": 12,
+  "restore": "PASS with external synthetic fixture key; not managed key/media recovery",
+  "migration_proposal": "20261031200000_create_private_social_connector_runtime.sql",
+  "shared_migrations_applied": false,
+  "live_calls": false,
+  "direct_post_enabled": false,
+  "hosted_ci": "UNKNOWN; API Forbidden",
+  "log_hashes": {
+    "tiktok-complete-validation.log": "d0ab902589732164edbe0969814b42a38341577cf221c0a09b3a433d8167ac45",
+    "tiktok-wire-final.log": "69e9baa3bb1b8b5693e34da25263102f1c3832035c6b12de21b663c9b17bd5a4",
+    "tiktok-pg-final.log": "c3f34936160ac7036528dcef6270972026bc1716a33b5972eec38daace530d10",
+    "tiktok-final-financial.log": "5a3028ae18d789b60b567ed706b6254c36c7e176452ad1f075789c1c7734af2d",
+    "tiktok-restore-final.log": "592750d23dab700d974e6c374c106bf8474b9346c79fcab609c565da5f902f84"
+  }
+}
