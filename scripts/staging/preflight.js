@@ -22,9 +22,9 @@ const tool = (n) => { const r = spawnSync("sh", ["-c", `command -v ${n}`], { enc
   // ---- 1. what this runtime provides (no founder action) ---------------------------------------------------------------------------------------------------------------
   add("runtime", "node", "Node 22", process.versions.node.startsWith("22."), process.versions.node);
   for (const t of ["ffmpeg", "ffprobe", "prlimit"]) add("runtime", "media toolchain", `${t} installed`, Boolean(tool(t)), tool(t) || "missing: use the production Dockerfile image (it installs the pinned toolchain) or install it");
-  try { const out = execFileSync("node", [path.join(__dirname, "toolchain-selftest.js")], { env: { ...env, VIDEO_INSPECTION_ISOLATION: env.VIDEO_INSPECTION_ISOLATION || "local" }, encoding: "utf8", timeout: 60000 }); add("runtime", "media toolchain", "measure + full-decode self-test", JSON.parse(out).ok, "real H.264 file measured, decoded; damaged copy rejected"); }
-  catch (e) { add("runtime", "media toolchain", "measure + full-decode self-test", false, "failed: " + String(e.stdout || e.message).slice(0, 120)); }
-  add("runtime", "isolation", "VIDEO_INSPECTION_ISOLATION", ["local", "bubblewrap"].includes(env.VIDEO_INSPECTION_ISOLATION || "bubblewrap"), `${env.VIDEO_INSPECTION_ISOLATION || "bubblewrap (default)"}; bubblewrap needs /usr/bin/bwrap and user namespaces${tool("bwrap") ? "" : " (bwrap not installed here)"}`);
+  try { const out = execFileSync("node", [path.join(__dirname, "toolchain-selftest.js")], { env: { ...env, VIDEO_INSPECTION_ISOLATION: env.VIDEO_INSPECTION_ISOLATION || "bubblewrap" }, encoding: "utf8", timeout: 60000 }); add("runtime", "media toolchain", `self-test in ${env.VIDEO_INSPECTION_ISOLATION || "bubblewrap"} isolation`, JSON.parse(out).ok, "real H.264 file measured and fully decoded; damaged file and disguised playlist rejected"); }
+  catch (e) { const code = e.status; add("runtime", "media toolchain", `self-test in ${env.VIDEO_INSPECTION_ISOLATION || "bubblewrap"} isolation`, false, (code === 2 ? "isolation unavailable here (fails closed): bubblewrap + user namespaces are needed; for disposable staging only set VIDEO_INSPECTION_ISOLATION=local. " : "") + String(e.stdout || e.message).replace(/\s+/g, " ").slice(0, 140)); }
+  add("config", "isolation", "VIDEO_INSPECTION_ISOLATION is allowed for this environment", ["local", "bubblewrap"].includes(env.VIDEO_INSPECTION_ISOLATION || "bubblewrap") && (env.VIDEO_INSPECTION_ISOLATION !== "local" || env.BIZGENIE_ENVIRONMENT === "staging"), `${env.VIDEO_INSPECTION_ISOLATION || "bubblewrap (default, hardened)"}; local is for disposable staging only${tool("bwrap") ? "" : "; bwrap not installed on this machine"}`);
 
   // ---- 2. environment settings the composition requires ----------------------------------------------------------------------------------------------------------------
   add("config", "environment", "BIZGENIE_ENVIRONMENT=staging", env.BIZGENIE_ENVIRONMENT === "staging", `value: ${env.BIZGENIE_ENVIRONMENT || "unset"} (production is refused by this preflight)`);
@@ -45,6 +45,9 @@ const tool = (n) => { const r = spawnSync("sh", ["-c", `command -v ${n}`], { enc
   need("founder", "openai", "OPENAI_API_KEY", "a project key with a hard monthly spend limit");
   need("founder", "stripe", "STRIPE_SECRET_KEY", "TEST-mode key only (sk_test_...)");
   if (has("STRIPE_SECRET_KEY")) add("founder", "stripe", "Stripe key is test-mode", /^sk_test_/.test(env.STRIPE_SECRET_KEY) || /^rk_test_/.test(env.STRIPE_SECRET_KEY), "a live key is refused");
+  if (has("VIDEO_PROVIDER_OUTPUT_STORAGE_URI")) add("founder", "google", "VIDEO_PROVIDER_OUTPUT_STORAGE_URI is gs://bucket/prefix/", /^gs:\/\/[a-z0-9._-]{3,63}\/[^\s]+\/$/.test(env.VIDEO_PROVIDER_OUTPUT_STORAGE_URI), "must end with / so a prefix, never the bucket root, is allowed as a copy source");
+  if (has("MEDIA_STORAGE_BUCKET") && has("VIDEO_PROVIDER_OUTPUT_STORAGE_URI")) add("founder", "google", "Veo output prefix is in the same private bucket", env.VIDEO_PROVIDER_OUTPUT_STORAGE_URI.startsWith(`gs://${env.MEDIA_STORAGE_BUCKET}/`), "the single private bucket keeps ownership and cleanup simple");
+  if (env.MEDIA_INTAKE_ENABLED === "true") { add("config", "uploads", "MALWARE_SCANNER=clamd with MALWARE_SCANNER_HOST (or staging-only structural opt-in)", env.MALWARE_SCANNER === "clamd" && has("MALWARE_SCANNER_HOST") || (env.BIZGENIE_ENVIRONMENT === "staging" && env.MEDIA_INTAKE_STRUCTURAL_INSPECTION === "true" && env.MEDIA_INTAKE_ALLOW_UNSCANNED === "true"), "customer uploads stay quarantined and unusable without a scanner; UNSCANNED is never accepted in production"); }
   if (has("SUPABASE_URL")) add("founder", "auth", "SUPABASE_URL is https", /^https:\/\//.test(env.SUPABASE_URL), "");
 
   // ---- 4. database version (free read) --------------------------------------------------------------------------------------------------------------------------------
@@ -79,6 +82,10 @@ const tool = (n) => { const r = spawnSync("sh", ["-c", `command -v ${n}`], { enc
     const by = (o) => failed.filter((r) => r.owner === o).length;
     console.log(`\n${rows.length - failed.length}/${rows.length} ready. Missing: runtime ${by("runtime")}, config ${by("config")}, founder ${by("founder")}.`);
     console.log(failed.length ? "NOT READY: nothing was generated, published, charged or written." : "READY for the founder-approved bounded run.");
+    const asks = failed.filter((r) => r.owner === "founder").map((r) => `  - ${r.area}: ${r.check.replace(/^env /, "")}${r.detail ? " - " + r.detail : ""}`);
+    if (asks.length) console.log("\nFounder-controlled actions still needed:\n" + asks.join("\n"));
+    const net = failed.filter((r) => r.owner === "runtime" && /network/.test(r.check)).map((r) => r.check.replace("network ", ""));
+    if (net.length) console.log("\nHosts this machine cannot reach (allow them in its network policy, or run from a machine that can): " + net.join(", "));
   }
   process.exit(failed.length ? 1 : 0);
 })();

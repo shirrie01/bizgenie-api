@@ -226,6 +226,15 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
     it("composition refuses to enable video without an inspector", async () => {
       assert.throws(() => new DurableMediaAssetStore({ mediaKind: "video", repository: {}, storage: {}, requireVideoValidation: true }));
     });
+    it("the demo credit ceiling is enforced by the product before any provider call: with exactly 8 credits (one image + one video) a third job is refused", async () => {
+      const spare = (await balance()) - 8; const key = randomUUID(); await billingService.adjustCredits({ tenantId: "tenant_a", amount: spare, direction: "debit", transactionCorrelationId: key, idempotencyKey: key });
+      assert.equal(await balance(), 8);
+      await confirmed("image.normal"); await confirmed("video.normal", "tiktok", "video"); assert.equal(await balance(), 0);
+      await assert.rejects(confirmed("image.normal"), (e) => { assert.match(String(e.code), /INSUFFICIENT|CREDIT|BALANCE/i); return true; });
+      const l = loop({ minBackoffMs: 1 }); await l.tick(); clock = new Date(clock.getTime() + 5000); await l.tick();
+      assert.deepEqual([providerCalls.image, providerCalls.video], [1, 1], "exactly the two funded jobs reached a provider");
+      assert.equal(await balance(), 0);
+    });
     it("a provider-reported Veo failure is final: the reservation is released and nothing is charged", async () => {
       transportState.fail = true; const before = await balance(); const { job } = await confirmed("video.normal", "tiktok", "video"); const l = loop({ minBackoffMs: 1 });
       await l.tick(); clock = new Date(clock.getTime() + 5000); await l.tick();
