@@ -66,6 +66,139 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     await adminPool?.end();
   });
 
+  it("proves migration-created customer media, social and learning tables deny public client roles", async () => {
+    // The before() hook applies every repository SQL migration to a disposable PostgreSQL 17 database.
+    // Check effective privileges, not merely the presence of REVOKE statements in source files.
+    const tables = [
+      "customer_media_intakes", "customer_media_intake_audit",
+      "social_oauth_intents", "social_connections", "social_dispatches", "social_dispatch_audit",
+      "campaign_performance_objectives", "platform_performance_observations",
+      "performance_evidence_snapshots", "learning_recommendations", "learning_customer_feedback",
+    ];
+    for (const table of tables) {
+      const { rows } = await pool.query(
+        `select c.relrowsecurity as rls_enabled,
+                has_table_privilege('anon', c.oid, 'SELECT') as anon_read,
+                has_table_privilege('authenticated', c.oid, 'SELECT') as authenticated_read,
+                has_table_privilege('service_role', c.oid, 'SELECT') as service_read,
+                has_table_privilege('anon', c.oid, 'INSERT') as anon_write,
+                has_table_privilege('authenticated', c.oid, 'INSERT') as authenticated_write,
+                has_table_privilege('service_role', c.oid, 'INSERT') as service_write
+           from pg_class c join pg_namespace n on n.oid=c.relnamespace
+          where n.nspname='public' and c.relname=$1 and c.relkind='r'`,
+        [table]
+      );
+      assert.equal(rows.length, 1, `${table}: migration must create table`);
+      assert.equal(rows[0].rls_enabled, true, `${table}: RLS must be enabled`);
+      for (const [privilege, granted] of Object.entries(rows[0])) {
+        if (privilege !== "rls_enabled") assert.equal(granted, false, `${table}: ${privilege} must be denied`);
+      }
+    }
+  });
+
+  it("enforces direct SQL denial for all three client roles on new customer data tables", async () => {
+    const tables = [
+      "customer_media_intakes", "customer_media_intake_audit",
+      "social_oauth_intents", "social_connections", "social_dispatches", "social_dispatch_audit",
+      "campaign_performance_objectives", "platform_performance_observations",
+      "performance_evidence_snapshots", "learning_recommendations", "learning_customer_feedback",
+    ];
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(`set local role ${role}`);
+        for (const table of tables) {
+          await client.query("savepoint privilege_probe");
+          try {
+            await assert.rejects(
+              () => client.query(`select * from public.${table} limit 0`),
+              /permission denied/,
+              `${role} must not read ${table}`
+            );
+          } finally {
+            await client.query("rollback to savepoint privilege_probe");
+          }
+        }
+      } finally {
+        await client.query("rollback");
+        client.release();
+      }
+    }
+  });
+
+  it("denies all table-level client write and metadata privileges on sensitive new tables", async () => {
+    const tables = [
+      "customer_media_intakes", "customer_media_intake_audit",
+      "social_oauth_intents", "social_connections", "social_dispatches", "social_dispatch_audit",
+      "campaign_performance_objectives", "platform_performance_observations",
+      "performance_evidence_snapshots", "learning_recommendations", "learning_customer_feedback",
+    ];
+    const privileges = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"];
+    for (const table of tables) {
+      const { rows } = await pool.query(
+        `select c.oid::regclass::text as relation, c.relrowsecurity as rls_enabled,
+                c.relforcerowsecurity as rls_forced
+           from pg_class c join pg_namespace n on n.oid=c.relnamespace
+          where n.nspname='public' and c.relname=$1 and c.relkind='r'`,
+        [table]
+      );
+      assert.equal(rows.length, 1, `${table}: missing migration relation`);
+      assert.equal(rows[0].rls_enabled, true, `${table}: RLS must be enabled`);
+      for (const role of ["anon", "authenticated", "service_role"]) {
+        for (const privilege of privileges) {
+          const { rows: check } = await pool.query(
+            "select has_table_privilege($1, $2, $3) as granted",
+            [role, rows[0].relation, privilege]
+          );
+          assert.equal(check[0].granted, false, `${table}: ${role} must not have ${privilege}`);
+        }
+      }
+    }
+  });
+
+  it("rejects restricted-role UPDATE and DELETE SQL even when no rows match", async () => {
+    const tables = [
+      "customer_media_intakes", "customer_media_intake_audit",
+      "social_oauth_intents", "social_connections", "social_dispatches", "social_dispatch_audit",
+      "campaign_performance_objectives", "platform_performance_observations",
+      "performance_evidence_snapshots", "learning_recommendations", "learning_customer_feedback",
+    ];
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(`set local role ${role}`);
+        for (const table of tables) {
+          const { rows: columns } = await pool.query(
+            "select column_name from information_schema.columns where table_schema='public' and table_name=$1 order by ordinal_position limit 1",
+            [table]
+          );
+          assert.equal(columns.length, 1, `${table}: missing table column`);
+          const column = columns[0].column_name;
+          for (const statement of [
+            `update public.${table} set ${column}=${column} where false`,
+            `delete from public.${table} where false`,
+          ]) {
+            await client.query("savepoint mutation_probe");
+            try {
+              await assert.rejects(
+                () => client.query(statement),
+                /permission denied/,
+                `${role}: mutation must be denied for ${table}`
+              );
+            } finally {
+              await client.query("rollback to savepoint mutation_probe");
+            }
+          }
+        }
+      } finally {
+        await client.query("rollback");
+        client.release();
+      }
+    }
+  });
+
   it("saves, resumes after a fresh service instance, and survives a retry after restart", async () => {
     const first = body({ sector_key: "perfume", channels: ["email", "instagram"], draft: { goal: "Sell scent" }, current_step: 3 });
     const saved = await service.save({ actor: actor(AUTH_A, SCOPE_A), request: first });

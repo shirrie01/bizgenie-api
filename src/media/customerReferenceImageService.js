@@ -71,7 +71,11 @@ class CustomerReferenceImageService {
       });
       return { asset_id: asset.asset_id, media_kind: asset.media_kind, mime_type: asset.mime_type, byte_size: asset.byte_size };
     } catch {
-      if (uploaded) await this.storage.delete({ key });
+      if (uploaded) {
+        try { await this.storage.delete({ key }); } catch {
+          // Cleanup may fail independently. Never expose storage internals or report success.
+        }
+      }
       throw new MediaPersistenceError();
     }
   }
