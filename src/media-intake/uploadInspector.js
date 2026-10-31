@@ -13,12 +13,13 @@ function createUploadInspector({ videoInspector, videoDecode, malwareScanner = n
   if (typeof videoInspector !== "function" || typeof videoDecode !== "function") throw new TypeError("Upload inspection needs a video inspector and a decode check");
   if (!malwareScanner && !allowUnscanned) throw new TypeError("Upload inspection needs a malware scanner (or an explicit allowUnscanned for isolated staging)");
   if (malwareScanner && typeof malwareScanner.scan !== "function") throw new TypeError("Invalid malware scanner");
-  const engine = `structural-ffprobe-ffmpeg${malwareScanner ? `+${String(malwareScanner.engine || "scanner").slice(0, 40)}` : "+UNSCANNED"}`;
+  const engineName = (scanned) => `structural-ffprobe-ffmpeg${malwareScanner ? `+${String(scanned || malwareScanner.engine || "scanner").slice(0, 60)}` : "+UNSCANNED"}`;
 
   return Object.freeze({
     async inspect({ bytes, sha256, content_type: contentType, max_bytes: maxBytes, signal } = {}) {
       if (!Buffer.isBuffer(bytes) || createHash("sha256").update(bytes).digest("hex") !== sha256) return null; // never vouch for bytes that are not the pinned ones
       if (Number.isFinite(maxBytes) && bytes.length > maxBytes) return null;
+      let engine = engineName();
       const verdict = (clean, extra = {}) => ({ sha256, content_type: contentType, clean, engine, policy_version: POLICY, ...extra });
       let facts;
       if (contentType.startsWith("image/")) {
@@ -37,6 +38,7 @@ function createUploadInspector({ videoInspector, videoDecode, malwareScanner = n
       if (malwareScanner) {
         let scan; try { scan = await malwareScanner.scan({ bytes, sha256, content_type: contentType, signal }); } catch { return null; }
         if (!scan || typeof scan.clean !== "boolean") return null;
+        engine = engineName(scan.engine);
         if (!scan.clean) return verdict(false);
       }
       return verdict(true, facts);

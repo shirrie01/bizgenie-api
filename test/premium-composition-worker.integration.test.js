@@ -21,6 +21,7 @@ const { createApp } = require("../index");
 const { scenario, previewReceipt, context } = require("./helpers/campaign-regressions");
 const { localMediaKit } = require("./helpers/customer-media-local");
 const { socialFixture } = require("./helpers/social-local");
+const { startFakeClamd } = require("./helpers/fake-clamd");
 
 const url = process.env.TEST_DATABASE_URL;
 const actor = context.actor;
@@ -28,12 +29,13 @@ const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const { execFileSync } = require("node:child_process");
 const os = require("node:os");
 const { createVideoInspector } = require("../src/media/videoInspection");
-let haveFfmpeg = true; try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); execFileSync("ffprobe", ["-version"], { stdio: "ignore" }); } catch { haveFfmpeg = false; }
+const haveFfmpeg = require("./helpers/media-tools").haveMediaTools();
 // REAL encoded files made with ffmpeg (no network, no paid call) so the real ffprobe inspector measures actual bytes.
 const fixtures = {};
 function makeFixtures() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bg-video-fx-")); const enc = (name, input, out) => { execFileSync("ffmpeg", ["-loglevel", "error", "-y", ...input, ...out, path.join(dir, name)]); return fs.readFileSync(path.join(dir, name)); };
   const src = (size, dur = 4) => ["-f", "lavfi", "-i", `testsrc=size=${size}:rate=24:duration=${dur}`];
+  fixtures.png = enc("a.png", ["-f", "lavfi", "-i", "testsrc2=size=640x480:rate=1", "-frames:v", "1"], []);
   fixtures.good = enc("good.mp4", src("720x1280"), ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-an"]);
   fixtures.audio = enc("audio.mp4", [...src("720x1280"), "-f", "lavfi", "-i", "sine=d=4"], ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"]);
   fixtures.wrongAspect = enc("wide.mp4", src("1280x720"), ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-an"]);
@@ -131,7 +133,7 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       await fails({ QUOTED_GENERATION_ENABLED: "true" }, { media: { mediaEnabled: false } }, /at least one generation capability/);
       await fails({ STRATEGY_WORKFLOWS_ENABLED: "true" }, {}, /requires QUOTED_GENERATION_ENABLED/);
       await fails({ QUOTED_GENERATION_ENABLED: "true", STRATEGY_WORKFLOWS_ENABLED: "true", TEXT_GENERATION_MODEL: "m" }, {}, /founder-approved workflow price policy/);
-      await fails({ MEDIA_INTAKE_ENABLED: "true" }, {}, /inspector/);
+      await fails({ MEDIA_INTAKE_ENABLED: "true" }, {}, /malware scanner/);
       await fails({ SOCIAL_PUBLISHING_ENABLED: "true" }, {}, /SOCIAL_PLATFORMS/);
       await fails({ SOCIAL_PUBLISHING_ENABLED: "true", SOCIAL_PLATFORMS: "tiktok" }, { connectors: {} }, /No connector is registered for tiktok/);
       await fails({ LEARNING_ENABLED: "true" }, {}, /requires SOCIAL_PUBLISHING_ENABLED/);
@@ -206,6 +208,18 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       const base = { BIZGENIE_ENVIRONMENT: "staging", MEDIA_INTAKE_ENABLED: "true", MEDIA_RIGHTS_POLICY_VERSION: "rights.v1", MEDIA_RIGHTS_POLICY_STATEMENT: "Reviewed wording placeholder for staging", VIDEO_INSPECTION_ISOLATION: "local" };
       await assert.rejects(build({ ...base }), /malware scanner/);
       await assert.rejects(build({ ...base, MEDIA_INTAKE_STRUCTURAL_INSPECTION: "true" }), /only allowed in staging with MEDIA_INTAKE_ALLOW_UNSCANNED/);
+      // production can never take the unscanned path or local isolation, even if those variables are set
+      const prod = { ...base, BIZGENIE_ENVIRONMENT: "production", PRODUCTION_ACTIVATION_ENABLED: "true" };
+      await assert.rejects(build({ ...prod, MEDIA_INTAKE_STRUCTURAL_INSPECTION: "true", MEDIA_INTAKE_ALLOW_UNSCANNED: "true" }), /local.*only allowed in disposable isolated staging|only allowed in staging/);
+      await assert.rejects(build({ ...prod, MALWARE_SCANNER: "clamd", MALWARE_SCANNER_HOST: "scanner.internal" }), /local.*only allowed in disposable isolated staging/);
+      await assert.rejects(build({ ...base, MALWARE_SCANNER: "clamd" }), /MALWARE_SCANNER_HOST/);
+      await assert.rejects(build({ ...base, MALWARE_SCANNER: "yara", MALWARE_SCANNER_HOST: "h" }), /only supported scanner adapter/);
+      await assert.rejects(build({ ...base, MALWARE_SCANNER: "clamd", MALWARE_SCANNER_HOST: "h", MALWARE_SCANNER_TIMEOUT_MS: "30000" }), /deadline/);
+      const scanned = await build({ ...base, MALWARE_SCANNER: "clamd", MALWARE_SCANNER_HOST: "scanner.internal" }); assert.ok(scanned.mediaIntakeService);
+      const hardened = { ...prod }; delete hardened.VIDEO_INSPECTION_ISOLATION;
+      const hardenedEnv = { ...hardened, MALWARE_SCANNER: "clamd", MALWARE_SCANNER_HOST: "scanner.internal" };
+      assert.ok((await build(hardenedEnv, { toolchainCheck: async ({ isolation }) => { assert.equal(isolation, "bubblewrap"); return { ok: true }; } })).mediaIntakeService, "production with a scanner and the default hardened isolation composes");
+      await assert.rejects(build(hardenedEnv, { toolchainCheck: async () => ({ ok: false, failure: "INSPECTION_SANDBOX_UNAVAILABLE" }) }), /media inspection is not ready \(bubblewrap\): INSPECTION_SANDBOX_UNAVAILABLE/);
       const ok = await build({ ...base, MEDIA_INTAKE_STRUCTURAL_INSPECTION: "true", MEDIA_INTAKE_ALLOW_UNSCANNED: "true" });
       assert.ok(ok.mediaIntakeService);
     });
@@ -234,6 +248,66 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
     it("a cancelled-before-start job is not executed", async () => {
       const { q, job } = await confirmed("image.normal"); await premium.generationQuoteService.cancel(actor, q.quote_id); const r = await loop().tick(); assert.equal(providerCalls.image, 0); assert.equal(r.succeeded, 0);
       assert.equal((await claimState(job.job_id)).state, "cancelled");
+    });
+  });
+
+
+  describe("customer uploads stay quarantined until scanned and validated (real intake service, real inspector, scanner protocol stand-in)", () => {
+    const { CustomerMediaIntakeService } = require("../src/media-intake/service");
+    const { createUploadInspector } = require("../src/media-intake/uploadInspector");
+    const { createClamdScanner } = require("../src/media-intake/clamdScanner");
+    const { createVideoInspector: vi } = require("../src/media/videoInspection");
+    const { createVideoDecodeCheck: vd } = require("../src/media/videoDecode");
+    const scope = { tenant_id: "tenant_a", project_id: "project_a", brand_id: "brand_a" };
+    const png8 = (extra) => { // a structurally valid PNG, optionally carrying an extra tEXt chunk (valid CRC) before IEND
+      const base = fixtures.png; if (!extra) return base; const body = Buffer.concat([Buffer.from("Comment\0"), extra]); const len = Buffer.alloc(4); len.writeUInt32BE(body.length);
+      const type = Buffer.from("tEXt"); const crc = Buffer.alloc(4); crc.writeUInt32BE(require("node:zlib").crc32(Buffer.concat([type, body])) >>> 0);
+      const iend = base.length - 12; return Buffer.concat([base.subarray(0, iend), len, type, body, crc, base.subarray(iend)]);
+    };
+    const build = (scanner, over = {}) => {
+      const objects = new Map();
+      const storage = { bucket: "private-intake", putImmutableObject: async ({ key, data, mimeType }) => { objects.set(key, { data: Buffer.from(data), mime: mimeType, generation: "42" }); },
+        statPreview: async ({ key }) => { const v = objects.get(key); return { size: v.data.length, mimeType: v.mime, generation: v.generation }; },
+        openPreview: async ({ key }) => { const v = objects.get(key); return new Response(v.data, { headers: { "content-length": String(v.data.length), "content-type": v.mime } }); } };
+      const inspector = createUploadInspector({ videoInspector: vi({ isolation: "local" }), videoDecode: vd({ isolation: "local" }), ...(scanner ? { malwareScanner: scanner } : { allowUnscanned: true }) });
+      return new CustomerMediaIntakeService({ billingRepository: billing, storage, inspector, enabled: true, now: () => clock, rightsPolicy: { version: "rights.v1", statement: "Reviewed wording placeholder for tests", allowed_uses: ["campaign.preview", "video.generate.reference"] }, ...over });
+    };
+    const upload = async (intake, bytes, type, name) => {
+      const first = await intake.initiate(actor, { ...scope, filename: name, content_type: type, bytes: bytes.length, rights_confirmed: true, idempotency_key: randomUUID() });
+      assert.equal((await intake.upload(actor, first.asset_id, scope, bytes, type)).state, "quarantined");
+      return first.asset_id;
+    };
+    const assetRows = async (id) => (await pool.query("select status from media_assets where asset_id=$1", [id])).rows;
+    const state = async (id) => (await pool.query("select state from customer_media_intakes where asset_id=$1", [id])).rows[0].state;
+
+    it("clean files become ready only after structure, decode and scan all pass; a signature hit is rejected and never becomes an asset", async () => {
+      const d = await startFakeClamd(); try {
+        const intake = build(createClamdScanner({ host: d.host, port: d.port, timeoutMs: 800, now: () => new Date() }));
+        const okPng = await upload(intake, fixtures.png, "image/png", "ok.png"); assert.equal((await intake.complete(actor, okPng, scope)).state, "ready"); assert.deepEqual(await assetRows(okPng), [{ status: "active" }]);
+        const okVid = await upload(intake, fixtures.good, "video/mp4", "ok.mp4"); assert.equal((await intake.complete(actor, okVid, scope)).state, "ready");
+        const bad = await upload(intake, png8(d.EICAR), "image/png", "bad.png"); assert.equal((await intake.complete(actor, bad, scope)).state, "rejected");
+        assert.deepEqual(await assetRows(bad), [], "a rejected upload has no asset row, so nothing can use or publish it");
+        const damaged = await upload(intake, fixtures.truncated, "video/mp4", "cut.mp4"); assert.equal((await intake.complete(actor, damaged, scope)).state, "rejected");
+        assert.equal(d.state.streams >= 2, true);
+      } finally { await d.close(); }
+    });
+
+    it("scanner unavailable or too slow fails closed: the asset stays quarantined, then completes once the scanner is back", async () => {
+      const d = await startFakeClamd({ mode: "hang" }); try {
+        const intake = build(createClamdScanner({ host: d.host, port: d.port, timeoutMs: 400, now: () => new Date() }));
+        const id = await upload(intake, fixtures.png, "image/png", "wait.png");
+        await assert.rejects(intake.complete(actor, id, scope), { code: "INSPECTION_UNAVAILABLE" }); assert.equal(await state(id), "quarantined"); assert.deepEqual(await assetRows(id), []);
+        d.state.mode = "ok"; assert.equal((await intake.complete(actor, id, scope)).state, "ready");
+      } finally { await d.close(); }
+      const down = await startFakeClamd(); const { host, port } = down; await down.close();
+      const intake = build(createClamdScanner({ host, port, timeoutMs: 400 })); const id = await upload(intake, fixtures.png, "image/png", "down.png");
+      await assert.rejects(intake.complete(actor, id, scope), { code: "INSPECTION_UNAVAILABLE" }); assert.equal(await state(id), "quarantined");
+    });
+
+    it("an UNSCANNED verdict is never accepted unless the service was explicitly told it is disposable staging", async () => {
+      const prod = build(null); const id = await upload(prod, fixtures.png, "image/png", "u.png");
+      await assert.rejects(prod.complete(actor, id, scope), { code: "INSPECTION_UNAVAILABLE" }); assert.equal(await state(id), "quarantined"); assert.deepEqual(await assetRows(id), []);
+      const staging = build(null, { allowUnscanned: true }); const id2 = await upload(staging, fixtures.png, "image/png", "u2.png"); assert.equal((await staging.complete(actor, id2, scope)).state, "ready");
     });
   });
 

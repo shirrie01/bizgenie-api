@@ -10,7 +10,7 @@ const { createVideoInspector } = require("../src/media/videoInspection");
 const { createVideoDecodeCheck } = require("../src/media/videoDecode");
 const { createUploadInspector } = require("../src/media-intake/uploadInspector");
 
-let have = true; try { for (const t of ["ffmpeg", "ffprobe"]) execFileSync(t, ["-version"], { stdio: "ignore" }); fs.accessSync("/usr/bin/prlimit"); } catch { have = false; }
+const have = require("./helpers/media-tools").haveMediaTools();
 const skip = have ? false : "ffmpeg/ffprobe/prlimit unavailable";
 const dir = have ? fs.mkdtempSync(path.join(os.tmpdir(), "bg-up-")) : null;
 const enc = (name, input, out) => { execFileSync("ffmpeg", ["-loglevel", "error", "-y", ...input, ...out, path.join(dir, name)]); return fs.readFileSync(path.join(dir, name)); };

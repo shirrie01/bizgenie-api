@@ -127,13 +127,25 @@ jobs:
       - name: Smoke test Dockerfile image
         run: bash scripts/smoke-container.sh "$DOCKER_IMAGE" bizgenie-ci-docker
 
-      - name: Build the isolated staging image and prove the media toolchain runs in it
+      - name: Production image - pinned media toolchain present, non-root, working
         shell: bash
         run: |
-          docker build --file Dockerfile.staging --tag bizgenie-api:ci-staging .
-          docker run --rm bizgenie-api:ci-staging sh -c 'ffprobe -version | head -1 && ffmpeg -version | head -1 && test -x /usr/bin/prlimit && node --version'
-          # a real, tiny H.264 file is measured and fully decoded inside the image by the same code the worker uses
-          docker run --rm --env VIDEO_INSPECTION_ISOLATION=local bizgenie-api:ci-staging node scripts/staging/toolchain-selftest.js
+          docker run --rm "$DOCKER_IMAGE" sh -c 'echo "uid=$(id -u) user=$(id -un)"; test "$(id -u)" != 0; . /etc/os-release; echo "$PRETTY_NAME"; dpkg-query -W -f="${Package}=${Version}\n" ffmpeg bubblewrap util-linux; ffprobe -version | head -1; ffmpeg -version | head -1; bwrap --version; prlimit --version | head -1'
+
+      - name: Production image - media self-test passes or fails CLOSED (never silently degraded)
+        shell: bash
+        run: |
+          # Default isolation is the hardened one. On a host/seccomp profile that forbids user namespaces the self-test must say so (exit 2), not pass.
+          set +e
+          docker run --rm "$DOCKER_IMAGE" node scripts/staging/toolchain-selftest.js; code=$?
+          echo "hardened isolation under the default Docker profile: exit $code (0 = works, 2 = refused, fail closed)"
+          [ "$code" = 0 ] || [ "$code" = 2 ] || exit 1
+          # Where namespaces are permitted the hardened path must actually work.
+          docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined "$DOCKER_IMAGE" node scripts/staging/toolchain-selftest.js; relaxed=$?
+          echo "hardened isolation with user namespaces permitted: exit $relaxed"
+          # The tools and rules themselves, independent of namespaces (isolated staging mode).
+          docker run --rm --env VIDEO_INSPECTION_ISOLATION=local "$DOCKER_IMAGE" node scripts/staging/toolchain-selftest.js || exit 1
+          [ "$relaxed" = 0 ] || exit 1
 
       - name: Install pinned pack CLI
         shell: bash

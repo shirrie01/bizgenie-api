@@ -8,6 +8,9 @@ function checkContainerBuildContract(root = path.join(__dirname, "..")) {
   const ignore = new Set(fs.readFileSync(path.join(root, ".dockerignore"), "utf8").split(/\r?\n/));
   if (!/^FROM node:22[^\s]*@sha256:[a-f0-9]{64}$/m.test(dockerfile)) throw new Error("Docker Node 22 base must have an immutable digest");
   if (!/^RUN npm ci --omit=dev --no-audit --no-fund$/m.test(dockerfile) || /RUN npm install/.test(dockerfile)) throw new Error("Docker must install from the lockfile");
+  if (!/^USER node$/m.test(dockerfile)) throw new Error("Docker image must run as the non-root node user");
+  if (!/install-media-toolchain\.sh/.test(dockerfile)) throw new Error("Docker image must install the pinned media toolchain");
+  if (fs.existsSync(path.join(root, "Dockerfile.staging"))) throw new Error("There must be one image: staging uses the production image");
   if (lock.lockfileVersion !== 3 || !lock.packages?.[""]) throw new Error("Expected lockfile v3");
   for (const kind of ["dependencies", "devDependencies", "engines"]) {
     const normalized = value => JSON.stringify(Object.fromEntries(Object.entries(value || {}).sort()));

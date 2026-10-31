@@ -8,7 +8,7 @@ const { execFileSync } = require("node:child_process");
 const { inspectImage, validateGeneratedImage } = require("../src/media/imageInspection");
 const { DurableMediaAssetStore } = require("../src/media/storage");
 
-let have = true; try { execFileSync("ffmpeg", ["-version"], { stdio: "ignore" }); } catch { have = false; }
+const have = require("./helpers/media-tools").haveMediaTools();
 const dir = have ? fs.mkdtempSync(path.join(os.tmpdir(), "bg-img-")) : null;
 const make = (name, args) => { execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x480:rate=1", "-frames:v", "1", ...args, path.join(dir, name)]); return fs.readFileSync(path.join(dir, name)); };
 const files = have ? { png: make("a.png", []), jpg: make("a.jpg", ["-q:v", "3"]), webp: (() => { try { return make("a.webp", []); } catch { return null; } })() } : {};

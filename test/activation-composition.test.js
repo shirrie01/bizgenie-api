@@ -110,12 +110,27 @@ describe("Image/Video production composition gates", () => {
       env: mediaEnv(),
       fetchImpl: bucketFetch,
       accessTokenProvider: async () => "staging-access-token",
+      toolchainCheck: async () => ({ ok: true }), // the real self-test is exercised in media-toolchain.test.js and in the container smoke test
     });
     assert.equal(result.mediaEnabled, true);
     assert.equal(result.imageEnabled, true);
     assert.equal(result.videoEnabled, true);
     assert.ok(result.imageProvider instanceof OpenAIImageProvider);
     assert.ok(result.videoProvider instanceof GoogleVertexVeoProvider);
+  });
+
+  it("BG-LAUNCH-004: video is enabled only when the inspection toolchain is demonstrably ready in the configured isolation", async () => {
+    const base = { pool: mediaPool(), fetchImpl: bucketFetch, accessTokenProvider: async () => "token" };
+    const seen = [];
+    await assert.rejects(createMediaProductionComposition({ ...base, env: mediaEnv(), toolchainCheck: async ({ isolation }) => { seen.push(isolation); return { ok: false, failure: "INSPECTION_SANDBOX_UNAVAILABLE" }; } }), /media inspection is not ready \(bubblewrap\): INSPECTION_SANDBOX_UNAVAILABLE/);
+    await assert.rejects(createMediaProductionComposition({ ...base, env: mediaEnv(), toolchainCheck: async () => undefined }), /not ready/);
+    assert.deepEqual(seen, ["bubblewrap"], "the default is the hardened isolation");
+    const local = await createMediaProductionComposition({ ...base, env: mediaEnv({ VIDEO_INSPECTION_ISOLATION: "local" }), toolchainCheck: async ({ isolation }) => { seen.push(isolation); return { ok: true }; } });
+    assert.equal(local.videoEnabled, true); assert.equal(seen.at(-1), "local");
+    await assert.rejects(createMediaProductionComposition({ ...base, env: mediaEnv({ BIZGENIE_ENVIRONMENT: "production", PRODUCTION_ACTIVATION_ENABLED: "true", VIDEO_INSPECTION_ISOLATION: "local" }), toolchainCheck: async () => ({ ok: true }) }), /only allowed in disposable isolated staging/);
+    // image-only needs no video toolchain, so a broken toolchain does not block it
+    const imageOnly = await createMediaProductionComposition({ ...base, env: mediaEnv({ VIDEO_GENERATION_ENABLED: "false" }), toolchainCheck: async () => { throw new Error("must not run"); } });
+    assert.equal(imageOnly.imageEnabled, true);
   });
 
   it("does not permit production activation without the separate production gate", async () => {
