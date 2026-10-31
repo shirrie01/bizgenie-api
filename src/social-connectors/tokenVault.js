@@ -4,7 +4,7 @@ const {z}=require('zod');
 const {identifier,uuid}=require('../campaigns/schema');
 const {QuoteError,digest}=require('../generation-quotes/service');
 const Binding=z.object({tenant_id:identifier,project_id:identifier,brand_id:identifier,platform:z.enum(['tiktok','linkedin','instagram','facebook','youtube']),account_id:require('./providerId').ProviderId}).strict();
-const Credentials=z.object({accessToken:z.string().min(1).max(16384),refreshToken:z.string().min(1).max(16384).optional(),expiresAt:z.string().datetime({offset:true}),refreshExpiresAt:z.string().datetime({offset:true}).optional()}).strict();
+const Credentials=z.object({accessToken:z.string().min(1).max(16384),refreshToken:z.string().min(1).max(16384).optional(),expiresAt:z.string().datetime({offset:true}),refreshExpiresAt:z.string().datetime({offset:true}).optional(),grantedScopes:z.array(z.string().min(1).max(512)).max(100).optional()}).strict();
 class SocialTokenVault{
  constructor({driver=null,now=()=>new Date()}={}){this.driver=driver;this.now=now;}
  ready(){if(!this.driver||!['create','read','revoke'].every(k=>typeof this.driver[k]==='function'))throw new QuoteError('SOCIAL_TOKEN_VAULT_UNAVAILABLE',503);}
