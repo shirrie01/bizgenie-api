@@ -73,6 +73,9 @@ jobs:
       - name: Run automated tests
         run: npm test
 
+      - name: Rehearse every migration on the disposable PostgreSQL 17 service (fresh database, additive-only, credential-table privileges)
+        run: node scripts/rehearse-migrations.js
+
       - name: Run real PostgreSQL billing adversarial tests
         run: npm run test:billing:postgres
 
