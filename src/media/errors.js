@@ -30,3 +30,12 @@ module.exports = {
   MediaError,
   MediaPersistenceError,
 };
+
+// A generated file that was fetched and measured and does NOT meet the contract. Definitive (retrying cannot fix it), unlike MediaPersistenceError (storage/tool unavailable).
+class MediaValidationError extends MediaError {
+  constructor(reasons = []) {
+    super("MEDIA_OUTPUT_INVALID", "The generated media did not pass validation");
+    this.reasons = Object.freeze([...reasons].map(String).slice(0, 12));
+  }
+}
+module.exports.MediaValidationError = MediaValidationError;

@@ -1,5 +1,6 @@
 const { createHash, randomUUID } = require("node:crypto");
-const { MediaAssetUnavailableError, MediaConfigurationError, MediaPersistenceError } = require("./errors");
+const { MediaAssetUnavailableError, MediaConfigurationError, MediaPersistenceError, MediaValidationError } = require("./errors");
+const { GENERATED_VIDEO, validateGeneratedVideo } = require("./platformMediaProfiles");
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 1024 * 1024 * 1024;
@@ -208,7 +209,12 @@ function requireTrustedLineage(lineage) {
 
 const composedAuthority=new WeakSet();
 class DurableMediaAssetStore {
-  constructor({ mediaKind, repository, storage, videoSourcePrefix, now = () => new Date() }) {
+  // videoInspector: trusted byte inspection (createVideoInspector / createHardenedVideoInspector). With requireVideoValidation (the production composition always sets it)
+  // a provider video is downloaded back from OUR bucket after the copy and measured; no asset row exists unless it passes, so nothing unvalidated can be approved or published.
+  constructor({ mediaKind, repository, storage, videoSourcePrefix, videoInspector = null, requireVideoValidation = false, now = () => new Date() }) {
+    if (requireVideoValidation && mediaKind === "video" && typeof videoInspector !== "function") throw new MediaPersistenceError();
+    this.videoInspector = videoInspector;
+    this.requireVideoValidation = requireVideoValidation;
     this.mediaKind = mediaKind;
     this.repository = repository;
     this.storage = storage;
@@ -221,6 +227,22 @@ class DurableMediaAssetStore {
     const measured=await inspect(data);
     if(measured.status!=='measured'||measured.sha256!==sha(data)||measured.video?.codec!=='h264'||measured.audio?.length||measured.video.duration_seconds>60)throw new MediaPersistenceError();
     const input={data,lineage,source:{mime_type:'video/mp4',width:measured.video.width,height:measured.video.height,duration_seconds:measured.video.duration_seconds}};composedAuthority.add(input);return this.save(input);
+  }
+
+  // Download the copy we now own, measure its real bytes, and delete it again unless it satisfies the generated-video contract. Invalid output is definitive
+  // (MediaValidationError); a storage or inspector failure is transient (MediaPersistenceError) and the same provider output is simply retried by reconciliation.
+  async validateStoredVideo(key, expected) {
+    const discard = async () => { try { await this.storage.delete({ key }); } catch { /* best effort */ } };
+    let bytes;
+    try { bytes = await this.storage.download({ key, maximumBytes: GENERATED_VIDEO.max_bytes }); }
+    catch { await discard(); throw new MediaPersistenceError(); }
+    let measured;
+    try { measured = await this.videoInspector(bytes); } catch { await discard(); throw new MediaPersistenceError(); }
+    if (measured?.status === "unavailable") { await discard(); throw new MediaPersistenceError(); }
+    if (measured?.status !== "measured") { await discard(); throw new MediaValidationError([measured?.reason || "NOT_MEASURED"]); }
+    const reasons = validateGeneratedVideo(measured, expected);
+    if (reasons.length) { await discard(); throw new MediaValidationError(reasons); }
+    return measured;
   }
 
   async save(input) {
@@ -238,7 +260,7 @@ class DurableMediaAssetStore {
       assetId,
       extension,
     });
-    let stored;
+    let stored, measured = null;
     if (this.mediaKind === "image" || composedAuthority.has(input)) {
       stored = await this.storage.putObject({ key, data: input.data, mimeType });
     } else {
@@ -247,6 +269,10 @@ class DurableMediaAssetStore {
         destinationKey: key,
         allowedSourcePrefix: this.videoSourcePrefix,
       });
+      if (this.mediaKind === "video" && (this.requireVideoValidation || this.videoInspector)) {
+        measured = await this.validateStoredVideo(key, input.expected);
+        stored = { ...stored, byteSize: measured.byte_size };
+      }
     }
     try {
       const asset = await this.repository.create({
@@ -260,9 +286,10 @@ class DurableMediaAssetStore {
         storage_bucket: this.storage.bucket,
         storage_key: key,
         mime_type: mimeType,
-        ...(input.width || input.source?.width ? { width: input.width || input.source.width } : {}),
-        ...(input.height || input.source?.height ? { height: input.height || input.source.height } : {}),
-        ...(input.source?.duration_seconds ? { duration_seconds: input.source.duration_seconds } : {}),
+        ...(measured ? { width: measured.video.width, height: measured.video.height, duration_seconds: Math.round(measured.video.duration_seconds * 1000) / 1000 }
+          : { ...(input.width || input.source?.width ? { width: input.width || input.source.width } : {}),
+              ...(input.height || input.source?.height ? { height: input.height || input.source.height } : {}),
+              ...(input.source?.duration_seconds ? { duration_seconds: input.source.duration_seconds } : {}) }),
         ...(stored.byteSize ? { byte_size: stored.byteSize } : {}),
         allowed_uses: this.mediaKind === "image"
           ? ["image.generate.reference", "video.generate.reference", "campaign.preview", "campaign.publish"]
