@@ -23,6 +23,7 @@ const {
 const {
   createCorsMiddleware,
   createMediaProductionComposition,
+  createPremiumComposition,
   loadCorsConfig,
 } = require("./src/activation");
 const {
@@ -785,6 +786,17 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     pool: brandBrainRepository.pool,
     env,
   });
+  const premium = await createPremiumComposition({
+    pool: brandBrainRepository.pool,
+    billing,
+    media,
+    brandBrainRepository,
+    videoGenerationRepository,
+    scriptGenerator: generateScriptWithVertex,
+    branding: brandingConfig,
+    env,
+    logger,
+  });
   const stripe = createStripeProductionComposition({
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,
@@ -824,6 +836,12 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       videoProvider: media.videoProvider,
       videoAssetStore: media.videoAssetStore,
       videoReferenceAssetLoader: media.videoReferenceAssetLoader,
+      generationQuoteService: premium.generationQuoteService,
+      generationExecutionPolicy: premium.generationExecutionPolicy,
+      mediaIntakeService: premium.mediaIntakeService,
+      socialPublishingService: premium.socialPublishingService,
+      learningService: premium.learningService,
+      strategyWorkflowService: premium.strategyWorkflowService,
       corsConfig: loadCorsConfig({ env }),
       logger,
     }),
@@ -844,6 +862,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     generationBillingOrchestrator: billing.generationBillingOrchestrator,
     mediaAssetRepository: media.mediaAssetRepository,
     media,
+    premium,
     servicePrincipalVerifier,
     stripeSubscriptionService: stripe.stripeSubscriptionService,
     stripe,

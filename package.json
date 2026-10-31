@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node index.js",
+    "start:worker": "node worker.js",
     "test": "node --test",
     "test:billing:postgres": "node --test test/postgres-billing.integration.test.js",
     "test:campaign:postgres": "node --test test/postgres-campaign.integration.test.js",
