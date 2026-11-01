@@ -26,3 +26,19 @@ it('LinkedIn lost-create reply, organisation author, missing write permission an
  await assert.rejects(new LinkedInConnector(k.options).publish(args),{code:'LINKEDIN_POSTING_NOT_CONFIGURED'});await assert.rejects(c.publish({...args,identity:'image',payload:{content:{body:'Body',asset_refs:[{asset_id:randomUUID()}]}}}),{code:'OPERATION_UNSUPPORTED'});await assert.rejects(new LinkedInConnector({...k.options,postingPolicy:{...postingPolicy,memberAuthor:async()=>({subject:binding.account_id,urn:'urn:li:organization:146913305',evidenceRef:'not_member'})}}).publish({...args,identity:'organisation'}),{code:'SOCIAL_PROVIDER_OPERATION_UNAVAILABLE'});assert.equal(k.calls.length,1);
  const readOnly=await k.vault.store(binding,{accessToken:'synthetic',expiresAt:'2026-11-01T00:00:00Z',grantedScopes:['openid','profile']});await assert.rejects(c.publish({...args,identity:'no_write',token_reference:readOnly}),{code:'SOCIAL_PROVIDER_OPERATION_UNAVAILABLE'});assert.equal(k.calls.length,1);
 });
+it('LinkedIn rechecks revocation, expiry, scope and token rotation after author/journal awaits before transport',async()=>{
+ for(const phase of ['author','journal'])for(const change of ['revoked','expired','scope','rotated']){
+  const k=kit(),ref=await k.vault.store(binding,{accessToken:'synthetic',expiresAt:'2026-11-01T00:00:00Z',grantedScopes:['w_member_social']}),mutate=async()=>{const row=k.secrets.get(ref);if(change==='revoked')await k.vault.revoke(ref,binding);if(change==='expired')k.setNow(new Date('2026-11-02T00:00:00Z'));if(change==='scope')row.credentials.grantedScopes=[];if(change==='rotated')row.credentials.accessToken='synthetic_replacement';};
+  const policy={...postingPolicy,memberAuthor:async args=>{const author=await postingPolicy.memberAuthor(args);if(phase==='author')await mutate();return author;}};
+  if(phase==='journal'){const begin=k.options.operations.begin;k.options.operations.begin=async(...args)=>{const claim=await begin(...args);await mutate();return claim;};}
+  const c=new LinkedInConnector({...k.options,postingPolicy:policy}),args={identity:phase+'_'+change,token_reference:ref,connection_binding:binding,payload:{content:{body:'Approved',asset_refs:[]}}};
+  assert.equal((await c.publish(args)).status,'unknown',phase+' '+change);assert.equal(k.calls.length,0);assert.equal((await c.reconcile(args)).status,'unknown');
+ }
+});
+it('LinkedIn cancellation during author/journal work never starts provider transport',async()=>{
+ for(const phase of ['author','journal']){
+  const k=kit(),controller=new AbortController(),ref=await k.vault.store(binding,{accessToken:'synthetic',expiresAt:'2026-11-01T00:00:00Z',grantedScopes:['w_member_social']}),policy={...postingPolicy,memberAuthor:async args=>{const author=await postingPolicy.memberAuthor(args);if(phase==='author')controller.abort();return author;}};
+  if(phase==='journal'){const begin=k.options.operations.begin;k.options.operations.begin=async(...args)=>{const claim=await begin(...args);controller.abort();return claim;};}
+  const c=new LinkedInConnector({...k.options,postingPolicy:policy});assert.equal((await c.publish({identity:phase,token_reference:ref,connection_binding:binding,signal:controller.signal,payload:{content:{body:'Approved',asset_refs:[]}}})).status,'failed');assert.equal(k.calls.length,0);
+ }
+});
