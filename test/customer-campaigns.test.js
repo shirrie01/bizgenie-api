@@ -23,6 +23,7 @@ const FORBIDDEN_CUSTOMER_DTO_FIELDS = [
   "command_id",
   "auth_user_id",
   "private_positioning",
+  "destination_key",
 ];
 const IDS = Array.from(
   { length: 120 },
@@ -208,9 +209,7 @@ describe("customer campaign API", () => {
     assert.equal(item.body.campaign.items[0].variants[0].workflow, "draft");
     assert.equal(item.body.campaign.items[0].variants[0].current_content.body, "A simple launch update.");
     assert.equal(item.body.campaign.items[0].variants[0].destination_label, "Instagram");
-    // BG-LAUNCH-006: the variant's destination key is disclosed as an opaque UUID. For an item bound to a connected account it is that connection's id, which the same readers already see
-    // in the connections list and which grants nothing on its own (every route re-checks scope and ownership). The Studio needs it to offer "send as a draft" only for a bound item.
-    assert.match(item.body.campaign.items[0].variants[0].destination_key, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.equal(item.body.campaign.items[0].variants[0].destination_key, undefined);
     for (const field of FORBIDDEN_CUSTOMER_DTO_FIELDS) {
       assert.equal(item.body.campaign.items[0].variants[0][field], undefined);
       assert.doesNotMatch(JSON.stringify(item.body), new RegExp(field));

@@ -374,7 +374,8 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       await cmd("approve", { ...target, preview_id: ack.created_ids.preview_ids[0], approved: true });
       const due = new Date(clock.getTime() + 60000);
       const schedule = await cmd("schedule", { ...target, approval_id: (await s.variant(target)).active_approval_id, scheduled_for: due.toISOString(), timezone: "UTC", local_datetime: due.toISOString().slice(0, -1), utc_offset_minutes: 0 });
-      const dispatch = await svc.enqueue(actor, scope, { connection_id: connection.connection_id, campaign_id: s.id, variant_id: variantId, schedule_id: schedule.created_ids.schedule_ids[0], expected_campaign_version: (await s.get()).version, publishing_confirmed: true });
+      // the Studio never learns the item's destination key: the server resolves the bound connection itself
+      const dispatch = await svc.enqueue(actor, scope, { campaign_id: s.id, variant_id: variantId, schedule_id: schedule.created_ids.schedule_ids[0], expected_campaign_version: (await s.get()).version, publishing_confirmed: true });
       const asset = (await pool.query("select * from media_assets where generation_job_id=$1", [job.job_id])).rows[0];
       return { tt, svc, connection, dispatch, job, asset, s, target, due, env };
     }
@@ -473,6 +474,38 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
     });
 
 
+    describe("destination key stays server-side (BG-LAUNCH-006A)", () => {
+      it("the dispatch is bound to the item's own connection, and the connection id in the request is optional but never overrides the binding", async () => {
+        const j = await journey();
+        const row = (await pool.query("select connection_id from social_dispatches where dispatch_id=$1", [j.dispatch.dispatch_id])).rows[0];
+        assert.equal(row.connection_id, j.connection.connection_id);
+        assert.doesNotMatch(JSON.stringify(j.dispatch), /destination_key|connection_id/);
+      });
+      it("an item created WITHOUT a connected account cannot be sent: refused, nothing queued, no key in the refusal", async () => {
+        const j = await journey(); const s = j.s;
+        const added = await campaigns.executeCommand(context, { contract_version: "campaign-spine.v1", idempotency_key: randomUUID(), expected_campaign_version: (await s.get()).version, command_type: "create_content_item", tenant_id: "tenant_a", project_id: "project_a", campaign_id: s.id, payload: { name: "Unbound reel", format: "video", platform: "tiktok", placement: "feed", destination_label: "Nobody", initial_content: { title: null, body: "x", caption: "x", alt_text: "x", asset_refs: [] }  } });
+        const vid = added.created_ids.variant_ids[0];
+        const before = (await pool.query("select count(*)::int n from social_dispatches")).rows[0].n;
+        await assert.rejects(j.svc.enqueue(actor, scope, { campaign_id: s.id, variant_id: vid, schedule_id: randomUUID(), expected_campaign_version: (await s.get()).version, publishing_confirmed: true }), (e) => e instanceof Error && !/destination_key|connection/i.test(e.message), "refused, and the refusal does not name the key");
+        assert.equal((await pool.query("select count(*)::int n from social_dispatches")).rows[0].n, before);
+      });
+      it("a stranger, a non-owner member and another tenant's owner cannot resolve or use the binding", async () => {
+        const j = await journey();
+        const ask = (who, sc) => j.svc.enqueue(who, sc, { campaign_id: j.s.id, variant_id: j.target.variant_id, schedule_id: randomUUID(), expected_campaign_version: 1, publishing_confirmed: true });
+        const stranger = { ...actor, auth_user_id: randomUUID() };
+        await assert.rejects(ask(stranger, scope), (e) => e.code === "RESOURCE_NOT_AVAILABLE" || e.message === "RESOURCE_NOT_AVAILABLE");
+        const member = randomUUID(); await pool.query("insert into auth.users values($1)", [member]); await pool.query("insert into customer_profiles(auth_user_id) values($1)", [member]); await pool.query("insert into tenant_memberships(tenant_id,auth_user_id,role) values('tenant_a',$1,'member')", [member]);
+        await assert.rejects(ask({ ...actor, auth_user_id: member }, scope), (e) => e.code === "RESOURCE_NOT_AVAILABLE" || e.message === "RESOURCE_NOT_AVAILABLE");
+        const other = randomUUID(); await pool.query("insert into auth.users values($1)", [other]); await pool.query("insert into customer_profiles(auth_user_id) values($1)", [other]); await pool.query("insert into tenants(tenant_id,name,created_by) values('tenant_b','Other',$1) on conflict do nothing", [other]); await pool.query("insert into tenant_memberships(tenant_id,auth_user_id,role) values('tenant_b',$1,'owner')", [other]);
+        await assert.rejects(ask({ ...actor, auth_user_id: other }, scope), (e) => e.code === "RESOURCE_NOT_AVAILABLE" || e.message === "RESOURCE_NOT_AVAILABLE");
+        await assert.rejects(ask({ ...actor, auth_user_id: other }, { ...scope, tenant_id: "tenant_b" }), Error);
+      });
+      it("the request still refuses unknown fields and a connection from another account", async () => {
+        const j = await journey();
+        await assert.rejects(j.svc.enqueue(actor, scope, { campaign_id: j.s.id, variant_id: j.target.variant_id, schedule_id: randomUUID(), expected_campaign_version: 1, publishing_confirmed: true, destination_key: randomUUID() }), (e) => e.code === "VALIDATION_ERROR" || e.message === "VALIDATION_ERROR");
+        await assert.rejects(j.svc.enqueue(actor, scope, { connection_id: randomUUID(), campaign_id: j.s.id, variant_id: j.target.variant_id, schedule_id: randomUUID(), expected_campaign_version: 1, publishing_confirmed: true }), Error);
+      });
+    });
     describe("failure recovery", () => {
       const initCalls = (tt) => tt.calls.filter((c) => c.path === "/v2/post/publish/inbox/video/init/").length;
       const putCalls = (tt) => tt.calls.filter((c) => c.method === "PUT").length;

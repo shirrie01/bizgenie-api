@@ -224,8 +224,6 @@ function safeVariant(variant, item, campaign) {
     platform: variant.platform,
     placement: variant.placement,
     destination_label: variant.destination_label,
-    // the connection id this item was created for (BG-LAUNCH-006): not a secret, and it is what lets the Studio offer "send as a draft" only for an item bound to a connected account
-    destination_key: variant.destination_key,
     workflow: platformPublication?'published':variant.workflow,
     platform_publication:platformPublication?{dispatch_id:platformPublication.dispatch_id,provider_publication_id:platformPublication.provider_publication_id,revision_id:platformPublication.revision_id,platform:platformPublication.platform,destination:platformPublication.destination_account,publication_url:platformPublication.publication_url,published_at:platformPublication.published_at,evidence_kind:'platform_api',reconciliation_status:platformPublication.reconciliation_status,dna_id:platformPublication.dna_id}:null,
     current_revision_id: variant.current_revision_id,
