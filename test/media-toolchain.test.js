@@ -33,3 +33,16 @@ test("the self-test passes under process-local isolation and refuses (fails clos
   if (!hasBwrap) assert.deepEqual([hardened.ok, hardened.failure], [false, "INSPECTION_SANDBOX_UNAVAILABLE"]); // never reported as ready
   assert.deepEqual((await runToolchainSelfTest({ isolation: "chroot" })).failure, "UNKNOWN_ISOLATION");
 });
+
+test("the decoder is pinned to H.264: other video codecs are refused before any other decoder can run (BG-LAUNCH-006)", { skip: !have }, async () => {
+  const { execFileSync } = require("node:child_process"); const os = require("node:os"); const fs = require("node:fs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bg-dec-"));
+  try {
+    const mk = (name, codec) => { const f = path.join(dir, name); execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=2", "-c:v", codec, "-an", f]); return fs.readFileSync(f); };
+    const decode = createVideoDecodeCheck({ isolation: "local" });
+    assert.equal((await decode(mk("h264.mp4", "libx264"))).status, "decoded");
+    assert.equal((await decode(mk("vp9.mp4", "libvpx-vp9"))).status, "invalid");
+    assert.equal((await decode(mk("mpeg4.mp4", "mpeg4"))).status, "invalid");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  assert.match(fs.readFileSync(path.join(__dirname, "../src/media/videoDecode.js"), "utf8"), /"-c:v", "h264", "-i"/);
+});

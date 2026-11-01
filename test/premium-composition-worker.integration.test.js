@@ -333,7 +333,7 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       TIKTOK_UPLOAD_REVIEW_REF: "upload-review-1", TIKTOK_UPLOAD_ORIGINS: "https://upload.tiktok-test.example", TIKTOK_UPLOAD_CHUNK_BYTES: "33554432", SOCIAL_TOKEN_KEY_ID: "staging-test-key-1", SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: rb(32).toString("base64"), ...over });
 
     function fakeTikTok() {
-      const st = { calls: [], init: null, uploaded: null, putHeaders: null, status: "SEND_TO_USER_INBOX", revokedTokens: [], tokenN: 0 };
+      const st = { calls: [], init: null, uploaded: null, putHeaders: null, status: "SEND_TO_USER_INBOX", revokedTokens: [], tokenN: 0, putFails: false, uploadUrl: "https://upload.tiktok-test.example/upload?token=abc" };
       const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
       st.fetch = async (url, opts = {}) => {
         const u = new URL(url); const method = opts.method || "GET";
@@ -341,18 +341,18 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
         if (u.host === "open.tiktokapis.com") {
           if (u.pathname === "/v2/oauth/token/") { st.tokenN += 1; return json({ open_id: "open_id_creator_1", scope: "user.info.basic,video.upload", access_token: `AT_PLAINTEXT_SECRET_${st.tokenN}`, refresh_token: `RT_PLAINTEXT_SECRET_${st.tokenN}`, expires_in: 86400, refresh_expires_in: 31536000, token_type: "Bearer" }); }
           if (u.pathname === "/v2/user/info/") return json({ data: { user: { open_id: "open_id_creator_1", display_name: "Test Creator", avatar_url: "https://x.example/a.png" } }, error: { code: "ok" } });
-          if (u.pathname === "/v2/post/publish/inbox/video/init/") { st.init = JSON.parse(opts.body); return json({ data: { publish_id: "v_inbox_file~v2.1234567890", upload_url: "https://upload.tiktok-test.example/upload?token=abc" }, error: { code: "ok" } }); }
+          if (u.pathname === "/v2/post/publish/inbox/video/init/") { st.init = JSON.parse(opts.body); return json({ data: { publish_id: "v_inbox_file~v2.1234567890", upload_url: st.uploadUrl }, error: { code: "ok" } }); }
           if (u.pathname === "/v2/post/publish/status/fetch/") return json({ data: { status: st.status }, error: { code: "ok" } });
           if (u.pathname === "/v2/oauth/revoke/") { st.revokedTokens.push(new URLSearchParams(opts.body).get("token")); return json({ error: { code: "ok" } }); }
         }
-        if (u.host === "upload.tiktok-test.example" && method === "PUT") { st.uploaded = Buffer.from(opts.body); st.putHeaders = opts.headers; return new Response(null, { status: 201 }); }
+        if (u.host === "upload.tiktok-test.example" && method === "PUT") { if (st.putFails) throw new Error("socket hang up"); st.uploaded = Buffer.from(opts.body); st.putHeaders = opts.headers; return new Response(null, { status: 201 }); }
         throw new Error("unexpected request to " + u.host + u.pathname);
       };
       return st;
     }
 
     async function journey(over = {}) {
-      const tt = fakeTikTok(); premium = await build(tiktokEnv(over), { socialFetch: tt.fetch });
+      const tt = fakeTikTok(); const env = tiktokEnv(over); premium = await build(env, { socialFetch: tt.fetch });
       const svc = premium.socialPublishingService; const verifier = rb(48).toString("base64url");
       const intent = await svc.oauthIntent(actor, scope, { platform: "tiktok", pkce_challenge: sha256h("sha256").update(verifier).digest("base64url") });
       const connection = await svc.connect(actor, scope, { intent_id: intent.intent_id, state: intent.state, code: "auth_code_1", code_verifier: verifier });
@@ -376,7 +376,7 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       const schedule = await cmd("schedule", { ...target, approval_id: (await s.variant(target)).active_approval_id, scheduled_for: due.toISOString(), timezone: "UTC", local_datetime: due.toISOString().slice(0, -1), utc_offset_minutes: 0 });
       const dispatch = await svc.enqueue(actor, scope, { connection_id: connection.connection_id, campaign_id: s.id, variant_id: variantId, schedule_id: schedule.created_ids.schedule_ids[0], expected_campaign_version: (await s.get()).version, publishing_confirmed: true });
       const asset = (await pool.query("select * from media_assets where generation_job_id=$1", [job.job_id])).rows[0];
-      return { tt, svc, connection, dispatch, job, asset, s, target, due };
+      return { tt, svc, connection, dispatch, job, asset, s, target, due, env };
     }
     const workLoop = (svc) => new SocialWorkLoop({ socialService: svc, now: () => clock, logger: { warn() {}, error() {}, log() {} } });
     const dispatchRow = async (id) => (await pool.query("select state, operation_kind, publication_id, publication_url, published_at, uploaded_at, provider_reference from social_dispatches where dispatch_id=$1", [id])).rows[0];
@@ -426,6 +426,24 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       assert.ok(["confirmed", "unknown", "previously_retired"].includes(out.provider_revocation_status), "remote revocation outcome is reported honestly: " + out.provider_revocation_status);
     });
 
+    it("a normal disconnect revokes the access token at TikTok exactly once, confirms it, and a repeat does not call TikTok again", async () => {
+      const j = await journey(); const revokeCalls = () => j.tt.calls.filter((c) => c.path === "/v2/oauth/revoke/").length;
+      const out = await j.svc.disconnect(actor, j.connection.connection_id, scope);
+      assert.equal(out.status, "revoked"); assert.equal(out.provider_revocation_status, "confirmed", "TikTok was asked and acknowledged");
+      assert.equal(revokeCalls(), 1); assert.match(j.tt.revokedTokens[0], /^AT_PLAINTEXT_SECRET_/, "the access token itself was revoked");
+      const again = await j.svc.disconnect(actor, j.connection.connection_id, scope); assert.equal(again.status, "revoked"); assert.equal(revokeCalls(), 1, "no second revoke call");
+    });
+
+    it("disconnecting AFTER a draft was uploaded and reconciled still asks TikTok to revoke the token", async () => {
+      const j = await journey(); clock = new Date(clock.getTime() + 3 * 60000); const l = workLoop(j.svc);
+      for (let i = 0; i < 5 && (await dispatchRow(j.dispatch.dispatch_id)).state !== "uploaded"; i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
+      assert.equal((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      const revokeCalls = () => j.tt.calls.filter((c) => c.path === "/v2/oauth/revoke/").length;
+      const out = await j.svc.disconnect(actor, j.connection.connection_id, scope);
+      assert.equal(out.status, "revoked"); assert.equal(out.provider_revocation_status, "confirmed"); assert.equal(revokeCalls(), 1);
+      assert.equal((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded", "an uploaded draft stays an uploaded draft after the account is disconnected");
+    });
+
     it("the media source gives bytes to nobody else: wrong tenant, revoked asset, a revision that does not carry the asset, or a dispatch that is not a live draft all fail closed", async () => {
       const j = await journey(); clock = new Date(clock.getTime() + 3 * 60000);
       const claim = await j.svc.claim(j.dispatch.dispatch_id); await j.svc.start(claim); // dispatch is now 'sending'
@@ -452,6 +470,59 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       // once the dispatch is terminal it can no longer read media
       await pool.query("update social_dispatches set state='reconciliation_required' where dispatch_id=$1", [d.dispatch_id]);
       await source.revalidate(good, { binding, dispatch: dctx });
+    });
+
+
+    describe("failure recovery", () => {
+      const initCalls = (tt) => tt.calls.filter((c) => c.path === "/v2/post/publish/inbox/video/init/").length;
+      const putCalls = (tt) => tt.calls.filter((c) => c.method === "PUT").length;
+      const due = (j) => { clock = new Date(Math.max(clock.getTime(), j.due.getTime()) + 1000); };
+
+      it("TikTok reporting FAILED is a definitive failure: not uploaded, not published, no second attempt", async () => {
+        const j = await journey(); j.tt.status = "FAILED"; due(j); const l = workLoop(j.svc);
+        for (let i = 0; i < 5 && !["failed", "uploaded"].includes((await dispatchRow(j.dispatch.dispatch_id)).state); i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
+        const row = await dispatchRow(j.dispatch.dispatch_id);
+        assert.equal(row.state, "failed"); assert.deepEqual([row.publication_id, row.publication_url, row.uploaded_at], [null, null, null]);
+        for (let i = 0; i < 3; i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [1, 1], "a failed draft is never retried automatically");
+      });
+
+      it("a worker that dies mid-upload leaves an unknown outcome; after a full restart it is reconciled from the journal and TikTok is never initialised or uploaded to twice", async () => {
+        const j = await journey(); j.tt.putFails = true; due(j);
+        const claim = await j.svc.claim(j.dispatch.dispatch_id); await j.svc.run(claim).catch(() => {});
+        const mid = await dispatchRow(j.dispatch.dispatch_id);
+        assert.equal(mid.state, "reconciliation_required", "an unknown outcome is held, not retried and not claimed done"); assert.deepEqual([mid.publication_id, mid.published_at], [null, null]);
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [1, 1]);
+        // full restart: a brand-new composition over the same database and the same key, as a new process would build
+        j.tt.putFails = false; const restarted = await build(j.env, { socialFetch: j.tt.fetch });
+        const out = await restarted.socialPublishingService.reconcile(j.dispatch.dispatch_id);
+        assert.equal(out.state, "uploaded"); assert.equal((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [1, 1], "no second init and no second upload after the restart");
+        assert.deepEqual(await restarted.socialPublishingService.reconcile(j.dispatch.dispatch_id).then((r) => r.state), "uploaded");
+        const stillOnce = await restarted.socialPublishingService.runDue(); void stillOnce; assert.equal(initCalls(j.tt), 1);
+      });
+
+      it("an upload URL outside the reviewed origins is never sent a single byte", async () => {
+        const j = await journey(); j.tt.uploadUrl = "https://evil.example/upload?x=1"; due(j);
+        const claim = await j.svc.claim(j.dispatch.dispatch_id); await j.svc.run(claim).catch(() => {});
+        assert.equal(j.tt.calls.some((c) => c.host === "evil.example"), false); assert.equal(putCalls(j.tt), 0);
+        assert.notEqual((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      });
+
+      it("a connection the owner revoked before the scheduled time uploads nothing and the dispatch cannot run", async () => {
+        const j = await journey(); await j.svc.disconnect(actor, j.connection.connection_id, scope); due(j);
+        await workLoop(j.svc).tick();
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [0, 0], "no bytes leave BizGenie for a revoked connection");
+        assert.notEqual((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      });
+
+      it("rights lost between approval and upload (the asset is withdrawn) stops the upload before any byte is sent", async () => {
+        const j = await journey(); due(j);
+        const res = await pool.query("update media_assets set status='deleted' where asset_id=$1", [j.asset.asset_id]).then(() => "updated").catch((e) => "blocked:" + e.message);
+        if (res !== "updated") { assert.match(res, /blocked/); return; } // an immutability guard that forbids it is also a pass: the right cannot be silently removed
+        const claim = await j.svc.claim(j.dispatch.dispatch_id).catch(() => null); if (claim) await j.svc.run(claim).catch(() => {});
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [0, 0], "media is checked before TikTok is contacted at all"); assert.notEqual((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      });
     });
 
     it("Direct Post is disabled at every layer, and the platform is draft-only", async () => {

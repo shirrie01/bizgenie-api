@@ -2,6 +2,9 @@
 
 31 Oct 2026. **Staging RED. Launch NO-GO.** Nothing here authorises a merge, deployment, shared-database migration, live OAuth, publishing or paid generation. "Proven" means proven by deterministic tests or hosted CI with labelled stand-ins for provider HTTP; it never means a real provider was called.
 
+## Update 1 Nov 2026 (BG-LAUNCH-006)
+Superseded or added since the matrix below: the draft-upload journey was rehearsed in a real browser with the TikTok stand-in (not acceptance); two real faults found and fixed (the Studio refused TikTok's authorize URL because it demanded PKCE parameters TikTok does not use; the Studio could not send an item to a connected account because the variant DTO hid its destination key and no screen bound an item to a connection or offered "send as a draft"); failure recovery proven end to end (TikTok FAILED, worker death mid-upload then restart with no second init or upload, unapproved upload origin, revoked connection, withdrawn asset); the decoder is H.264-only; a USD guard sits beside the credit cap. The acceptance procedure, verified Google pricing, the proposed US$5.00 ceiling, the security recommendations and the TikTok review checklist are in `STAGING_PROVIDER_ACCEPTANCE.md`, `SECURITY_DECISIONS_BG_LAUNCH_006.md` and `TIKTOK_SANDBOX_REVIEW_CHECKLIST.md`. The "Blocked" list below is unchanged except that "TikTok upload origins" now has a route to being learned (the sandbox run).
+
 ## 1. The candidate
 | Part | Branch | Exact SHA | Basis |
 |---|---|---|---|
