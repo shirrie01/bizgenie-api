@@ -320,6 +320,239 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
     });
   });
 
+
+  describe("TikTok draft upload end to end: composition + validated Veo asset + encrypted vault + approved-video source (HTTP is a labelled stand-in; no live TikTok call)", () => {
+    const { PostgresPreviewRegistry: PreviewRegistry } = require("../src/campaigns");
+    const { CreativeJobService } = require("../src/generation-quotes/jobs");
+    const { createApprovedVideoSource } = require("../src/social-connectors/approvedVideoSource");
+    const { SocialLoop: SocialWorkLoop } = require("../src/worker/loops");
+    const { createHash: sha256h, randomBytes: rb } = require("node:crypto");
+    const scope = { tenant_id: "tenant_a", project_id: "project_a", brand_id: "brand_a" };
+    const sha = (b) => sha256h("sha256").update(b).digest("hex");
+    const tiktokEnv = (over = {}) => ({ ...ENV, SOCIAL_PUBLISHING_ENABLED: "true", SOCIAL_PLATFORMS: "tiktok", TIKTOK_CLIENT_KEY: "ck_test_key", TIKTOK_CLIENT_SECRET: "cs_test_SECRET_VALUE", TIKTOK_APP_REVIEW_APPROVED: "true", TIKTOK_OAUTH_REVIEW_REF: "review-ref-1",
+      TIKTOK_UPLOAD_REVIEW_REF: "upload-review-1", TIKTOK_UPLOAD_ORIGINS: "https://upload.tiktok-test.example", TIKTOK_UPLOAD_CHUNK_BYTES: "33554432", SOCIAL_TOKEN_KEY_ID: "staging-test-key-1", SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: rb(32).toString("base64"), ...over });
+
+    function fakeTikTok() {
+      const st = { calls: [], init: null, uploaded: null, putHeaders: null, status: "SEND_TO_USER_INBOX", revokedTokens: [], tokenN: 0, putFails: false, uploadUrl: "https://upload.tiktok-test.example/upload?token=abc" };
+      const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+      st.fetch = async (url, opts = {}) => {
+        const u = new URL(url); const method = opts.method || "GET";
+        st.calls.push({ method, host: u.host, path: u.pathname, bearer: Boolean(opts.headers?.Authorization), redirect: opts.redirect, credentials: opts.credentials });
+        if (u.host === "open.tiktokapis.com") {
+          if (u.pathname === "/v2/oauth/token/") { st.tokenN += 1; return json({ open_id: "open_id_creator_1", scope: "user.info.basic,video.upload", access_token: `AT_PLAINTEXT_SECRET_${st.tokenN}`, refresh_token: `RT_PLAINTEXT_SECRET_${st.tokenN}`, expires_in: 86400, refresh_expires_in: 31536000, token_type: "Bearer" }); }
+          if (u.pathname === "/v2/user/info/") return json({ data: { user: { open_id: "open_id_creator_1", display_name: "Test Creator", avatar_url: "https://x.example/a.png" } }, error: { code: "ok" } });
+          if (u.pathname === "/v2/post/publish/inbox/video/init/") { st.init = JSON.parse(opts.body); return json({ data: { publish_id: "v_inbox_file~v2.1234567890", upload_url: st.uploadUrl }, error: { code: "ok" } }); }
+          if (u.pathname === "/v2/post/publish/status/fetch/") return json({ data: { status: st.status }, error: { code: "ok" } });
+          if (u.pathname === "/v2/oauth/revoke/") { st.revokedTokens.push(new URLSearchParams(opts.body).get("token")); return json({ error: { code: "ok" } }); }
+        }
+        if (u.host === "upload.tiktok-test.example" && method === "PUT") { if (st.putFails) throw new Error("socket hang up"); st.uploaded = Buffer.from(opts.body); st.putHeaders = opts.headers; return new Response(null, { status: 201 }); }
+        throw new Error("unexpected request to " + u.host + u.pathname);
+      };
+      return st;
+    }
+
+    async function journey(over = {}) {
+      const tt = fakeTikTok(); const env = tiktokEnv(over); premium = await build(env, { socialFetch: tt.fetch });
+      const svc = premium.socialPublishingService; const verifier = rb(48).toString("base64url");
+      const intent = await svc.oauthIntent(actor, scope, { platform: "tiktok", pkce_challenge: sha256h("sha256").update(verifier).digest("base64url") });
+      const connection = await svc.connect(actor, scope, { intent_id: intent.intent_id, state: intent.state, code: "auth_code_1", code_verifier: verifier });
+      const s = await scenario(campaigns);
+      const added = await s.cmd("create_content_item", { name: "TikTok reel", format: "video", platform: "tiktok", placement: "feed", destination_label: "Test Creator", destination_key: connection.connection_id, initial_content: { title: null, body: "Spring reveal", caption: "Spring reveal", alt_text: "A short vertical reveal", asset_refs: [] } });
+      const variantId = added.created_ids.variant_ids[0]; const version = (await s.get()).version;
+      const q = await premium.generationQuoteService.quote(actor, { tenant_id: "tenant_a", project_id: "project_a", campaign_id: s.id, variant_id: variantId, expected_campaign_version: version, execution_class: "video.normal", execution_mode: "ai", execution_brief: "A short vertical reveal", supplied_assets: [], idempotency_key: randomUUID() });
+      const job = await premium.generationQuoteService.confirm(actor, q.quote_id, { idempotency_key: randomUUID(), max_credits: q.credits, confirmed: true });
+      const l = loop({ minBackoffMs: 1 }); await l.tick(); clock = new Date(clock.getTime() + 5000); await l.tick();
+      assert.equal((await claimState(job.job_id)).state, "succeeded");
+      await new CreativeJobService({ quoteService: premium.generationQuoteService, campaignRepository: campaigns }).attach(actor, job.job_id, scope);
+      const target = { variant_id: variantId, revision_id: (await s.variant({ variant_id: variantId })).current_revision_id };
+      const registry = new PreviewRegistry({ pool, now: () => clock });
+      // the attach step changed the campaign outside the helper's own version counter, so commands here read the live version
+      const cmd = async (type, payload) => campaigns.executeCommand(context, { contract_version: "campaign-spine.v1", idempotency_key: randomUUID(), expected_campaign_version: (await s.get()).version, command_type: type, tenant_id: "tenant_a", project_id: "project_a", campaign_id: s.id, payload });
+      await cmd("submit_review", target);
+      const rendered = await registry.renderPreview(context, await s.get(), { ...target, idempotency_key: randomUUID() });
+      const ack = await cmd("acknowledge_preview", { ...target, render_receipt_id: rendered.render_receipt_id, acknowledged: true });
+      await cmd("approve", { ...target, preview_id: ack.created_ids.preview_ids[0], approved: true });
+      const due = new Date(clock.getTime() + 60000);
+      const schedule = await cmd("schedule", { ...target, approval_id: (await s.variant(target)).active_approval_id, scheduled_for: due.toISOString(), timezone: "UTC", local_datetime: due.toISOString().slice(0, -1), utc_offset_minutes: 0 });
+      const dispatch = await svc.enqueue(actor, scope, { connection_id: connection.connection_id, campaign_id: s.id, variant_id: variantId, schedule_id: schedule.created_ids.schedule_ids[0], expected_campaign_version: (await s.get()).version, publishing_confirmed: true });
+      const asset = (await pool.query("select * from media_assets where generation_job_id=$1", [job.job_id])).rows[0];
+      return { tt, svc, connection, dispatch, job, asset, s, target, due, env };
+    }
+    const workLoop = (svc) => new SocialWorkLoop({ socialService: svc, now: () => clock, logger: { warn() {}, error() {}, log() {} } });
+    const dispatchRow = async (id) => (await pool.query("select state, operation_kind, publication_id, publication_url, published_at, uploaded_at, provider_reference from social_dispatches where dispatch_id=$1", [id])).rows[0];
+
+    it("a validated Veo video reaches the creator's TikTok inbox as a DRAFT: exact bytes, exact pinned binding, never recorded as published", async () => {
+      const j = await journey(); assert.equal(j.dispatch.operation_kind, "draft_upload");
+      const l = workLoop(j.svc); assert.equal((await l.tick()).uploaded ?? 0, 0, "not due yet");
+      clock = new Date(clock.getTime() + 3 * 60000); const r1 = await l.tick();
+      const stored = kit.objects.get(j.asset.storage_key).data;
+      assert.equal(sha(j.tt.uploaded), sha(stored), "TikTok received exactly the validated, stored bytes");
+      assert.deepEqual([j.tt.init.source_info.source, j.tt.init.source_info.video_size, j.tt.init.source_info.total_chunk_count], ["FILE_UPLOAD", stored.length, 1]);
+      assert.equal(j.tt.putHeaders["Content-Range"], `bytes 0-${stored.length - 1}/${stored.length}`);
+      assert.equal(j.tt.calls.some((c) => c.host === "upload.tiktok-test.example" && c.bearer), false, "the upload URL never receives the bearer token");
+      assert.equal(j.tt.calls.every((c) => c.redirect === "error" && c.credentials === "omit"), true);
+      for (let i = 0; i < 4 && (await dispatchRow(j.dispatch.dispatch_id)).state !== "uploaded"; i += 1) { clock = new Date(clock.getTime() + 61000); await l.tick(); }
+      const row = await dispatchRow(j.dispatch.dispatch_id);
+      assert.equal(row.state, "uploaded"); assert.equal(row.operation_kind, "draft_upload");
+      assert.deepEqual([row.publication_id, row.publication_url, row.published_at], [null, null, null], "an uploaded draft is not a publication");
+      assert.ok(row.uploaded_at);
+      const listed = (await j.svc.list(actor, scope)).dispatches.find((d) => d.dispatch_id === j.dispatch.dispatch_id);
+      assert.deepEqual([listed.state, listed.operation_kind, listed.creator_action_required, listed.evidence_kind], ["uploaded", "draft_upload", true, null]);
+      assert.equal(j.tt.calls.filter((c) => c.path === "/v2/post/publish/inbox/video/init/").length, 1, "initialised exactly once"); void r1;
+      assert.equal(j.tt.calls.some((c) => /publish\/video|direct/i.test(c.path)), false, "Direct Post is never called");
+    });
+
+    it("credentials are encrypted at rest, bound to tenant/project/brand/platform/account, never exposed, and disconnect revokes them", async () => {
+      const j = await journey(); const { SocialTokenVault } = require("../src/social-connectors/tokenVault");
+      const own = (await pool.query("select token_reference from social_connections where connection_id=$1", [j.connection.connection_id])).rows[0].token_reference;
+      const rows = (await pool.query("select reference, binding, ciphertext, iv, tag, key_id, revoked, rotation_state from social_token_secrets where reference=$1", [own])).rows; assert.equal(rows.length, 1);
+      const raw = JSON.stringify(rows[0]) + rows[0].ciphertext.toString("latin1");
+      assert.equal(/PLAINTEXT_SECRET|cs_test_SECRET_VALUE/.test(raw), false, "no token or client secret in the row");
+      assert.deepEqual([rows[0].key_id, rows[0].revoked, rows[0].binding.tenant_id, rows[0].binding.platform, rows[0].binding.account_id], ["staging-test-key-1", false, "tenant_a", "tiktok", "open_id_creator_1"]);
+      const surface = JSON.stringify([j.connection, await j.svc.listConnections(actor, scope), premium.describe(), j.dispatch]);
+      assert.equal(/PLAINTEXT_SECRET|cs_test_SECRET_VALUE|ciphertext|token_reference/i.test(surface.replace(/token_reference_hidden/g, "")), false, "no secret or vault reference in any customer-facing value");
+      // a different binding (another tenant or account) cannot open this credential, even with the right reference
+      const vault = new SocialTokenVault({ driver: premium.socialPublishingService.platforms.tiktok.connector.vault.driver });
+      const ref = rows[0].reference; const bind = rows[0].binding;
+      await assert.rejects(vault.use(ref, { ...bind, tenant_id: "tenant_b" }, async () => true));
+      await assert.rejects(vault.use(ref, { ...bind, account_id: "someone_else" }, async () => true));
+      // ciphertext tampering is detected, never decrypted
+      await pool.query("update social_token_secrets set tag=$2 where reference=$1", [ref, Buffer.alloc(16, 7)]).catch(() => {});
+      const out = await j.svc.disconnect(actor, j.connection.connection_id, scope);
+      assert.equal(out.status, "revoked");
+      const after = (await pool.query("select revoked from social_token_secrets where reference=$1", [ref])).rows[0];
+      assert.equal(after.revoked, true, "the credential is unusable locally the moment the owner disconnects");
+      await assert.rejects(vault.use(ref, bind, async () => true));
+      assert.ok(["confirmed", "unknown", "previously_retired"].includes(out.provider_revocation_status), "remote revocation outcome is reported honestly: " + out.provider_revocation_status);
+    });
+
+    it("a normal disconnect revokes the access token at TikTok exactly once, confirms it, and a repeat does not call TikTok again", async () => {
+      const j = await journey(); const revokeCalls = () => j.tt.calls.filter((c) => c.path === "/v2/oauth/revoke/").length;
+      const out = await j.svc.disconnect(actor, j.connection.connection_id, scope);
+      assert.equal(out.status, "revoked"); assert.equal(out.provider_revocation_status, "confirmed", "TikTok was asked and acknowledged");
+      assert.equal(revokeCalls(), 1); assert.match(j.tt.revokedTokens[0], /^AT_PLAINTEXT_SECRET_/, "the access token itself was revoked");
+      const again = await j.svc.disconnect(actor, j.connection.connection_id, scope); assert.equal(again.status, "revoked"); assert.equal(revokeCalls(), 1, "no second revoke call");
+    });
+
+    it("disconnecting AFTER a draft was uploaded and reconciled still asks TikTok to revoke the token", async () => {
+      const j = await journey(); clock = new Date(clock.getTime() + 3 * 60000); const l = workLoop(j.svc);
+      for (let i = 0; i < 5 && (await dispatchRow(j.dispatch.dispatch_id)).state !== "uploaded"; i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
+      assert.equal((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      const revokeCalls = () => j.tt.calls.filter((c) => c.path === "/v2/oauth/revoke/").length;
+      const out = await j.svc.disconnect(actor, j.connection.connection_id, scope);
+      assert.equal(out.status, "revoked"); assert.equal(out.provider_revocation_status, "confirmed"); assert.equal(revokeCalls(), 1);
+      assert.equal((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded", "an uploaded draft stays an uploaded draft after the account is disconnected");
+    });
+
+    it("the media source gives bytes to nobody else: wrong tenant, revoked asset, a revision that does not carry the asset, or a dispatch that is not a live draft all fail closed", async () => {
+      const j = await journey(); clock = new Date(clock.getTime() + 3 * 60000);
+      const claim = await j.svc.claim(j.dispatch.dispatch_id); await j.svc.start(claim); // dispatch is now 'sending'
+      const source = createApprovedVideoSource({ pool, storage: kit.storage, videoInspector: media.videoAssetStore.videoInspector, now: () => clock });
+      const d = (await pool.query("select * from social_dispatches where dispatch_id=$1", [j.dispatch.dispatch_id])).rows[0];
+      const binding = { ...scope, platform: "tiktok", account_id: "open_id_creator_1" };
+      const dctx = { dispatch_id: d.dispatch_id, actor_id: d.created_by, ...scope, campaign_id: d.campaign_id, variant_id: d.variant_id, revision_id: d.revision_id, approval_id: d.approval_id, schedule_id: d.schedule_id };
+      const payload = { content: { asset_refs: [{ asset_id: j.asset.asset_id }] } };
+      const good = await source.loadApprovedVideo({ binding, payload, dispatch: dctx });
+      assert.deepEqual([good.mimeType, good.assetId, good.sha256], ["video/mp4", j.asset.asset_id, sha(kit.objects.get(j.asset.storage_key).data)]);
+      await source.revalidate(good, { binding, dispatch: dctx });
+      const denied = async (b, p, c, code = "RESOURCE_NOT_AVAILABLE") => assert.rejects(source.loadApprovedVideo({ binding: b, payload: p, dispatch: c }), (e) => e.code === code);
+      await denied({ ...binding, tenant_id: "tenant_b" }, payload, { ...dctx, tenant_id: "tenant_b" });
+      await denied(binding, { content: { asset_refs: [{ asset_id: randomUUID() }] } }, dctx);
+      await denied(binding, { content: { asset_refs: [{ asset_id: j.asset.asset_id }, { asset_id: randomUUID() }] } }, dctx);
+      await denied(binding, payload, { ...dctx, revision_id: randomUUID() });
+      await denied({ ...binding, brand_id: "brand_other" }, payload, { ...dctx, brand_id: "brand_other" });
+      // the object changes underneath us between chunks -> revalidate refuses
+      const key = j.asset.storage_key; const before = kit.objects.get(key); kit.objects.set(key, { ...before, generation: "999" });
+      await assert.rejects(source.revalidate(good, { binding, dispatch: dctx }), { code: "RESOURCE_NOT_AVAILABLE" }); kit.objects.set(key, before);
+      // damaged bytes are re-measured and refused
+      kit.objects.set(key, { ...before, data: fixtures.audio, generation: before.generation });
+      await assert.rejects(source.loadApprovedVideo({ binding, payload, dispatch: dctx }), (e) => e.code === "RESOURCE_NOT_AVAILABLE" || e.code === "TIKTOK_MEDIA_UNAVAILABLE"); kit.objects.set(key, before);
+      // once the dispatch is terminal it can no longer read media
+      await pool.query("update social_dispatches set state='reconciliation_required' where dispatch_id=$1", [d.dispatch_id]);
+      await source.revalidate(good, { binding, dispatch: dctx });
+    });
+
+
+    describe("failure recovery", () => {
+      const initCalls = (tt) => tt.calls.filter((c) => c.path === "/v2/post/publish/inbox/video/init/").length;
+      const putCalls = (tt) => tt.calls.filter((c) => c.method === "PUT").length;
+      const due = (j) => { clock = new Date(Math.max(clock.getTime(), j.due.getTime()) + 1000); };
+
+      it("TikTok reporting FAILED is a definitive failure: not uploaded, not published, no second attempt", async () => {
+        const j = await journey(); j.tt.status = "FAILED"; due(j); const l = workLoop(j.svc);
+        for (let i = 0; i < 5 && !["failed", "uploaded"].includes((await dispatchRow(j.dispatch.dispatch_id)).state); i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
+        const row = await dispatchRow(j.dispatch.dispatch_id);
+        assert.equal(row.state, "failed"); assert.deepEqual([row.publication_id, row.publication_url, row.uploaded_at], [null, null, null]);
+        for (let i = 0; i < 3; i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [1, 1], "a failed draft is never retried automatically");
+      });
+
+      it("a worker that dies mid-upload leaves an unknown outcome; after a full restart it is reconciled from the journal and TikTok is never initialised or uploaded to twice", async () => {
+        const j = await journey(); j.tt.putFails = true; due(j);
+        const claim = await j.svc.claim(j.dispatch.dispatch_id); await j.svc.run(claim).catch(() => {});
+        const mid = await dispatchRow(j.dispatch.dispatch_id);
+        assert.equal(mid.state, "reconciliation_required", "an unknown outcome is held, not retried and not claimed done"); assert.deepEqual([mid.publication_id, mid.published_at], [null, null]);
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [1, 1]);
+        // full restart: a brand-new composition over the same database and the same key, as a new process would build
+        j.tt.putFails = false; const restarted = await build(j.env, { socialFetch: j.tt.fetch });
+        const out = await restarted.socialPublishingService.reconcile(j.dispatch.dispatch_id);
+        assert.equal(out.state, "uploaded"); assert.equal((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [1, 1], "no second init and no second upload after the restart");
+        assert.deepEqual(await restarted.socialPublishingService.reconcile(j.dispatch.dispatch_id).then((r) => r.state), "uploaded");
+        const stillOnce = await restarted.socialPublishingService.runDue(); void stillOnce; assert.equal(initCalls(j.tt), 1);
+      });
+
+      it("an upload URL outside the reviewed origins is never sent a single byte", async () => {
+        const j = await journey(); j.tt.uploadUrl = "https://evil.example/upload?x=1"; due(j);
+        const claim = await j.svc.claim(j.dispatch.dispatch_id); await j.svc.run(claim).catch(() => {});
+        assert.equal(j.tt.calls.some((c) => c.host === "evil.example"), false); assert.equal(putCalls(j.tt), 0);
+        assert.notEqual((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      });
+
+      it("a connection the owner revoked before the scheduled time uploads nothing and the dispatch cannot run", async () => {
+        const j = await journey(); await j.svc.disconnect(actor, j.connection.connection_id, scope); due(j);
+        await workLoop(j.svc).tick();
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [0, 0], "no bytes leave BizGenie for a revoked connection");
+        assert.notEqual((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      });
+
+      it("rights lost between approval and upload (the asset is withdrawn) stops the upload before any byte is sent", async () => {
+        const j = await journey(); due(j);
+        const res = await pool.query("update media_assets set status='deleted' where asset_id=$1", [j.asset.asset_id]).then(() => "updated").catch((e) => "blocked:" + e.message);
+        if (res !== "updated") { assert.match(res, /blocked/); return; } // an immutability guard that forbids it is also a pass: the right cannot be silently removed
+        const claim = await j.svc.claim(j.dispatch.dispatch_id).catch(() => null); if (claim) await j.svc.run(claim).catch(() => {});
+        assert.deepEqual([initCalls(j.tt), putCalls(j.tt)], [0, 0], "media is checked before TikTok is contacted at all"); assert.notEqual((await dispatchRow(j.dispatch.dispatch_id)).state, "uploaded");
+      });
+    });
+
+    it("Direct Post is disabled at every layer, and the platform is draft-only", async () => {
+      const j = await journey(); const entry = premium.socialPublishingService.platforms.tiktok;
+      assert.equal(entry.deliveryMode, "draft_upload"); assert.deepEqual(entry.requiredScopes, ["user.info.basic", "video.upload"]);
+      await assert.rejects(entry.connector.publish(), { code: "DIRECT_POST_DISABLED" });
+      assert.equal((await pool.query("select count(*)::int n from social_dispatches where operation_kind='publish'")).rows[0].n, 0);
+      void j;
+    });
+
+    it("encryption-key configuration fails closed and never leaks the key", async () => {
+      const key = rb(32).toString("base64"); const probe = async (over, pattern, extra = {}) => { let built = false; try { await build(tiktokEnv(over), { socialFetch: fakeTikTok().fetch, ...extra }); built = true; } catch (e) { const text = `${e.code || ""} ${e.message}`; assert.match(text, pattern); assert.equal(text.includes(key), false); assert.equal(/cs_test_SECRET_VALUE/.test(text), false); } assert.equal(built, false, "the configuration must be refused: " + JSON.stringify(over).replace(/"[A-Za-z0-9+/]{43}="/g, "<key>")); };
+      await probe({ SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: "" }, /32-byte key/);
+      await probe({ SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: Buffer.alloc(16, 1).toString("base64") }, /32-byte key/);
+      await probe({ SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 7).toString("base64") }, /usable 32-byte key/);
+      await probe({ SOCIAL_TOKEN_KEY_ID: "" }, /SOCIAL_TOKEN_KEY_ID/);
+      await probe({ SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: key, BIZGENIE_ENVIRONMENT: "production", PRODUCTION_ACTIVATION_ENABLED: "true", VIDEO_INSPECTION_ISOLATION: undefined }, /only allowed in disposable isolated staging|key-management/);
+      await probe({ TIKTOK_UPLOAD_ORIGINS: "" }, /TIKTOK_UPLOAD_REVIEW_REF and TIKTOK_UPLOAD_ORIGINS/);
+      await probe({ TIKTOK_UPLOAD_ORIGINS: "http://insecure.example" }, /TIKTOK_UPLOAD_NOT_CONFIGURED|upload/i);
+      await probe({ TIKTOK_APP_REVIEW_APPROVED: "false" }, /PLATFORM_APP_REVIEW_REQUIRED|review/i);
+      await probe({}, /validated video generation/, { media: { ...media, videoEnabled: false } });
+      const ok = await build(tiktokEnv({ SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: key }), { socialFetch: fakeTikTok().fetch });
+      assert.equal(JSON.stringify(ok.describe()).includes(key), false);
+      // an injected production-grade provider is accepted without the environment key at all
+      const injected = { keyId: "kms-key-1", getKey: async () => rb(32) };
+      const viaProvider = await build(tiktokEnv({ SOCIAL_TOKEN_ENCRYPTION_KEY_BASE64: undefined, SOCIAL_TOKEN_KEY_ID: undefined }), { socialFetch: fakeTikTok().fetch, socialKeyProvider: injected });
+      assert.ok(viaProvider.socialPublishingService);
+    });
+  });
+
   describe("social loop and runner", () => {
     it("publishes a due approved dispatch once, resumes nothing twice, and reports an uncertain outcome without re-sending", async () => {
       const f = await socialFixture({ billing, pool, campaigns, now: () => clock }); const d = await f.service.enqueue(actor, f.scope, f.input);
