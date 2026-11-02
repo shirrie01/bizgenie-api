@@ -339,7 +339,7 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
         const u = new URL(url); const method = opts.method || "GET";
         st.calls.push({ method, host: u.host, path: u.pathname, bearer: Boolean(opts.headers?.Authorization), redirect: opts.redirect, credentials: opts.credentials });
         if (u.host === "open.tiktokapis.com") {
-          if (u.pathname === "/v2/oauth/token/") { st.tokenN += 1; return json({ open_id: "open_id_creator_1", scope: "user.info.basic,video.upload", access_token: `AT_PLAINTEXT_SECRET_${st.tokenN}`, refresh_token: `RT_PLAINTEXT_SECRET_${st.tokenN}`, expires_in: 86400, refresh_expires_in: 31536000, token_type: "Bearer" }); }
+          if (u.pathname === "/v2/oauth/token/") { st.tokenN += 1; st.tokenForm = new URLSearchParams(opts.body); return json({ open_id: "open_id_creator_1", scope: "user.info.basic,video.upload", access_token: `AT_PLAINTEXT_SECRET_${st.tokenN}`, refresh_token: `RT_PLAINTEXT_SECRET_${st.tokenN}`, expires_in: 86400, refresh_expires_in: 31536000, token_type: "Bearer" }); }
           if (u.pathname === "/v2/user/info/") return json({ data: { user: { open_id: "open_id_creator_1", display_name: "Test Creator", avatar_url: "https://x.example/a.png" } }, error: { code: "ok" } });
           if (u.pathname === "/v2/post/publish/inbox/video/init/") { st.init = JSON.parse(opts.body); return json({ data: { publish_id: "v_inbox_file~v2.1234567890", upload_url: st.uploadUrl }, error: { code: "ok" } }); }
           if (u.pathname === "/v2/post/publish/status/fetch/") return json({ data: { status: st.status }, error: { code: "ok" } });
@@ -474,6 +474,37 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
     });
 
 
+    describe("staging callback host (BG-LAUNCH-008)", () => {
+      const connectVia = async (over) => {
+        const tt = fakeTikTok(); premium = await build(tiktokEnv(over), { socialFetch: tt.fetch });
+        const svc = premium.socialPublishingService; const verifier = rb(48).toString("base64url");
+        const intent = await svc.oauthIntent(actor, scope, { platform: "tiktok", pkce_challenge: sha256h("sha256").update(verifier).digest("base64url") });
+        return { tt, svc, verifier, intent };
+      };
+      it("by default the redirect URI is still the bare domain", async () => {
+        const { intent } = await connectVia({});
+        assert.equal(new URL(intent.authorize_url).searchParams.get("redirect_uri"), "https://getbizgenie.com/customer/social/oauth/callback/tiktok");
+      });
+      it("staging: the mapped host is sent to TikTok, used for the code exchange and relayed to the staging Studio host", async () => {
+        const redirect = "https://staging-api.getbizgenie.com/customer/social/oauth/callback/tiktok";
+        const { tt, svc, verifier, intent } = await connectVia({ TIKTOK_REDIRECT_URI: redirect, TIKTOK_BROWSER_RETURN_URI: "https://staging-app.getbizgenie.com/" });
+        const authorize = new URL(intent.authorize_url);
+        assert.deepEqual([authorize.origin + authorize.pathname, authorize.searchParams.get("redirect_uri"), authorize.searchParams.get("scope"), authorize.searchParams.has("code_challenge")], ["https://www.tiktok.com/v2/auth/authorize/", redirect, "user.info.basic,video.upload", false]);
+        const back = new URL(await svc.callbackRedirect("tiktok", { code: "auth_code_1", state: intent.state }));
+        assert.deepEqual([back.origin, back.searchParams.get("state")], ["https://staging-app.getbizgenie.com", intent.state]);
+        const connection = await svc.connect(actor, scope, { intent_id: intent.intent_id, state: intent.state, code: "auth_code_1", code_verifier: verifier });
+        assert.equal(connection.status, "active"); assert.equal(tt.tokenForm.get("redirect_uri"), redirect);
+      });
+      it("any other redirect host, scheme, port or path fails closed at start-up; a browser return outside the reviewed hosts is refused", async () => {
+        for (const bad of ["https://evil.example/customer/social/oauth/callback/tiktok", "http://staging-api.getbizgenie.com/customer/social/oauth/callback/tiktok", "https://staging-api.getbizgenie.com:8443/customer/social/oauth/callback/tiktok", "https://staging-api.getbizgenie.com/other", "https://api.getbizgenie.com/customer/social/oauth/callback/tiktok", "https://staging-api.getbizgenie.com/customer/social/oauth/callback/tiktok?x=1"]) {
+          await assert.rejects(build(tiktokEnv({ TIKTOK_REDIRECT_URI: bad }), { socialFetch: fakeTikTok().fetch }), (e) => /TIKTOK_NOT_CONFIGURED|not configured/i.test(`${e.code} ${e.message}`), bad);
+        }
+        for (const bad of ["https://evil.example/", "https://app.getbizgenie.com/", "http://staging-app.getbizgenie.com/", "https://staging-app.getbizgenie.com:8443/"]) {
+          const { svc, intent } = await connectVia({ TIKTOK_BROWSER_RETURN_URI: bad });
+          await assert.rejects(svc.callbackRedirect("tiktok", { code: "auth_code_1", state: intent.state }), (e) => e.code === "OAUTH_CONFIGURATION_UNAVAILABLE" || /unavailable/i.test(e.message), bad);
+        }
+      });
+    });
     describe("destination key stays server-side (BG-LAUNCH-006A)", () => {
       it("the dispatch is bound to the item's own connection, and the connection id in the request is optional but never overrides the binding", async () => {
         const j = await journey();
