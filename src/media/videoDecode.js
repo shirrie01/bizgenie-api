@@ -26,7 +26,7 @@ function createVideoDecodeCheck({ executable = "/usr/bin/ffmpeg", timeoutMs = li
       await writeFile(file, Buffer.from(bytes), { flag: "wx", mode: 0o600 });
       if (isolation === "bubblewrap") await chmod(file, 0o444);
       const input = isolation === "bubblewrap" ? "/input/asset.mp4" : file;
-      const ffArgs = ["-nostdin", "-v", "error", "-xerror", "-max_alloc", String(limits.decode.maxAlloc), "-threads", "1", "-protocol_whitelist", limits.common.allowedProtocols, "-format_whitelist", limits.common.allowedFormats, "-enable_drefs", "0", "-use_absolute_path", "0", "-i", input, "-map", "0:v:0", "-f", "null", "-"];
+      const ffArgs = ["-nostdin", "-v", "error", "-xerror", "-max_alloc", String(limits.decode.maxAlloc), "-threads", "1", "-protocol_whitelist", limits.common.allowedProtocols, "-format_whitelist", limits.common.allowedFormats, "-enable_drefs", "0", "-use_absolute_path", "0", "-c:v", "h264", "-i", input, "-map", "0:v:0", "-f", "null", "-"];
       const inner = isolation === "bubblewrap"
         ? ["/usr/bin/bwrap", "--unshare-all", "--unshare-net", "--unshare-user", "--disable-userns", "--assert-userns-disabled", "--die-with-parent", "--new-session", "--cap-drop", "ALL", "--uid", "65534", "--gid", "65534",
           "--ro-bind", "/usr", "/usr", "--ro-bind", "/lib", "/lib", "--ro-bind", "/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev", "--size", String(limits.common.sandboxTmpfsBytes), "--tmpfs", "/tmp", "--dir", "/input",

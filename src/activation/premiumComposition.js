@@ -28,6 +28,8 @@ async function createPremiumComposition({
   env = process.env, logger = console, now = () => new Date(),
   toolchainCheck = require("../media/toolchainSelfTest").runToolchainSelfTest, // test seam only; not reachable from the environment
   mediaInspector = null, connectors = null, workflowStageHandlerFactory = null,
+  socialKeyProvider = null, // production token-vault key provider (founder-approved key management); absent => only the staging environment provider is possible
+  socialFetch = undefined,  // test seam for the connector's HTTP client; never reachable from the environment
 } = {}) {
   let unscannedAccepted = false;
   const flags = Object.fromEntries(FLAGS.map((name) => [name, activationFlag(env, name)]));
@@ -140,11 +142,35 @@ async function createPremiumComposition({
     const wanted = String(env.SOCIAL_PLATFORMS || "").split(",").map((s) => s.trim()).filter(Boolean);
     need(wanted.length > 0, "SOCIAL_PUBLISHING_ENABLED requires SOCIAL_PLATFORMS (for example tiktok,linkedin)");
     const registry = connectors || require("../social-connectors").registry;
+    // Connectors that hold provider credentials get the encrypted token vault, the provider-effect journal, the approved-video media source and a reviewed upload policy.
+    // All four are built here, from validated configuration, so a missing key/policy/media authority fails startup before any OAuth exchange can happen.
+    let runtime = null;
+    const connectorRuntime = async () => {
+      if (runtime) return runtime;
+      need(media?.videoEnabled && typeof media.videoAssetStore?.videoInspector === "function" && typeof media.mediaPreviewStorage?.statPreview === "function",
+        "A TikTok draft upload needs validated video generation (VIDEO_GENERATION_ENABLED with durable media storage and a working video inspector)");
+      let keyProvider = socialKeyProvider;
+      if (!keyProvider) { try { keyProvider = require("../social-connectors/envKeyProvider").createEnvKeyProvider({ env }); } catch (error) { need(false, `Social token vault key: ${error.message}`); } }
+      need(typeof keyProvider?.getKey === "function" && typeof keyProvider.keyId === "string" && keyProvider.keyId, "The social token key provider must expose keyId and getKey");
+      const origins = String(env.TIKTOK_UPLOAD_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
+      need(env.TIKTOK_UPLOAD_REVIEW_REF && origins.length, "TikTok draft upload needs TIKTOK_UPLOAD_REVIEW_REF and TIKTOK_UPLOAD_ORIGINS (the reviewed HTTPS upload origins)");
+      const chunkBytes = positiveInt(env, "TIKTOK_UPLOAD_CHUNK_BYTES"); need(chunkBytes <= 33554432, "TIKTOK_UPLOAD_CHUNK_BYTES must not exceed 33554432");
+      const { PostgresSocialRuntime } = require("../social-connectors/postgresRuntime");
+      const { SocialTokenVault } = require("../social-connectors/tokenVault");
+      const { createApprovedVideoSource } = require("../social-connectors/approvedVideoSource");
+      const operations = new PostgresSocialRuntime({ billingRepository, keyProvider, keyId: keyProvider.keyId, now });
+      runtime = { vault: new SocialTokenVault({ driver: operations, now }), operations,
+        mediaSource: createApprovedVideoSource({ pool, storage: media.mediaPreviewStorage, videoInspector: media.videoAssetStore.videoInspector, now }),
+        uploadPolicy: { reviewRef: env.TIKTOK_UPLOAD_REVIEW_REF, chunkBytes, uploadOrigins: origins } };
+      return runtime;
+    };
+    const NEEDS_RUNTIME = new Set(["tiktok"]);
     const platforms = {};
     for (const name of wanted) {
       const factory = registry[name];
       need(typeof factory === "function", `No connector is registered for ${name}; it cannot be enabled`);
-      platforms[name] = await factory({ env, pool, logger, now }); // a factory throws unless its reviewed configuration and credentials are present
+      const extra = NEEDS_RUNTIME.has(name) && !connectors ? { ...(await connectorRuntime()), fetchImpl: socialFetch } : {};
+      platforms[name] = await factory({ env, pool, logger, now, ...extra }); // a factory throws unless its reviewed configuration and credentials are present
     }
     const { DurableSocialPublishing } = require("../social-publishing/service");
     socialPublishingService = new DurableSocialPublishing({ billingRepository, platforms, enabled: true, now });
