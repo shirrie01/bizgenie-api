@@ -493,7 +493,7 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
         const back = new URL(await svc.callbackRedirect("tiktok", { code: "auth_code_1", state: intent.state }));
         assert.deepEqual([back.origin, back.searchParams.get("state")], ["https://staging-app.getbizgenie.com", intent.state]);
         const connection = await svc.connect(actor, scope, { intent_id: intent.intent_id, state: intent.state, code: "auth_code_1", code_verifier: verifier });
-        assert.equal(connection.status, "active"); assert.equal(tt.tokenForm.get("redirect_uri"), redirect);
+        assert.equal(connection.status, "active"); assert.equal(tt.tokenForm.get("redirect_uri"), redirect); await svc.disconnect(actor, connection.connection_id, scope); // leave no live connection behind for the journeys that follow
       });
       it("any other redirect host, scheme, port or path fails closed at start-up; a browser return outside the reviewed hosts is refused", async () => {
         for (const bad of ["https://evil.example/customer/social/oauth/callback/tiktok", "http://staging-api.getbizgenie.com/customer/social/oauth/callback/tiktok", "https://staging-api.getbizgenie.com:8443/customer/social/oauth/callback/tiktok", "https://staging-api.getbizgenie.com/other", "https://api.getbizgenie.com/customer/social/oauth/callback/tiktok", "https://staging-api.getbizgenie.com/customer/social/oauth/callback/tiktok?x=1"]) {
@@ -544,7 +544,8 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
 
       it("TikTok reporting FAILED is a definitive failure: not uploaded, not published, no second attempt", async () => {
         const j = await journey(); j.tt.status = "FAILED"; due(j); const l = workLoop(j.svc);
-        for (let i = 0; i < 5 && !["failed", "uploaded"].includes((await dispatchRow(j.dispatch.dispatch_id)).state); i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
+        // earlier journeys leave queued dispatches behind and each tick takes a bounded batch, so allow enough ticks for this one to be reached
+        for (let i = 0; i < 15 && !["failed", "uploaded"].includes((await dispatchRow(j.dispatch.dispatch_id)).state); i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
         const row = await dispatchRow(j.dispatch.dispatch_id);
         assert.equal(row.state, "failed"); assert.deepEqual([row.publication_id, row.publication_url, row.uploaded_at], [null, null, null]);
         for (let i = 0; i < 3; i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
