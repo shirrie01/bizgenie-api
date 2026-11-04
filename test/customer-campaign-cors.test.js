@@ -16,3 +16,18 @@ it('allows browser PATCH for the existing campaign update route without widening
   assert.equal(actual.status, 400); // Route validation still runs; preflight is not authorization.
   assert.equal(actual.body.error.code, 'VALIDATION_ERROR');
 });
+it('supports the exact hosted staging Studio origin and browser bearer headers while keeping private Cloud Run credentials server-side',async()=>{
+ const {loadCorsConfig}=require('../src/activation/cors');
+ const config=loadCorsConfig({env:{BIZGENIE_ENVIRONMENT:'staging',CORS_ENABLED:'true',CORS_ALLOWED_ORIGINS:'https://staging-app.getbizgenie.com'}});
+ const client=request(createApp({env:{},corsConfig:config,logger:{warn(){},error(){}}}));
+ for(const method of ['GET','POST','PUT','PATCH']){
+  const r=await client.options('/customer/workspace/brand-brain').set('origin','https://staging-app.getbizgenie.com').set('access-control-request-method',method).set('access-control-request-headers','authorization,content-type');
+  assert.equal(r.status,204);assert.equal(r.headers['access-control-allow-origin'],'https://staging-app.getbizgenie.com');assert.match(r.headers.vary,/Origin/);
+ }
+ const denied=await client.get('/customer/workspace').set('origin','https://staging-app.getbizgenie.com');assert.equal(denied.status,401);assert.equal(denied.body.error.code,'AUTHENTICATION_REQUIRED');assert.equal(denied.headers['access-control-allow-origin'],'https://staging-app.getbizgenie.com');assert.match(denied.headers['cache-control'],/no-store/);
+ const id='11111111-1111-4111-8111-111111111111',media=`/customer/campaigns/${id}/variants/${id}/revisions/${id}/assets/${id}/preview`;
+ const preflight=headers=>client.options(media).set('origin','https://staging-app.getbizgenie.com').set('access-control-request-method','GET').set('access-control-request-headers',headers);
+ const range=await preflight('authorization,range');assert.equal(range.status,204);assert.match(range.headers['access-control-expose-headers'],/Content-Range/);
+ assert.equal((await preflight('authorization,x-serverless-authorization')).status,403);
+ assert.equal((await client.options(media).set('origin','https://attacker.example').set('access-control-request-method','GET')).status,403);
+});

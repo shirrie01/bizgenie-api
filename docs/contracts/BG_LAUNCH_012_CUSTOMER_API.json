@@ -43,15 +43,27 @@
       "request": "identity token; no scope body",
       "response_fields": [
         "status",
-        "workspace",
-        "workspaces (selection_required)"
+        "workspace"
       ],
       "response_statuses": [
         "missing_workspace",
         "ready",
         "selection_required"
       ],
-      "read_only": true
+      "read_only": true,
+      "conditional_response_fields": {
+        "selection_required": [
+          "workspaces"
+        ]
+      },
+      "optional_response_fields": [
+        "workspaces"
+      ],
+      "response_field_types": {
+        "status": "string",
+        "workspace": "object|null",
+        "workspaces": "array"
+      }
     },
     {
       "id": "select_workspace",
@@ -79,7 +91,10 @@
       "response_fields": [
         "brand_brain"
       ],
-      "read_only": true
+      "read_only": true,
+      "response_field_types": {
+        "brand_brain": "object"
+      }
     },
     {
       "id": "brand_save",
@@ -102,7 +117,10 @@
           "BRAND_BRAIN_VERSION_CONFLICT"
         ]
       },
-      "read_only": false
+      "read_only": false,
+      "response_field_types": {
+        "brand_brain": "object"
+      }
     },
     {
       "id": "onboarding",
@@ -115,7 +133,12 @@
         "brand_name_placeholder"
       ],
       "dto_contract": "workspace-onboarding.v1",
-      "read_only": true
+      "read_only": true,
+      "response_field_types": {
+        "status": "string",
+        "onboarding": "object",
+        "brand_name_placeholder": "boolean"
+      }
     },
     {
       "id": "onboarding_save",
@@ -145,7 +168,13 @@
         "draft",
         "complete"
       ],
-      "completion": "Explicit customer confirmation, customer-written genuine name/description and customer-selected sector/channels; no entitlement/provider authority"
+      "completion": "Explicit customer confirmation, customer-written genuine name/description and customer-selected sector/channels; no entitlement/provider authority",
+      "response_field_types": {
+        "status": "string",
+        "replayed": "boolean",
+        "onboarding": "object",
+        "brand_name_placeholder": "boolean"
+      }
     },
     {
       "id": "campaign_create",
@@ -166,7 +195,11 @@
         "campaign"
       ],
       "success_status": 201,
-      "read_only": false
+      "read_only": false,
+      "response_field_types": {
+        "result": "object",
+        "campaign": "object"
+      }
     },
     {
       "id": "campaign_get",
@@ -180,7 +213,10 @@
       "response_fields": [
         "campaign"
       ],
-      "read_only": true
+      "read_only": true,
+      "response_field_types": {
+        "campaign": "object"
+      }
     },
     {
       "id": "content_item",
@@ -207,7 +243,11 @@
         "campaign"
       ],
       "success_status": 201,
-      "read_only": false
+      "read_only": false,
+      "response_field_types": {
+        "result": "object",
+        "campaign": "object"
+      }
     },
     {
       "id": "generation_quote",
@@ -246,7 +286,18 @@
       "success_status": 201,
       "read_only": false,
       "paid_provider_call": false,
-      "rule": "No reservation or provider submission at quote time; persisted quote is a database write"
+      "rule": "No reservation or provider submission at quote time; persisted quote is a database write",
+      "conditional_requirements": {
+        "execution_brief": "Required non-empty for image/video execution; omitted image brief returns 422 CREATIVE_BRIEF_REQUIRED"
+      },
+      "response_field_types": {
+        "quote_id": "string",
+        "credits": "integer",
+        "max_credits": "integer",
+        "available_credits": "integer",
+        "sufficient": "boolean",
+        "expires_at": "string"
+      }
     },
     {
       "id": "generation_confirm",
@@ -271,7 +322,14 @@
       ],
       "success_status": 202,
       "read_only": false,
-      "rule": "Atomic reservation and one execution claim; never confirm implicitly"
+      "rule": "Atomic reservation and one execution claim; never confirm implicitly",
+      "response_field_types": {
+        "status": "string",
+        "job_id": "string",
+        "quote_id": "string",
+        "reserved_credits": "integer",
+        "replay": "boolean"
+      }
     },
     {
       "id": "generation_status",
@@ -316,7 +374,17 @@
         "can_cancel",
         "retry_guidance"
       ],
-      "read_only": true
+      "read_only": true,
+      "response_field_types": {
+        "job_id": "string",
+        "quote_id": "string",
+        "kind": "string",
+        "state": "string",
+        "outputs": "array",
+        "association": "object|null",
+        "preview": "object|null",
+        "can_cancel": "boolean"
+      }
     },
     {
       "id": "creative_attach",
@@ -327,7 +395,12 @@
       "response_contract": "creative-job.v1",
       "owner_only": true,
       "rule": "Attach existing succeeded output to original version-bound target; stable idempotency; new successor revision; never silently rebase",
-      "read_only": false
+      "read_only": false,
+      "response_field_types": {
+        "job_id": "string",
+        "association": "object",
+        "outputs": "array"
+      }
     },
     {
       "id": "creative_preview",
@@ -393,7 +466,13 @@
         "window": "from inclusive/to exclusive; max 93 elapsed days per request",
         "limit": "1..100"
       },
-      "read_only": true
+      "read_only": true,
+      "response_field_types": {
+        "window": "object",
+        "entries": "array",
+        "unscheduled": "array",
+        "next_cursor": "string|null"
+      }
     },
     {
       "id": "review",
@@ -555,7 +634,11 @@
         "capabilities",
         "granted_scopes"
       ],
-      "read_only": true
+      "read_only": true,
+      "response_field_types": {
+        "connections": "array",
+        "next_cursor": "string|null"
+      }
     },
     {
       "id": "oauth_intent",
@@ -664,7 +747,12 @@
         "not_subscribed"
       ],
       "read_only": true,
-      "rule": "Ledger-derived balance, no Stripe network call or write"
+      "rule": "Ledger-derived balance, no Stripe network call or write",
+      "response_field_types": {
+        "status": "string",
+        "subscription": "object|null",
+        "available_credits": "integer|null"
+      }
     },
     {
       "id": "plans",
@@ -813,7 +901,8 @@
       "PLATFORM_PERMISSION_REQUIRED",
       "OPERATION_UNSUPPORTED",
       "DIRECT_POST_DISABLED",
-      "STAGE_NOT_ATTACHABLE"
+      "STAGE_NOT_ATTACHABLE",
+      "CREATIVE_BRIEF_REQUIRED"
     ],
     "503": [
       "SOCIAL_NOT_CONFIGURED",
@@ -829,5 +918,7 @@
       "GENERATION_CREDITS_UNAVAILABLE"
     ],
     "rule": "Do not retry ambiguous writes blindly; refresh/reload only per route guidance; 404 alone is not proof of authorization success"
-  }
+  },
+  "contract_revision": 2,
+  "verified_by": "test/generation-quotes.integration.test.js: versioned customer contract journey"
 }
