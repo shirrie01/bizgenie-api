@@ -31,3 +31,14 @@ it('supports the exact hosted staging Studio origin and browser bearer headers w
  assert.equal((await preflight('authorization,x-serverless-authorization')).status,403);
  assert.equal((await client.options(media).set('origin','https://attacker.example').set('access-control-request-method','GET')).status,403);
 });
+it('permits DELETE only on the existing upload removal route for configured staging, preserving production policy',async()=>{
+ const {loadCorsConfig}=require('../src/activation/cors');
+ const id='11111111-1111-4111-8111-111111111111',origin='https://staging-app.getbizgenie.com';
+ for(const environment of ['staging','production']){
+  const config=loadCorsConfig({env:{BIZGENIE_ENVIRONMENT:environment,PRODUCTION_ACTIVATION_ENABLED:'true',CORS_ENABLED:'true',CORS_ALLOWED_ORIGINS:origin}}),client=request(createApp({env:{},corsConfig:config}));
+  const preflight=path=>client.options(path).set('origin',origin).set('access-control-request-method','DELETE').set('access-control-request-headers','authorization');
+  assert.equal((await preflight('/customer/assets/'+id)).status,environment==='staging'?204:403);
+  assert.equal((await preflight('/customer/campaigns/'+id)).status,403);
+  assert.equal((await client.options('/customer/assets/'+id).set('origin','https://attacker.example').set('access-control-request-method','DELETE')).status,403);
+ }
+});

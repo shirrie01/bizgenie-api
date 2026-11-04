@@ -4,7 +4,8 @@
   "source_baselines": {
     "api_226": "f1fc2f51502793d9fb03617f30fd72b5a61c1e2e",
     "api_227": "b400d27f7cdd516a772d45873adaa59a70f0c4b8",
-    "web_66": "8367d677e6c1f3bb23d4085334fd0601b5e1b45e"
+    "web_66": "8367d677e6c1f3bb23d4085334fd0601b5e1b45e",
+    "web_68": "433c898d9f087e44e00f272db3ad0565d84479f7"
   },
   "authority": "Existing implementation and founder-approved scope; no pricing or access grant is created by this contract",
   "coverage": "Customer launch integration handoff, not a replacement for complete Zod request schemas",
@@ -764,6 +765,56 @@
       "query_fields": [
         "tenant_id"
       ]
+    },
+    {
+      "id": "workspace_bootstrap",
+      "method": "POST",
+      "path": "/customer/workspace/bootstrap",
+      "implementation": "src/customer-workspace/router.js",
+      "authentication": "verified customer identity token; trusted scope not yet required",
+      "request_fields": [],
+      "optional_fields": [
+        "business_name",
+        "website_or_social_profile",
+        "primary_marketing_challenge"
+      ],
+      "response_fields": [
+        "status"
+      ],
+      "conditional_response_fields": {
+        "ready": [
+          "workspace"
+        ],
+        "selection_required": [
+          "workspace",
+          "workspaces"
+        ]
+      },
+      "optional_response_fields": [
+        "requires_session_refresh"
+      ],
+      "success_status": 201,
+      "read_only": false,
+      "rule": "Existing provisioning only; subsequent scope refresh required when flagged; no entitlement/provider grant"
+    },
+    {
+      "id": "customer_upload_remove",
+      "method": "DELETE",
+      "path": "/customer/assets/:assetId",
+      "implementation": "src/media-intake/router.js",
+      "query_fields": [
+        "tenant_id",
+        "project_id",
+        "brand_id"
+      ],
+      "response_fields": [
+        "asset_id",
+        "state",
+        "physical_deletion"
+      ],
+      "owner_only": true,
+      "read_only": false,
+      "rule": "Logical deletion, idempotent and tenant-bound; bytes remain pending retention policy; browser delete gates stay off until hosted acceptance"
     }
   ],
   "social": {
@@ -919,6 +970,6 @@
     ],
     "rule": "Do not retry ambiguous writes blindly; refresh/reload only per route guidance; 404 alone is not proof of authorization success"
   },
-  "contract_revision": 2,
+  "contract_revision": 3,
   "verified_by": "test/generation-quotes.integration.test.js: versioned customer contract journey"
 }

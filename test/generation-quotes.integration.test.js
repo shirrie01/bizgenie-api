@@ -376,6 +376,29 @@ const url=process.env.TEST_DATABASE_URL;
   const from=new Date(clock.getTime()-86400000).toISOString(),to=new Date(clock.getTime()+86400000).toISOString();const cal=await f.call('calendar','get','/customer/calendar?'+project+'&from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to));verify('calendar',cal);assert.ok(cal.body.entries.some(x=>x.variant_id===f.variantId));
   assert.equal(f.descriptor.synthetic,true);assert.equal(f.submits,1);
  });
+ it('bridges a fresh existing bootstrap, session refresh, tenant denial and owner-only upload removal through real API/PG',async()=>{
+  const f=await require('./helpers/launch-customer').customerDataset({pool,billing,campaigns,now:()=>clock});
+  const {createStudioBridge}=require('../src/studio-bridge/service'),http=require('supertest'),{once}=require('node:events');
+  const server=f.app.listen(0,'127.0.0.1');await once(server,'listening');let invocations=0;
+  try{
+   const bridge=createStudioBridge({target:{environment:'staging',revision:'bizgenie-api-staging-00030-pob',sourceSha:'a'.repeat(40),reviewRef:'synthetic-only',upstream:'https://proof---bizgenie-api-staging-abc-ew.a.run.app',audience:'https://bizgenie-api-staging-abc-ew.a.run.app',origin:'https://staging-app.getbizgenie.com',allowWrites:true},tokenVerifier:f.tokenVerifier,iamTokenProvider:async()=>{invocations++;return 'synthetic_iam_not_live';},fetchImpl:async(url,init)=>{const u=new URL(url);return fetch('http://127.0.0.1:'+server.address().port+u.pathname+u.search,init);}}),client=http(bridge);
+   const owner=(method,path,body,token='owner')=>{let r=client[method](path).set('authorization','Bearer '+token).set('origin','https://staging-app.getbizgenie.com');return body?r.send(body):r;};
+   const boot=await owner('post','/customer/workspace/bootstrap',{business_name:'Fictional fresh workshop'},'pioneer');assert.equal(boot.status,201);assert.equal(boot.body.requires_session_refresh,true);assert.equal(boot.body.workspace.membership_role,'owner');assert.equal(f.provisioned.length,1);assert.equal((await pool.query('select count(*)::int n from tenant_entitlements where tenant_id=$1',[boot.body.workspace.tenant_id])).rows[0].n,0);
+   const reused=await owner('post','/customer/workspace/bootstrap',{business_name:'Do not duplicate'},'pioneer');assert.equal(reused.status,201);assert.equal(reused.body.workspace.brand_id,boot.body.workspace.brand_id);
+   assert.equal((await owner('get','/customer/workspace/brand-brain',null,'pioneer')).status,401);assert.equal((await owner('get','/customer/workspace/brand-brain',null,'pioneer_refreshed')).status,200);
+   const project=new URLSearchParams({tenant_id:f.scope.tenant_id,project_id:f.scope.project_id}),campaign='/customer/campaigns/'+f.campaign.campaign_id+'?'+project;
+   assert.equal((await owner('get',campaign)).status,200);assert.equal((await owner('post','/customer/campaign-recommendations',{...f.scope,goal:'Local enquiries',idempotency_key:randomUUID()})).status,201);const before=invocations;assert.equal((await owner('get',campaign,null,'foreign')).status,404);assert.equal(invocations,before);
+   const media='/customer/campaigns/'+f.campaign.campaign_id+'/variants/'+f.variantId+'/revisions/'+f.association.revision_id+'/assets/'+f.descriptor.asset_id+'/preview?'+project+'&expected_campaign_version='+f.campaign.version;const preview=await owner('get',media);assert.equal(preview.status,200);assert.deepEqual(preview.body,f.PNG);
+   const init=await f.call('intake','post','/customer/assets/uploads',{...f.scope,filename:'fixture.png',content_type:'image/png',bytes:f.PNG.length,rights_confirmed:true,idempotency_key:randomUUID()},'owner',201),assetId=init.body.asset_id,query=new URLSearchParams(f.scope);
+   const upload=await f.http.put('/customer/assets/uploads/'+assetId+'/bytes?'+query).set('authorization','Bearer owner').set('content-type','image/png').send(f.PNG);assert.equal(upload.status,200);
+   assert.equal((await f.call('complete','post','/customer/assets/'+assetId+'/complete',f.scope)).body.state,'ready');
+   const path='/customer/assets/'+assetId+'?'+query;
+   assert.equal((await client.delete(path)).status,401);assert.equal((await owner('delete',path,null,'foreign')).status,404);assert.equal((await owner('delete',path,null,'member')).status,404);
+   const deleted=await owner('delete',path);assert.equal(deleted.status,200);assert.equal(deleted.body.state,'deleted');assert.equal(deleted.body.physical_deletion,'pending_retention_policy');assert.equal((await pool.query('select status from media_assets where asset_id=$1',[f.descriptor.asset_id])).rows[0].status,'active');
+   assert.equal((await owner('delete',path)).status,200);assert.equal((await pool.query("select count(*)::int n from customer_media_intake_audit where asset_id=$1 and event_type='deleted'",[assetId])).rows[0].n,1);
+   await pool.query('delete from tenant_memberships where tenant_id=$1 and auth_user_id=$2',[boot.body.workspace.tenant_id,f.members.pioneer.auth_user_id]);const revoked=await owner('get','/customer/workspace/brand-brain',null,'pioneer_refreshed');assert.equal(revoked.status,400);assert.equal(revoked.body.error.code,'WORKSPACE_VALIDATION_ERROR');
+  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+ });
  it('retired pricing policy refuses confirmation before any execution starts',async()=>{const q=quotes(),quote=await q.quote(actor,await input());await pool.query("update commercial_policies set status='retired' where policy_id='synthetic_policy'");await assert.rejects(q.confirm(actor,quote.quote_id,confirmBody()),{code:'QUOTE_CHANGED'});});
  it('RLS denies browser/service roles access to quotes and execution claims',async()=>{const c=await pool.connect();try{await c.query('begin');await c.query('set local role authenticated');await assert.rejects(c.query('select * from generation_quotes'),/permission denied/);}finally{await c.query('rollback');c.release();}});
 });
