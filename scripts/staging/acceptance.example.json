@@ -25,5 +25,15 @@
     "mediaMime": "image/jpeg",
     "mediaSha256": "REPLACE_WITH_KNOWN_EXISTING_IMAGE_SHA256",
     "mediaReadHasNoDatabaseWrites": false
+  },
+  "databaseSecretRef": {
+    "name": "REPLACE_WITH_EXISTING_REVIEWED_STAGING_DB_REFERENCE_NAME",
+    "version": "REPLACE_WITH_REVIEWED_NUMERIC_VERSION",
+    "approvalRef": "REPLACE_WITH_EXISTING_CREDENTIAL_ISOLATION_EVIDENCE"
+  },
+  "authSecretRef": {
+    "name": "REPLACE_WITH_EXISTING_REVIEWED_STAGING_SUPABASE_REFERENCE_NAME",
+    "version": "REPLACE_WITH_REVIEWED_NUMERIC_VERSION",
+    "approvalRef": "REPLACE_WITH_EXISTING_CREDENTIAL_ISOLATION_EVIDENCE"
   }
 }

@@ -13,6 +13,7 @@ function validateConfig(c){
  ensure(/^(global|[a-z]+-[a-z]+[0-9])$/.test(c.buildRegion||''),'BUILD_REGION_REQUIRED');
  ensure(/^[a-f0-9]{40}$/.test(c.expectedSha||'')&&/^[a-f0-9-]{10,80}$/.test(c.buildId||''),'SOURCE_PROVENANCE_REQUIRED');
  ensure(c.supabaseProject===SUPABASE,'PRODUCTION_OR_UNKNOWN_AUTH_PROJECT');
+ for(const key of ['databaseSecretRef','authSecretRef'])ensure(c[key]&&typeof c[key].name==='string'&&c[key].name.length>0&&/^[1-9][0-9]*$/.test(c[key].version||'')&&typeof c[key].approvalRef==='string'&&c[key].approvalRef.length>0,'APPROVED_STAGING_SECRET_REFERENCES_REQUIRED');
  ensure(c.fixture&&c.fixture.approved===true&&typeof c.fixture.approvalRef==='string'&&c.fixture.approvalRef.length>0,'APPROVED_EXISTING_FIXTURES_REQUIRED');
  ensure(['tenant_id','project_id','brand_id'].every(k=>/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(c.fixture[k]||'')),'INVALID_SCOPE');
  ensure(['campaign_id','variant_id','revision_id','asset_id'].every(k=>/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(c.fixture[k]||'')),'INVALID_OBJECT_FIXTURE');
@@ -45,6 +46,7 @@ function verifyMetadata(c,m){
  if(!url?.value)throw new Stop('SUPABASE_URL_REFERENCE_REQUIRES_EXISTING_PROVENANCE',true);
  ensure(url.value==='https://'+SUPABASE+'.supabase.co','STAGING_SUPABASE_NOT_VERIFIED');
  ensure(!env.some(x=>typeof x.value==='string'&&x.value.includes('uvgblmejpbswkvlqvqmz')),'PRODUCTION_REFERENCE_FOUND');
+ for(const [key,name] of [['databaseSecretRef','BRAND_BRAIN_DATABASE_URL'],['authSecretRef','SUPABASE_SERVICE_ROLE_KEY']]){const ref=env.find(x=>x.name===name)?.valueFrom?.secretKeyRef;ensure(ref?.name===c[key].name&&String(ref.key)===c[key].version,'STAGING_SECRET_REFERENCE_MISMATCH');}
  return {url:u.origin,audience:base.origin,runtime:r.spec.serviceAccountName,imageDigest,sourceSha:commit};
 }
 function tokenClaims(token,issuer){
