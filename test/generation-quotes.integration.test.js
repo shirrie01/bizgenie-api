@@ -353,6 +353,29 @@ const url=process.env.TEST_DATABASE_URL;
   f.runtime.begin=async(...args)=>{const result=await begin(...args);await f.vault.revoke(connection.token_reference,binding);return result;};
   const result=await f.service.run(await f.service.claim(dispatch.dispatch_id));assert.equal(result.provider_submission_state,'submission_unknown');assert.equal(f.state.posts,0);await f.service.reconcile(dispatch.dispatch_id);assert.equal(f.state.posts,0);assert.equal((await pool.query('select revoked from social_token_secrets where reference=$1',[connection.token_reference])).rows[0].revoked,true);assert.deepEqual(await counts(),before);
  });
+ it('verifies the versioned customer contract through one synthetic PostgreSQL customer journey',async()=>{
+  const f=await require('./helpers/launch-customer').customerDataset({pool,billing,campaigns,now:()=>clock});
+  const verify=require('./helpers/launch-contract-assertions');
+  for(const row of f.evidence)assert.equal(row.status,row.expected,row.id);
+  const project=new URLSearchParams({tenant_id:f.scope.tenant_id,project_id:f.scope.project_id}),brand=new URLSearchParams(f.scope),root='/customer/campaigns/'+f.campaign.campaign_id;
+  for(const [id,path] of [['workspaces','/customer/workspace'],['brand_read','/customer/workspace/brand-brain'],['onboarding','/customer/workspace/onboarding'],['campaign_get',root+'?'+project],['creative_job','/customer/creative-jobs/'+encodeURIComponent(f.confirmed.job_id)+'?'+brand],['connections','/customer/social/connections?'+brand],['credit_read','/customer/billing/subscription?tenant_id='+f.scope.tenant_id]]){
+   const r=await f.call(id,'get',path);verify(id,r);assert.match(r.headers['cache-control'],/no-store/);
+  }
+  const media=root+'/variants/'+f.variantId+'/revisions/'+f.association.revision_id+'/assets/'+f.descriptor.asset_id+'/preview?'+project+'&expected_campaign_version='+f.campaign.version;
+  const bytes=await f.call('media_bytes','get',media);assert.equal(bytes.headers['content-type'],'image/png');assert.deepEqual(bytes.body,f.PNG);
+  const foreignWorkspace=await f.call('foreign_identity','get','/customer/workspace',null,'foreign');assert.equal(foreignWorkspace.body.workspace.tenant_id,f.members.foreign.trusted_scope.tenant_id);
+  await f.call('foreign_campaign','get',root+'?'+project,null,'foreign',404);await f.call('foreign_media','get',media,null,'foreign',404);
+  await f.call('invalid_session','get','/customer/workspace',null,'expired',401);await f.call('reauthenticated','get','/customer/workspace');
+  await f.call('member_attach','post','/customer/creative-jobs/'+encodeURIComponent(f.confirmed.job_id)+'/attach',f.scope,'member',404);
+  await f.call('invalid_schema','post','/customer/generation-quotes',{...f.scope,auth_user_id:f.members.owner.auth_user_id},'owner',400);
+  await f.call('member_identity','put','/customer/workspace/brand-brain',{name:'Forbidden replacement',identity:{description:'Forbidden replacement'}},'member',403);
+  const connections=(await f.call('connections','get','/customer/social/connections?'+brand+'&limit=100')).body.connections.filter(x=>[f.descriptor.disconnected_connection,f.descriptor.reconnect_connection].includes(x.connection_id));assert.equal(connections.length,2);
+  assert.ok(connections.some(x=>x.status==='revoked'));assert.ok(connections.some(x=>x.status==='expired'));
+  assert.ok(connections.every(x=>x.capabilities.member_text_post.available===false));
+  const balance=await billing.readBalance(f.scope.tenant_id);assert.equal(balance.reserved_balance,f.beforeBalance.reserved_balance);assert.equal(balance.available_balance,f.beforeBalance.available_balance-f.quote.credits);assert.equal((await pool.query('select sum(reserved_delta)::int n from credit_ledger where generation_id=$1',[f.confirmed.job_id])).rows[0].n,0);assert.equal((await pool.query("select count(*)::int n from credit_ledger where generation_id=$1 and entry_type='debit'",[f.confirmed.job_id])).rows[0].n,1);
+  const from=new Date(clock.getTime()-86400000).toISOString(),to=new Date(clock.getTime()+86400000).toISOString();const cal=await f.call('calendar','get','/customer/calendar?'+project+'&from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to));verify('calendar',cal);assert.ok(cal.body.entries.some(x=>x.variant_id===f.variantId));
+  assert.equal(f.descriptor.synthetic,true);assert.equal(f.submits,1);
+ });
  it('retired pricing policy refuses confirmation before any execution starts',async()=>{const q=quotes(),quote=await q.quote(actor,await input());await pool.query("update commercial_policies set status='retired' where policy_id='synthetic_policy'");await assert.rejects(q.confirm(actor,quote.quote_id,confirmBody()),{code:'QUOTE_CHANGED'});});
  it('RLS denies browser/service roles access to quotes and execution claims',async()=>{const c=await pool.connect();try{await c.query('begin');await c.query('set local role authenticated');await assert.rejects(c.query('select * from generation_quotes'),/permission denied/);}finally{await c.query('rollback');c.release();}});
 });
