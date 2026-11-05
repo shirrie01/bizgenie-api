@@ -1,0 +1,39 @@
+{
+  "project": "bizgenie-backend",
+  "service": "bizgenie-api-staging",
+  "revision": "bizgenie-api-staging-00030-pob",
+  "region": "REPLACE_WITH_VERIFIED_REGION",
+  "buildRegion": "REPLACE_WITH_VERIFIED_BUILD_REGION_OR_global",
+  "buildId": "REPLACE_WITH_EXISTING_BUILD_ID",
+  "expectedSha": "REPLACE_WITH_VERIFIED_DEPLOYED_40_CHARACTER_SHA",
+  "supabaseProject": "zrczojyxebwjgpymbmgu",
+  "ownerTokenEnv": "BG_EXISTING_OWNER_SESSION",
+  "foreignTokenEnv": "BG_EXISTING_FOREIGN_SESSION",
+  "cloudRunTokenEnv": "BG_EXISTING_CLOUD_RUN_ID_TOKEN",
+  "fixture": {
+    "approved": false,
+    "approvalRef": "REPLACE_WITH_EXISTING_FIXTURE_AUTHORIZATION",
+    "tenant_id": "REPLACE_WITH_APPROVED_EXISTING_STAGING_TENANT",
+    "project_id": "REPLACE_WITH_APPROVED_EXISTING_STAGING_PROJECT",
+    "brand_id": "REPLACE_WITH_APPROVED_EXISTING_STAGING_BRAND",
+    "campaign_id": "REPLACE_WITH_APPROVED_EXISTING_UUID",
+    "variant_id": "REPLACE_WITH_APPROVED_EXISTING_UUID",
+    "revision_id": "REPLACE_WITH_APPROVED_EXISTING_UUID",
+    "asset_id": "REPLACE_WITH_APPROVED_EXISTING_UUID",
+    "expected_campaign_version": 0,
+    "expectedCredits": 0,
+    "mediaMime": "image/jpeg",
+    "mediaSha256": "REPLACE_WITH_KNOWN_EXISTING_IMAGE_SHA256",
+    "mediaReadHasNoDatabaseWrites": false
+  },
+  "databaseSecretRef": {
+    "name": "REPLACE_WITH_EXISTING_REVIEWED_STAGING_DB_REFERENCE_NAME",
+    "version": "REPLACE_WITH_REVIEWED_NUMERIC_VERSION",
+    "approvalRef": "REPLACE_WITH_EXISTING_CREDENTIAL_ISOLATION_EVIDENCE"
+  },
+  "authSecretRef": {
+    "name": "REPLACE_WITH_EXISTING_REVIEWED_STAGING_SUPABASE_REFERENCE_NAME",
+    "version": "REPLACE_WITH_REVIEWED_NUMERIC_VERSION",
+    "approvalRef": "REPLACE_WITH_EXISTING_CREDENTIAL_ISOLATION_EVIDENCE"
+  }
+}

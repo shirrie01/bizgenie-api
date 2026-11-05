@@ -1,0 +1,24 @@
+--- a/src/premium/socialClient.js
++++ b/src/premium/socialClient.js
+@@ -41,7 +41,7 @@
+   if (!c || !str(c.connection_id) || !PROVIDERS.includes(c.platform) || !str(c.account_id) || !Object.hasOwn(CONNECTION_STATUS, c.status) || !Number.isFinite(Date.parse(c.expires_at)) || !Number.isInteger(c.version)) return null;
+   // display_name is verified connector output, shown as TEXT only (max 200, no control characters); otherwise the account id stands in.
+   const display = typeof c.display_name === "string" && c.display_name.trim().length > 0 && c.display_name.length <= 200 && !/[\u0000-\u001f\u007f]/.test(c.display_name) ? c.display_name.trim() : "";
+-  return { id: c.connection_id, provider: c.platform, accountId: c.account_id, displayName: display, name: display || c.account_id, status: CONNECTION_STATUS[c.status], expiresAt: c.expires_at, version: c.version };
++  return { id: c.connection_id, provider: c.platform, accountId: c.account_id, displayName: display, name: display || c.account_id, status: CONNECTION_STATUS[c.status], expiresAt: c.expires_at, version: c.version, capabilities: c.capabilities && typeof c.capabilities === "object" ? Object.fromEntries(Object.entries(c.capabilities).filter(([key, v]) => ["member_login","member_text_post","member_image_post","member_video_post","company_page_post","organisation_administration","engagement_metrics","post_analytics","token_refresh","provider_revocation","publication_confirmation"].includes(key) && v && typeof v.available === "boolean").map(([key, v]) => [key, { available: v.available, reason: typeof v.reason === "string" ? v.reason : null }])) : null };
+ }
+ export function normaliseConnections(b) {
+   if (!b || !Array.isArray(b.connections)) throw bad();
+@@ -118,7 +118,11 @@
+   if (j.authorization_status !== "ready" || !j.authorize_url || !j.redirect_uri) throw new SocialError("This platform connection is not set up yet, so nothing was opened and nothing was connected.", { kind: "unavailable", code: "PROVIDER_CONFIGURATION_REQUIRED" });
+   let target, redirect; try { target = new URL(j.authorize_url); redirect = new URL(j.redirect_uri); } catch { throw new SocialError("The platform's sign-in page could not be opened safely, so nothing was connected.", { kind: "invalid", code: "BAD_URL" }); }
+   const sp = target.searchParams;
+-  if (target.protocol !== "https:" || redirect.protocol !== "https:" || target.username || target.password || sp.get("state") !== j.state || sp.get("code_challenge") !== p.challenge || sp.get("code_challenge_method") !== "S256" || sp.get("redirect_uri") !== j.redirect_uri || sp.get("response_type") !== "code")
++  const web = { linkedin: { protocol: "linkedin_oidc_web", origin: "https://www.linkedin.com", path: "/oauth/v2/authorization", client: "client_id" }, tiktok: { protocol: "tiktok_web_v2", origin: "https://www.tiktok.com", path: "/v2/auth/authorize/", client: "client_key" } }[provider];
++  const internalOnly = Boolean(web && j.oauth_protocol === web.protocol && j.provider_pkce_required === false);
++  const knownWeb = !internalOnly || (target.origin === web.origin && target.pathname === web.path && redirect.origin === "https://getbizgenie.com" && redirect.pathname === `/customer/social/oauth/callback/${provider}` && str(sp.get(web.client)) && sp.getAll(web.client).length === 1 && !sp.has("code_challenge") && !sp.has("code_challenge_method"));
++  const verifierMatches = internalOnly || (j.provider_pkce_required !== false && sp.get("code_challenge") === p.challenge && sp.get("code_challenge_method") === "S256");
++  if (target.protocol !== "https:" || target.hash || target.port || redirect.protocol !== "https:" || redirect.username || redirect.password || redirect.port || redirect.hash || redirect.search || target.username || target.password || !knownWeb || !verifierMatches || sp.getAll("state").length !== 1 || sp.getAll("redirect_uri").length !== 1 || sp.getAll("response_type").length !== 1 || sp.get("state") !== j.state || sp.get("redirect_uri") !== j.redirect_uri || sp.get("response_type") !== "code")
+     throw new SocialError("The platform's sign-in page did not match this attempt, so it was not opened and nothing was connected.", { kind: "invalid", code: "BAD_URL" });
+   return { url: target.toString(), pending: { intentId: j.intent_id, state: j.state, verifier: p.verifier, provider, redirectUri: j.redirect_uri, expiresAt: j.expires_at } };
+ }

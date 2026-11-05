@@ -39,3 +39,17 @@ it('TikTok HTTP denial, rate limits and oversized response bodies fail closed wi
  for(const [status,code] of [[401,'OAUTH_ACCESS_DENIED'],[403,'PLATFORM_PERMISSION_REQUIRED'],[429,'SOCIAL_PROVIDER_RATE_LIMITED']]){const k=kit(),c=new TikTokConnector(k.options);k.setHandler(async()=>new Response('synthetic_secret_must_not_leak',{status}));await assert.rejects(c.exchange({code:'synthetic',redirect_uri:REDIRECT_URI,authorization_context:binding}),e=>e.code===code&&!e.message.includes('synthetic_secret'));assert.equal(k.rows.size,0);}
  const k=kit(),c=new TikTokConnector(k.options);k.setHandler(async()=>new Response('x'.repeat(65537)));await assert.rejects(c.exchange({code:'synthetic',redirect_uri:REDIRECT_URI,authorization_context:binding}),{code:'TIKTOK_PROVIDER_UNAVAILABLE'});
 });
+it('TikTok rejects missing upload grants and expires or isolates tokens before any upload initialization',async()=>{
+ for(const scope of ['user.info.basic','video.upload','']){
+  const k=kit(),c=new TikTokConnector(k.options);k.setHandler(async url=>url.endsWith('/oauth/token/')?json({...token(),scope}):url.endsWith('/oauth/revoke/')?new Response(null,{status:200}):assert.fail('Missing grants reached identity/upload'));
+  await assert.rejects(c.exchange({code:'synthetic',redirect_uri:REDIRECT_URI,authorization_context:binding}),{code:'PLATFORM_PERMISSION_REQUIRED'});assert.equal(k.rows.size,0);
+  assert.equal(k.calls.some(x=>x.url.includes('/inbox/')),false);
+ }
+ for(const mode of ['expired','foreign']){
+  const k=kit(),c=new TikTokConnector(k.options),ref=await k.vault.store(binding,{accessToken:'synthetic',expiresAt:'2026-10-31T13:00:00Z'});
+  if(mode==='expired')k.setNow(new Date('2026-10-31T14:00:00Z'));
+  const b=mode==='foreign'?{...binding,tenant_id:'foreign'}:binding;
+  const result=await c.uploadDraft({identity:'blocked_'+mode,token_reference:ref,connection_binding:b,payload:k.payload,dispatch_context:{...k.dispatch,tenant_id:b.tenant_id}});
+  assert.equal(result.status,'unknown');assert.equal(k.calls.length,0);
+ }
+});

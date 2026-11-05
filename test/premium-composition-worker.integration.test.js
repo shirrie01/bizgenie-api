@@ -105,6 +105,45 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
     premium = await build();
   });
 
+  it('composes LinkedIn OAuth with a durable encrypted vault independently of TikTok/video configuration', async () => {
+    const key = require('node:crypto').randomBytes(32), env = {
+      BIZGENIE_ENVIRONMENT:'staging', SOCIAL_PUBLISHING_ENABLED:'true', SOCIAL_PLATFORMS:'linkedin',
+      LINKEDIN_CLIENT_ID:'synthetic_linkedin_client', LINKEDIN_CLIENT_SECRET:'synthetic_secret',
+      LINKEDIN_APP_REVIEW_APPROVED:'true', LINKEDIN_OAUTH_REVIEW_REF:'synthetic_review'
+    };
+    let calls=0;
+    const made=await build(env,{media:{},socialKeyProvider:{keyId:'synthetic_linkedin_key',getKey:async()=>key},socialFetch:async url=>{
+      calls++;if(url.endsWith('/accessToken'))return new Response(JSON.stringify({access_token:'synthetic_linkedin_private',expires_in:3600,scope:'openid profile w_member_social'}));
+      assert.equal(url,'https://api.linkedin.com/v2/userinfo');return new Response(JSON.stringify({sub:'synthetic_linkedin_subject',name:'Synthetic member'}));
+    }});
+    const svc=made.socialPublishingService,scope={tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a'},verifier='l'.repeat(43);
+    const intent=await svc.oauthIntent(actor,scope,{platform:'linkedin',pkce_challenge:require('node:crypto').createHash('sha256').update(verifier).digest('base64url')});
+    assert.equal(intent.oauth_protocol,'linkedin_oidc_web');assert.equal(intent.provider_pkce_required,false);assert.equal(calls,0);
+    const connection=await svc.connect(actor,scope,{intent_id:intent.intent_id,state:intent.state,code:'synthetic_code',code_verifier:verifier});
+    assert.equal(connection.capabilities.member_login.available,true);assert.equal(connection.capabilities.member_text_post.available,false);
+    assert.equal(calls,2);assert.equal(made.generationWorker,null);assert.equal(made.flags.QUOTED_GENERATION_ENABLED,false);
+    const stored=(await pool.query('select s.ciphertext from social_token_secrets s join social_connections c on c.token_reference=s.reference where c.connection_id=$1',[connection.connection_id])).rows[0];
+    assert.equal(stored.ciphertext.includes(Buffer.from('synthetic_linkedin_private')),false);
+    const before=calls;await svc.disconnect(actor,connection.connection_id,scope);assert.equal(calls,before);
+  });
+
+  it('shares encrypted credential runtime across both connectors without weakening TikTok upload gates', async () => {
+    const key=require('node:crypto').randomBytes(32), socialKeyProvider={keyId:'synthetic_shared_key',getKey:async()=>key};
+    const env={BIZGENIE_ENVIRONMENT:'staging',SOCIAL_PUBLISHING_ENABLED:'true',SOCIAL_PLATFORMS:'linkedin,tiktok',
+      LINKEDIN_CLIENT_ID:'synthetic_li',LINKEDIN_CLIENT_SECRET:'synthetic_secret',LINKEDIN_APP_REVIEW_APPROVED:'true',LINKEDIN_OAUTH_REVIEW_REF:'synthetic_review',
+      TIKTOK_CLIENT_KEY:'synthetic_tt',TIKTOK_CLIENT_SECRET:'synthetic_secret',TIKTOK_APP_REVIEW_APPROVED:'true',TIKTOK_OAUTH_REVIEW_REF:'synthetic_review',
+      TIKTOK_UPLOAD_REVIEW_REF:'synthetic_upload_review',TIKTOK_UPLOAD_ORIGINS:'https://upload.example.test',TIKTOK_UPLOAD_CHUNK_BYTES:'33554432'};
+    await assert.rejects(build(env,{media:{},socialKeyProvider}),/validated video generation/);
+    for(const order of ['linkedin,tiktok','tiktok,linkedin']){
+      const made=await build({...env,SOCIAL_PLATFORMS:order},{socialKeyProvider,socialFetch:async()=>assert.fail('Provider called during composition')});
+      const {linkedin,tiktok}=made.socialPublishingService.platforms;
+      assert.equal(linkedin.connector.vault,tiktok.connector.vault);assert.equal(linkedin.connector.operations,tiktok.connector.operations);
+      assert.equal(tiktok.deliveryMode,'draft_upload');assert.equal(linkedin.features.member_text_post,false);
+    }
+    await assert.rejects(build({...env,TIKTOK_UPLOAD_REVIEW_REF:''},{socialKeyProvider}),/TIKTOK_UPLOAD_REVIEW_REF/);
+    await assert.rejects(build({...env,SOCIAL_PLATFORMS:'linkedin'},{socialKeyProvider:null,media:{}}),/Social token vault key/);
+  });
+
   async function build(env = ENV, extra = {}) {
     return createPremiumComposition({ pool, billing: { billingRepository: billing }, media, brandBrainRepository: brandRepo, videoGenerationRepository: videoRepo, scriptGenerator: async () => { providerCalls.text += 1; return { text: "Hook: x\nConcept: y\nScript: z\nCTA: c\nCaption: d\nHashtags: #a\nFilming instructions: f", metadata: { model: "text-model-1" } }; }, branding: require("../src/config/branding").brandingConfig, env, logger: { log() {}, warn() {}, error() {} }, now: () => clock, ...extra });
   }

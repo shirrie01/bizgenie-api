@@ -1,0 +1,975 @@
+{
+  "contract_version": "bizgenie.customer-launch.v1",
+  "status": "review_candidate_not_deployed",
+  "source_baselines": {
+    "api_226": "f1fc2f51502793d9fb03617f30fd72b5a61c1e2e",
+    "api_227": "b400d27f7cdd516a772d45873adaa59a70f0c4b8",
+    "web_66": "8367d677e6c1f3bb23d4085334fd0601b5e1b45e",
+    "web_68": "433c898d9f087e44e00f272db3ad0565d84479f7"
+  },
+  "authority": "Existing implementation and founder-approved scope; no pricing or access grant is created by this contract",
+  "coverage": "Customer launch integration handoff, not a replacement for complete Zod request schemas",
+  "authentication": {
+    "header": "Authorization: Bearer <customer access token>",
+    "verification": "Supabase getClaims with issuer/audience/expiry and trusted scope; never use service-role key as customer identity",
+    "identity_only": [
+      "GET /customer/workspace",
+      "POST /customer/workspace/select",
+      "GET /customer/billing/subscription"
+    ],
+    "scope": "tenant_id/project_id/brand_id selectors are resources, never authority; selected-workspace routes use verified trusted_scope",
+    "switch": "Explicit selection then session refresh; client must confirm new claims match selected workspace",
+    "privacy": {
+      "Cache-Control": "private, no-store",
+      "Vary": "Authorization"
+    }
+  },
+  "scope_sets": {
+    "project": [
+      "tenant_id",
+      "project_id"
+    ],
+    "brand": [
+      "tenant_id",
+      "project_id",
+      "brand_id"
+    ]
+  },
+  "endpoints": [
+    {
+      "id": "workspaces",
+      "method": "GET",
+      "path": "/customer/workspace",
+      "implementation": "src/customer-workspace/router.js",
+      "request": "identity token; no scope body",
+      "response_fields": [
+        "status",
+        "workspace"
+      ],
+      "response_statuses": [
+        "missing_workspace",
+        "ready",
+        "selection_required"
+      ],
+      "read_only": true,
+      "conditional_response_fields": {
+        "selection_required": [
+          "workspaces"
+        ]
+      },
+      "optional_response_fields": [
+        "workspaces"
+      ],
+      "response_field_types": {
+        "status": "string",
+        "workspace": "object|null",
+        "workspaces": "array"
+      }
+    },
+    {
+      "id": "select_workspace",
+      "method": "POST",
+      "path": "/customer/workspace/select",
+      "implementation": "src/customer-workspace/router.js",
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "brand_id"
+      ],
+      "response_fields": [
+        "status",
+        "workspace",
+        "requires_session_refresh"
+      ],
+      "read_only": false
+    },
+    {
+      "id": "brand_read",
+      "method": "GET",
+      "path": "/customer/workspace/brand-brain",
+      "implementation": "src/customer-workspace/router.js",
+      "request": "trusted_scope token",
+      "response_fields": [
+        "brand_brain"
+      ],
+      "read_only": true,
+      "response_field_types": {
+        "brand_brain": "object"
+      }
+    },
+    {
+      "id": "brand_save",
+      "method": "PUT",
+      "path": "/customer/workspace/brand-brain",
+      "implementation": "src/customer-workspace/service.js",
+      "request": "Full editable Brand Brain document; omitted optional fields removed",
+      "owner_only_fields": [
+        "name",
+        "identity.description"
+      ],
+      "response_fields": [
+        "brand_brain"
+      ],
+      "errors": {
+        "403": [
+          "BRAND_BRAIN_WRITE_FORBIDDEN"
+        ],
+        "409": [
+          "BRAND_BRAIN_VERSION_CONFLICT"
+        ]
+      },
+      "read_only": false,
+      "response_field_types": {
+        "brand_brain": "object"
+      }
+    },
+    {
+      "id": "onboarding",
+      "method": "GET",
+      "path": "/customer/workspace/onboarding",
+      "implementation": "src/workspace-onboarding/router.js",
+      "response_fields": [
+        "status",
+        "onboarding",
+        "brand_name_placeholder"
+      ],
+      "dto_contract": "workspace-onboarding.v1",
+      "read_only": true,
+      "response_field_types": {
+        "status": "string",
+        "onboarding": "object",
+        "brand_name_placeholder": "boolean"
+      }
+    },
+    {
+      "id": "onboarding_save",
+      "method": "PUT",
+      "path": "/customer/workspace/onboarding",
+      "implementation": "src/workspace-onboarding/schema.js",
+      "request": "Existing version/idempotency/draft/completion Zod schema; scope comes from token, not body",
+      "response_fields": [
+        "status",
+        "replayed",
+        "onboarding",
+        "brand_name_placeholder"
+      ],
+      "owner_only": true,
+      "read_only": false,
+      "request_fields": [
+        "idempotency_key",
+        "expected_version"
+      ],
+      "optional_fields": [
+        "sector_key",
+        "sector_source",
+        "industry_text",
+        "channels",
+        "channels_source",
+        "current_step",
+        "draft",
+        "complete"
+      ],
+      "completion": "Explicit customer confirmation, customer-written genuine name/description and customer-selected sector/channels; no entitlement/provider authority",
+      "response_field_types": {
+        "status": "string",
+        "replayed": "boolean",
+        "onboarding": "object",
+        "brand_name_placeholder": "boolean"
+      }
+    },
+    {
+      "id": "campaign_create",
+      "method": "POST",
+      "path": "/customer/campaigns",
+      "implementation": "src/campaigns/router.js",
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "brand_id",
+        "name",
+        "goal",
+        "display_timezone"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ],
+      "success_status": 201,
+      "read_only": false,
+      "response_field_types": {
+        "result": "object",
+        "campaign": "object"
+      }
+    },
+    {
+      "id": "campaign_get",
+      "method": "GET",
+      "path": "/customer/campaigns/:campaignId",
+      "implementation": "src/campaigns/router.js",
+      "query_fields": [
+        "tenant_id",
+        "project_id"
+      ],
+      "response_fields": [
+        "campaign"
+      ],
+      "read_only": true,
+      "response_field_types": {
+        "campaign": "object"
+      }
+    },
+    {
+      "id": "content_item",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/content-items",
+      "implementation": "src/campaigns/router.js",
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "expected_campaign_version",
+        "name",
+        "format",
+        "platform",
+        "placement",
+        "destination_label"
+      ],
+      "optional_fields": [
+        "destination_key",
+        "initial_content"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ],
+      "success_status": 201,
+      "read_only": false,
+      "response_field_types": {
+        "result": "object",
+        "campaign": "object"
+      }
+    },
+    {
+      "id": "generation_quote",
+      "method": "POST",
+      "path": "/customer/generation-quotes",
+      "implementation": "src/generation-quotes/service.js",
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "campaign_id",
+        "variant_id",
+        "expected_campaign_version",
+        "execution_class",
+        "idempotency_key"
+      ],
+      "optional_fields": [
+        "execution_mode",
+        "execution_brief",
+        "supplied_assets",
+        "content_dna",
+        "strategy_stage"
+      ],
+      "response_contract": "generation-quote.v1",
+      "response_fields": [
+        "quote_id",
+        "execution_class",
+        "credits",
+        "kind",
+        "max_credits",
+        "available_credits",
+        "sufficient",
+        "expires_at",
+        "policy_version",
+        "state"
+      ],
+      "success_status": 201,
+      "read_only": false,
+      "paid_provider_call": false,
+      "rule": "No reservation or provider submission at quote time; persisted quote is a database write",
+      "conditional_requirements": {
+        "execution_brief": "Required non-empty for image/video execution; omitted image brief returns 422 CREATIVE_BRIEF_REQUIRED"
+      },
+      "response_field_types": {
+        "quote_id": "string",
+        "credits": "integer",
+        "max_credits": "integer",
+        "available_credits": "integer",
+        "sufficient": "boolean",
+        "expires_at": "string"
+      }
+    },
+    {
+      "id": "generation_confirm",
+      "method": "POST",
+      "path": "/customer/generation-quotes/:quoteId/confirm",
+      "implementation": "src/generation-quotes/service.js",
+      "request_fields": [
+        "idempotency_key",
+        "max_credits",
+        "confirmed"
+      ],
+      "constraints": {
+        "confirmed": true,
+        "max_credits": "must equal quoted credit cost"
+      },
+      "response_fields": [
+        "status",
+        "job_id",
+        "quote_id",
+        "reserved_credits",
+        "replay"
+      ],
+      "success_status": 202,
+      "read_only": false,
+      "rule": "Atomic reservation and one execution claim; never confirm implicitly",
+      "response_field_types": {
+        "status": "string",
+        "job_id": "string",
+        "quote_id": "string",
+        "reserved_credits": "integer",
+        "replay": "boolean"
+      }
+    },
+    {
+      "id": "generation_status",
+      "method": "GET",
+      "path": "/customer/generation-quotes/:quoteId",
+      "implementation": "src/generation-quotes/service.js",
+      "response_fields": [
+        "quote_id",
+        "job_id",
+        "state",
+        "execution_class",
+        "error_code",
+        "reserved_credits",
+        "reservation_state"
+      ],
+      "read_only": true
+    },
+    {
+      "id": "generation_cancel",
+      "method": "POST",
+      "path": "/customer/generation-quotes/:quoteId/cancel",
+      "implementation": "src/generation-quotes/service.js",
+      "rule": "Owner who owns quote; pre-call cancellation only, releases once; uncertain provider outcome requires reconciliation",
+      "read_only": false
+    },
+    {
+      "id": "creative_job",
+      "method": "GET",
+      "path": "/customer/creative-jobs/:jobId",
+      "implementation": "src/generation-quotes/jobs.js",
+      "query_scope": "brand",
+      "response_contract": "creative-job.v1",
+      "response_fields": [
+        "job_id",
+        "quote_id",
+        "kind",
+        "execution_class",
+        "state",
+        "outputs",
+        "association",
+        "preview",
+        "can_cancel",
+        "retry_guidance"
+      ],
+      "read_only": true,
+      "response_field_types": {
+        "job_id": "string",
+        "quote_id": "string",
+        "kind": "string",
+        "state": "string",
+        "outputs": "array",
+        "association": "object|null",
+        "preview": "object|null",
+        "can_cancel": "boolean"
+      }
+    },
+    {
+      "id": "creative_attach",
+      "method": "POST",
+      "path": "/customer/creative-jobs/:jobId/attach",
+      "implementation": "src/generation-quotes/jobs.js",
+      "request_scope": "brand",
+      "response_contract": "creative-job.v1",
+      "owner_only": true,
+      "rule": "Attach existing succeeded output to original version-bound target; stable idempotency; new successor revision; never silently rebase",
+      "read_only": false,
+      "response_field_types": {
+        "job_id": "string",
+        "association": "object",
+        "outputs": "array"
+      }
+    },
+    {
+      "id": "creative_preview",
+      "method": "GET",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/creative-preview",
+      "implementation": "src/campaigns/router.js",
+      "query_fields": [
+        "tenant_id",
+        "project_id",
+        "revision_id",
+        "expected_campaign_version"
+      ],
+      "response_fields": [
+        "preview"
+      ],
+      "read_only": true
+    },
+    {
+      "id": "media_bytes",
+      "method": "GET",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/revisions/:revisionId/assets/:assetId/preview",
+      "implementation": "src/media/previewDelivery.js",
+      "query_fields": [
+        "tenant_id",
+        "project_id",
+        "expected_campaign_version"
+      ],
+      "mime_types": [
+        "image/jpeg",
+        "image/png",
+        "image/webp",
+        "video/mp4"
+      ],
+      "rule": "Authenticated private delivery; rights and lineage checked, generation-pinned reads; no public/signed URLs; stale version 409; foreign/revoked asset 404; explicit video ranges bounded",
+      "read_only": "conditional: optional runtime delivery budget hook writes counters; inspect deployed composition before no-write probe"
+    },
+    {
+      "id": "calendar",
+      "method": "GET",
+      "path": "/customer/calendar",
+      "implementation": "src/campaigns/workspaceCalendar.js",
+      "query_fields": [
+        "tenant_id",
+        "project_id",
+        "from",
+        "to"
+      ],
+      "optional_fields": [
+        "cursor",
+        "limit",
+        "campaign_id",
+        "platform",
+        "workflow"
+      ],
+      "response_contract": "workspace-calendar.v1",
+      "response_fields": [
+        "window",
+        "entries",
+        "unscheduled",
+        "next_cursor"
+      ],
+      "constraints": {
+        "window": "from inclusive/to exclusive; max 93 elapsed days per request",
+        "limit": "1..100"
+      },
+      "read_only": true,
+      "response_field_types": {
+        "window": "object",
+        "entries": "array",
+        "unscheduled": "array",
+        "next_cursor": "string|null"
+      }
+    },
+    {
+      "id": "review",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/review",
+      "implementation": "src/campaigns/router.js",
+      "read_only": false,
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "expected_campaign_version",
+        "revision_id"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ]
+    },
+    {
+      "id": "preview-renders",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/preview-renders",
+      "implementation": "src/campaigns/router.js",
+      "read_only": false,
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "revision_id"
+      ],
+      "response_fields": [
+        "preview"
+      ],
+      "success_status": 201
+    },
+    {
+      "id": "preview-acknowledgements",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/preview-acknowledgements",
+      "implementation": "src/campaigns/router.js",
+      "read_only": false,
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "expected_campaign_version",
+        "revision_id",
+        "render_receipt_id",
+        "acknowledged"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ]
+    },
+    {
+      "id": "approval",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/approval",
+      "implementation": "src/campaigns/router.js",
+      "read_only": false,
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "expected_campaign_version",
+        "revision_id",
+        "preview_id",
+        "approved"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ]
+    },
+    {
+      "id": "schedule",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/schedule",
+      "implementation": "src/campaigns/router.js",
+      "read_only": false,
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "expected_campaign_version",
+        "revision_id",
+        "scheduled_for",
+        "timezone",
+        "local_datetime",
+        "utc_offset_minutes"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ]
+    },
+    {
+      "id": "reschedule",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/reschedule",
+      "implementation": "src/campaigns/router.js",
+      "read_only": false,
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "expected_campaign_version",
+        "revision_id",
+        "scheduled_for",
+        "timezone",
+        "local_datetime",
+        "utc_offset_minutes"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ]
+    },
+    {
+      "id": "unschedule",
+      "method": "POST",
+      "path": "/customer/campaigns/:campaignId/variants/:variantId/unschedule",
+      "implementation": "src/campaigns/router.js",
+      "read_only": false,
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "idempotency_key",
+        "expected_campaign_version",
+        "schedule_id"
+      ],
+      "response_fields": [
+        "result",
+        "campaign"
+      ]
+    },
+    {
+      "id": "connections",
+      "method": "GET",
+      "path": "/customer/social/connections",
+      "implementation": "src/social-publishing/service.js",
+      "query_scope": "brand",
+      "response_fields": [
+        "connections",
+        "next_cursor"
+      ],
+      "connection_fields": [
+        "connection_id",
+        "platform",
+        "account_id",
+        "display_name",
+        "status",
+        "expires_at",
+        "version"
+      ],
+      "optional_connection_fields": [
+        "capabilities",
+        "granted_scopes"
+      ],
+      "read_only": true,
+      "response_field_types": {
+        "connections": "array",
+        "next_cursor": "string|null"
+      }
+    },
+    {
+      "id": "oauth_intent",
+      "method": "POST",
+      "path": "/customer/social/oauth-intents",
+      "implementation": "src/social-publishing/service.js",
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "brand_id",
+        "platform",
+        "pkce_challenge"
+      ],
+      "response_contract": "social-oauth-intent.v1",
+      "response_fields": [
+        "intent_id",
+        "state",
+        "expires_at",
+        "authorize_url",
+        "redirect_uri",
+        "authorization_status"
+      ],
+      "optional_fields": [
+        "oauth_protocol",
+        "provider_pkce_required"
+      ],
+      "read_only": false
+    },
+    {
+      "id": "oauth_callback",
+      "method": "GET",
+      "path": "/customer/social/oauth/callback/:platform",
+      "implementation": "src/social-publishing/router.js",
+      "request": "Provider state/code relay only, no bearer; allowlisted platform; state/expiry/config checked",
+      "success_status": 303,
+      "rule": "Does not complete connection or grant scope; owner+browser verifier completion still required",
+      "read_only": true,
+      "excluded_from_live_read_only_acceptance": true
+    },
+    {
+      "id": "oauth_complete",
+      "method": "POST",
+      "path": "/customer/social/oauth-complete",
+      "implementation": "src/social-publishing/service.js",
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "brand_id",
+        "intent_id",
+        "state",
+        "code",
+        "code_verifier"
+      ],
+      "response": "connection object, not an envelope",
+      "read_only": false
+    },
+    {
+      "id": "disconnect",
+      "method": "POST",
+      "path": "/customer/social/connections/:id/disconnect",
+      "implementation": "src/social-publishing/service.js",
+      "request_scope": "brand",
+      "response": "revoked connection plus provider_revocation_status if attempted; LinkedIn local-only",
+      "read_only": false
+    },
+    {
+      "id": "dispatch",
+      "method": "POST",
+      "path": "/customer/social/dispatches",
+      "implementation": "src/social-publishing/service.js",
+      "request_fields": [
+        "tenant_id",
+        "project_id",
+        "brand_id",
+        "campaign_id",
+        "variant_id",
+        "schedule_id",
+        "expected_campaign_version",
+        "publishing_confirmed"
+      ],
+      "optional_fields": [
+        "connection_id"
+      ],
+      "constraints": {
+        "publishing_confirmed": true,
+        "connection_id": "omitted: resolved server-side from bound destination; never exposed in campaign view"
+      },
+      "response": "dispatch object",
+      "read_only": false
+    },
+    {
+      "id": "credit_read",
+      "method": "GET",
+      "path": "/customer/billing/subscription",
+      "implementation": "src/billing/customerRouter.js",
+      "query_fields": [
+        "tenant_id"
+      ],
+      "response_fields": [
+        "status",
+        "subscription",
+        "available_credits"
+      ],
+      "response_statuses": [
+        "ready",
+        "not_subscribed"
+      ],
+      "read_only": true,
+      "rule": "Ledger-derived balance, no Stripe network call or write",
+      "response_field_types": {
+        "status": "string",
+        "subscription": "object|null",
+        "available_credits": "integer|null"
+      }
+    },
+    {
+      "id": "plans",
+      "method": "GET",
+      "path": "/customer/billing/plans",
+      "implementation": "src/billing/customerRouter.js",
+      "rule": "Approved catalog only; COMMERCIAL_CATALOG_UNAVAILABLE if absent; never infer prices or allowances",
+      "read_only": true,
+      "query_fields": [
+        "tenant_id"
+      ]
+    },
+    {
+      "id": "workspace_bootstrap",
+      "method": "POST",
+      "path": "/customer/workspace/bootstrap",
+      "implementation": "src/customer-workspace/router.js",
+      "authentication": "verified customer identity token; trusted scope not yet required",
+      "request_fields": [],
+      "optional_fields": [
+        "business_name",
+        "website_or_social_profile",
+        "primary_marketing_challenge"
+      ],
+      "response_fields": [
+        "status"
+      ],
+      "conditional_response_fields": {
+        "ready": [
+          "workspace"
+        ],
+        "selection_required": [
+          "workspace",
+          "workspaces"
+        ]
+      },
+      "optional_response_fields": [
+        "requires_session_refresh"
+      ],
+      "success_status": 201,
+      "read_only": false,
+      "rule": "Existing provisioning only; subsequent scope refresh required when flagged; no entitlement/provider grant"
+    },
+    {
+      "id": "customer_upload_remove",
+      "method": "DELETE",
+      "path": "/customer/assets/:assetId",
+      "implementation": "src/media-intake/router.js",
+      "query_fields": [
+        "tenant_id",
+        "project_id",
+        "brand_id"
+      ],
+      "response_fields": [
+        "asset_id",
+        "state",
+        "physical_deletion"
+      ],
+      "owner_only": true,
+      "read_only": false,
+      "rule": "Logical deletion, idempotent and tenant-bound; bytes remain pending retention policy; browser delete gates stay off until hosted acceptance"
+    }
+  ],
+  "social": {
+    "connection_states": [
+      "active",
+      "expired",
+      "revoked"
+    ],
+    "oauth_web": {
+      "linkedin": {
+        "protocol": "linkedin_oidc_web",
+        "client_parameter": "client_id",
+        "provider_pkce_required": false,
+        "scopes_requested": [
+          "openid",
+          "profile",
+          "w_member_social"
+        ],
+        "callback": "https://getbizgenie.com/customer/social/oauth/callback/linkedin"
+      },
+      "tiktok": {
+        "protocol": "tiktok_web_v2",
+        "client_parameter": "client_key",
+        "provider_pkce_required": false,
+        "scopes_requested": [
+          "user.info.basic",
+          "video.upload"
+        ],
+        "callback_default": "https://getbizgenie.com/customer/social/oauth/callback/tiktok",
+        "reviewed_staging_override": "https://staging-api.getbizgenie.com/customer/social/oauth/callback/tiktok"
+      }
+    },
+    "internal_pkce": "S256 verifier required for both; state bound to actor/tenant/project/brand and one-time expiry; no provider PKCE fields invented",
+    "linkedin": {
+      "capabilities": "Use backend typed boolean available and reason; OAuth identity does not imply posting permission",
+      "member_login": "implemented when configured/reviewed",
+      "member_text_post": "disabled by default; no production reviewed Posts version/author resolver",
+      "image_video_organisation_analytics": "disabled",
+      "refresh": "unsupported",
+      "disconnect": "local credential invalidation only, not remote permission removal",
+      "publication_confirmation": "unverified; do not invent GET status API or public URL"
+    },
+    "tiktok": {
+      "delivery_mode": "draft_upload",
+      "direct_post": false,
+      "SEND_TO_USER_INBOX": "uploaded; creator_action_required true; never published",
+      "PUBLISH_COMPLETE": "uploaded; creator_action_required false; visibility unverified; never inferred published",
+      "FAILED": "definitive failed upload; no published evidence",
+      "unknown_or_lost_reply": "reconciliation_required; no blind create/PUT retry"
+    },
+    "dispatch_states": [
+      "queued",
+      "claimed",
+      "sending",
+      "reconciliation_required",
+      "published",
+      "uploaded",
+      "failed",
+      "cancelled"
+    ],
+    "linkedin_submission_states": [
+      "submitted",
+      "accepted_unverified",
+      "submission_unknown"
+    ],
+    "uploaded_fields": [
+      "operation_kind",
+      "creator_action_required",
+      "uploaded_at",
+      "upload_time_source"
+    ],
+    "public_publication_rule": "Only verified platform evidence may create published record; draft uploaded/accepted is never published"
+  },
+  "generation": {
+    "execution_classes": [
+      "text.standard",
+      "image.normal",
+      "video.normal",
+      "video.premium"
+    ],
+    "job_states": [
+      "queued",
+      "claimed",
+      "calling",
+      "recovery_required",
+      "succeeded",
+      "failed",
+      "cancelled"
+    ],
+    "credit_rule": {
+      "confirm": "reserve once",
+      "succeeded": "debit once and release held amount in same ledger settlement",
+      "definitive_failed": "release reservation once, no debit",
+      "unknown": "hold reservation and reconcile stable identity, never resubmit or claim refunded",
+      "cancel": "pre-call only, stable fence/release"
+    },
+    "video": "Existing provider/profile fixes duration/model/aspect; confirmation binds profile and policy; no client-authored provider cost or duration override",
+    "pricing": "Read actual approved PostgreSQL policy; synthetic fixture prices are not commercial canon",
+    "private_delivery": "No unrestricted signed URL or public bucket key returned",
+    "legacy_video_get": "Excluded from read-only acceptance: can settle billing"
+  },
+  "errors": {
+    "envelope": {
+      "error": {
+        "code": "stable machine code",
+        "message": "safe customer message"
+      }
+    },
+    "warning": "Some workspace/onboarding errors additionally carry status/details; use route schema, not one universal shape",
+    "401": [
+      "AUTHENTICATION_REQUIRED"
+    ],
+    "404": [
+      "RESOURCE_NOT_AVAILABLE"
+    ],
+    "403": [
+      "BRAND_BRAIN_WRITE_FORBIDDEN"
+    ],
+    "400": [
+      "VALIDATION_ERROR",
+      "OAUTH_PKCE_REQUIRED"
+    ],
+    "409": [
+      "VERSION_CONFLICT",
+      "QUOTE_CHANGED",
+      "QUOTE_EXPIRED",
+      "QUOTE_CANCELLED",
+      "IDEMPOTENCY_KEY_CONFLICT",
+      "RESULT_NOT_READY",
+      "PUBLICATION_AUTHORITY_STALE",
+      "CONNECTION_UNAVAILABLE",
+      "OAUTH_STATE_INVALID"
+    ],
+    "422": [
+      "PLATFORM_PERMISSION_REQUIRED",
+      "OPERATION_UNSUPPORTED",
+      "DIRECT_POST_DISABLED",
+      "STAGE_NOT_ATTACHABLE",
+      "CREATIVE_BRIEF_REQUIRED"
+    ],
+    "503": [
+      "SOCIAL_NOT_CONFIGURED",
+      "SOCIAL_TOKEN_VAULT_UNAVAILABLE",
+      "OAUTH_PROVIDER_UNAVAILABLE",
+      "LINKEDIN_POSTING_NOT_CONFIGURED",
+      "GENERATION_BILLING_UNAVAILABLE",
+      "CREATIVE_JOBS_UNAVAILABLE",
+      "EXECUTION_RECONCILIATION_REQUIRED",
+      "COMMERCIAL_CATALOG_UNAVAILABLE"
+    ],
+    "402": [
+      "GENERATION_CREDITS_UNAVAILABLE"
+    ],
+    "rule": "Do not retry ambiguous writes blindly; refresh/reload only per route guidance; 404 alone is not proof of authorization success"
+  },
+  "contract_revision": 3,
+  "verified_by": "test/generation-quotes.integration.test.js: versioned customer contract journey"
+}
