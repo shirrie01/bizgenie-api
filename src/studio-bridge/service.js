@@ -26,7 +26,7 @@ function config(input){
  const c={maxRequests:60,maxIdentities:10000,maxConcurrent:8,timeoutMs:30000,...input};
  if(c.environment!=='staging'||!/^bizgenie-api-staging-[0-9]{5}-[a-z0-9]{3}$/.test(c.revision||'')||!c.reviewRef||!/^[a-f0-9]{40}$/.test(c.sourceSha||''))throw Error('Reviewed staging target required');
  const u=new URL(c.upstream),a=new URL(c.audience);
- if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||c.origin!=='https://staging-app.getbizgenie.com')throw Error('Pinned staging URLs and Studio origin required');
+ if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
  for(const [key,lo,hi] of [['maxRequests',1,600],['maxIdentities',1,10000],['maxConcurrent',1,32],['timeoutMs',100,30000]])if(!Number.isInteger(c[key])||c[key]<lo||c[key]>hi)throw Error('Bounded bridge limits required');
  return {...c,upstream:u.origin,audience:a.origin};
 }
