@@ -3,8 +3,10 @@
 const express=require('express');
 const {pipeline}=require('node:stream/promises');const {Readable,Transform}=require('node:stream');
 const {AuthenticationRequiredError}=require('../authorization');
+const CheckoutBridgeSchema=require('../billing/stripe/service').CheckoutRequestSchema.extend({tenant_id:require('../billing/schema').identifier}).strict();
 const UUID='[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
 const routes=[
+ ['POST','/billing/stripe/checkout'],
  ['GET|HEAD','/customer/workspace(?:/brand-brain|/onboarding)?'],
  ['POST','/customer/workspace/(?:bootstrap|select|brands)'],['PUT','/customer/workspace/(?:brand-brain|onboarding)'],
  ['GET|HEAD','/customer/(?:calendar|assets|creative-jobs|social/(?:connections|dispatches|calendar)|billing/(?:subscription|plans|credit-preview))'],
@@ -26,7 +28,7 @@ function config(input){
  const c={maxRequests:60,maxIdentities:10000,maxConcurrent:8,timeoutMs:30000,...input};
  if(c.environment!=='staging'||!/^bizgenie-api-staging-[0-9]{5}-[a-z0-9]{3}$/.test(c.revision||'')||!c.reviewRef||!/^[a-f0-9]{40}$/.test(c.sourceSha||''))throw Error('Reviewed staging target required');
  const u=new URL(c.upstream),a=new URL(c.audience);
- if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||c.origin!=='https://staging-app.getbizgenie.com')throw Error('Pinned staging URLs and Studio origin required');
+ if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
  for(const [key,lo,hi] of [['maxRequests',1,600],['maxIdentities',1,10000],['maxConcurrent',1,32],['timeoutMs',100,30000]])if(!Number.isInteger(c[key])||c[key]<lo||c[key]>hi)throw Error('Bounded bridge limits required');
  return {...c,upstream:u.origin,audience:a.origin};
 }
@@ -39,7 +41,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
  app.use((req,res,next)=>{res.set('Cache-Control','private, no-store');res.vary('Authorization');res.vary('Origin');
   if(req.headers.origin&&req.headers.origin!==c.origin)return failure(res,403,'ORIGIN_FORBIDDEN');
   if(PRIVATE_HEADERS.some(k=>req.headers[k]!==undefined))return failure(res,400,'SERVER_HEADERS_FORBIDDEN');
-  const raw=req.originalUrl.split('?')[0];if(!/^\/customer\//.test(raw)||/\.\.|\\|\/\/|%(?!3[aA])/i.test(raw))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+  const raw=req.originalUrl.split('?')[0];if((!/^\/customer\//.test(raw)&&raw!=='/billing/stripe/checkout')||/\.\.|\\|\/\/|%(?!3[aA])/i.test(raw))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
   const method=req.method==='OPTIONS'?req.header('access-control-request-method'):req.method;
   if(!route(method,raw))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
   res.set('Access-Control-Allow-Origin',c.origin);res.set('Access-Control-Expose-Headers','Content-Length,Content-Range,Accept-Ranges');
@@ -50,6 +52,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
   if(!['GET','HEAD'].includes(req.method)&&c.allowWrites!==true)return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true)return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
   if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true)return failure(res,403,'SOCIAL_WRITES_DISABLED');
   return next();
@@ -65,13 +68,14 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });
- const jsonBody=express.raw({type:()=>true,limit:'100kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
+ const jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
  app.use(async(req,res)=>{
   const controller=res.locals.controller;let upstream;
   const cancel=()=>controller.abort();req.once('aborted',cancel);res.once('close',cancel);
   try{
    let body=req.body;const isBytes=/\/assets\/uploads\//.test(req.path)&&req.method==='PUT';
    if(!isBytes&&body?.length){if(body.length>(req.path.startsWith('/customer/generation-quotes')?16384:102400))return failure(res,413,'BRIDGE_REQUEST_TOO_LARGE');if(!/^application\/json(?:;|$)/i.test(req.header('content-type')||''))return failure(res,415,'JSON_REQUIRED');try{body=JSON.parse(body.toString('utf8'));}catch{return failure(res,400,'VALIDATION_ERROR');}if(!body||typeof body!=='object'||Array.isArray(body))return failure(res,400,'VALIDATION_ERROR');}
+   if(req.path==='/billing/stripe/checkout'&&!CheckoutBridgeSchema.safeParse(body).success)return failure(res,400,'STRIPE_BILLING_VALIDATION_ERROR');
    const scope=res.locals.actor.trusted_scope;
    if(!IDENTITY.test(req.path))for(const key of ['tenant_id','project_id','brand_id']){
     const values=[req.query[key],isBytes?undefined:body?.[key]].filter(v=>v!==undefined);

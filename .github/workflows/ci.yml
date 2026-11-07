@@ -112,6 +112,11 @@ jobs:
           echo "::add-mask::$admin_key"
           echo "ADMIN_KEY=$admin_key" >> "$GITHUB_ENV"
 
+      - name: Build and test staging bridge container (synthetic config, no IAM calls)
+        run: |
+          docker build --file Dockerfile.studio-bridge --tag bizgenie-studio-bridge:ci .
+          bash scripts/staging/smoke-studio-bridge.sh bizgenie-studio-bridge:ci
+
       - name: Build Dockerfile image locally
         shell: bash
         run: |

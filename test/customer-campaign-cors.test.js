@@ -42,3 +42,15 @@ it('permits DELETE only on the existing upload removal route for configured stag
   assert.equal((await client.options('/customer/assets/'+id).set('origin','https://attacker.example').set('access-control-request-method','DELETE')).status,403);
  }
 });
+
+it('exact Pages origin configured for staging workspace discovery/bootstrap preserves unauthenticated denial',async()=>{
+ const {loadCorsConfig}=require('../src/activation/cors');const origin='https://bizgenie-studio-staging.pages.dev';
+ const config=loadCorsConfig({env:{BIZGENIE_ENVIRONMENT:'staging',CORS_ENABLED:'true',CORS_ALLOWED_ORIGINS:origin}});
+ const client=request(createApp({env:{},corsConfig:config,logger:{warn(){},error(){}}}));
+ for(const [path,method]of [['/customer/workspace','GET'],['/customer/workspace/bootstrap','POST']]){
+  const r=await client.options(path).set('origin',origin).set('access-control-request-method',method).set('access-control-request-headers','authorization,content-type');
+  assert.equal(r.status,204);assert.equal(r.headers['access-control-allow-origin'],origin);
+ }
+ const r=await client.get('/customer/workspace').set('origin',origin);assert.equal(r.status,401);assert.equal(r.headers['access-control-allow-origin'],origin);
+ assert.equal((await client.options('/customer/workspace').set('origin','https://attacker.pages.dev').set('access-control-request-method','GET')).status,403);
+});

@@ -31,3 +31,32 @@ test('raw upload bytes and range headers are forwarded without JSON wrapping or 
  const k=kit(),bytes=Buffer.from([137,80,78,71,13,10,26,10]);const r=await request(k.app).put('/customer/assets/uploads/11111111-1111-4111-8111-111111111111/bytes?'+new URLSearchParams(k.scope)).set('authorization','Bearer valid').set('content-type','image/png').set('cookie','ignored').send(bytes);assert.equal(r.status,200);assert.deepEqual(k.calls[0].init.body,bytes);assert.equal(k.calls[0].init.headers['content-type'],'image/png');assert.equal(k.calls[0].init.headers.cookie,undefined);
  const range=kit();await request(range.app).get('/customer/campaigns/11111111-1111-4111-8111-111111111111/variants/11111111-1111-4111-8111-111111111111/revisions/11111111-1111-4111-8111-111111111111/assets/11111111-1111-4111-8111-111111111111/preview?'+new URLSearchParams(range.scope)).set('authorization','Bearer valid').set('range','bytes=0-7');assert.equal(range.calls[0].init.headers.range,'bytes=0-7');
 });
+
+test('confirmed Pages staging origin has exact GET/bootstrap preflights with authentication preserved',async()=>{
+ const origin='https://bizgenie-studio-staging.pages.dev',k=kit({origin});
+ for(const [path,method] of [['/customer/workspace','GET'],['/customer/workspace/bootstrap','POST']]){
+  const r=await request(k.app).options(path).set('origin',origin).set('access-control-request-method',method).set('access-control-request-headers','authorization,content-type');
+  assert.equal(r.status,204);assert.equal(r.headers['access-control-allow-origin'],origin);assert.equal(r.headers['access-control-allow-methods'],method);assert.equal(k.iamCalls.length,0);
+ }
+ const unauth=await request(k.app).get('/customer/workspace').set('origin',origin);
+ assert.equal(unauth.status,401);assert.equal(unauth.headers['access-control-allow-origin'],origin);assert.equal(k.iamCalls.length,0);
+ const valid=await request(k.app).get('/customer/workspace').set('origin',origin).set('authorization','Bearer valid');
+ assert.equal(valid.status,200);assert.equal(valid.headers['access-control-allow-origin'],origin);assert.equal(k.calls[0].init.headers.Authorization,'Bearer valid');
+ for(const foreign of ['https://preview.bizgenie-studio-staging.pages.dev','https://bizgenie-studio-staging.pages.dev.attacker.test','https://staging-app.getbizgenie.com']){
+  assert.equal((await request(k.app).options('/customer/workspace').set('origin',foreign).set('access-control-request-method','GET')).status,403);
+ }
+ assert.throws(()=>kit({origin:'*'}));assert.throws(()=>kit({origin:'https://arbitrary.pages.dev'}));
+});
+test('Pages origin selection does not change staging-only target or bootstrap write gates',async()=>{
+ const origin='https://bizgenie-studio-staging.pages.dev';assert.throws(()=>kit({origin,environment:'production'}));
+ const k=kit({origin,allowWrites:false});const r=await request(k.app).post('/customer/workspace/bootstrap').set('origin',origin).set('authorization','Bearer fresh').send({business_name:'Synthetic test business'});
+ assert.equal(r.status,403);assert.equal(r.body.error.code,'STAGING_WRITES_DISABLED');assert.equal(k.calls.length,0);
+});
+
+test('server entrypoint selects only an explicitly approved exact staging origin from environment',()=>{
+ const {fromEnv}=require('../scripts/staging/studio-bridge');
+ const env={BIZGENIE_ENVIRONMENT:'staging',SUPABASE_URL:'https://zrczojyxebwjgpymbmgu.supabase.co',SUPABASE_PUBLISHABLE_KEY:'synthetic_public_key',BG_BRIDGE_TARGET_URL:target.upstream,BG_BRIDGE_AUDIENCE:target.audience,BG_BRIDGE_REVISION:target.revision,BG_BRIDGE_SOURCE_SHA:target.sourceSha,BG_BRIDGE_REVIEW_REF:'synthetic_review'};
+ assert.equal(typeof fromEnv({...env,BG_BRIDGE_STUDIO_ORIGIN:'https://bizgenie-studio-staging.pages.dev'}),'function');
+ assert.equal(typeof fromEnv(env),'function');
+ assert.throws(()=>fromEnv({...env,BG_BRIDGE_STUDIO_ORIGIN:'https://arbitrary.pages.dev'}));
+});
