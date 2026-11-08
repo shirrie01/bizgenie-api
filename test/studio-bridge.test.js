@@ -60,3 +60,34 @@ test('server entrypoint selects only an explicitly approved exact staging origin
  assert.equal(typeof fromEnv(env),'function');
  assert.throws(()=>fromEnv({...env,BG_BRIDGE_STUDIO_ORIGIN:'https://arbitrary.pages.dev'}));
 });
+test('workspace-only flag permits exact authenticated bootstrap POST with a 2 KiB byte cap',async()=>{
+ const k=kit({allowWrites:false,allowWorkspaceBootstrap:true,allowGenerationConfirmation:false,allowSocialWrites:false,allowStripeCheckout:false});
+ const path='/customer/workspace/bootstrap';
+ assert.equal((await request(k.app).post(path).send({business_name:'Fixture'})).status,401);
+ const start=JSON.stringify({business_name:'Synthetic property firm'}),exact=start+' '.repeat(2048-Buffer.byteLength(start));
+ assert.equal((await request(k.app).post(path).set('authorization','Bearer fresh').set('content-type','application/json').send(exact)).status,200);
+ assert.equal(JSON.parse(k.calls[0].init.body).business_name,'Synthetic property firm');assert.equal(k.calls[0].init.headers.Authorization,'Bearer fresh');
+ for(const bytes of [exact+' ',JSON.stringify({business_name:'é'.repeat(1024)})])assert.equal((await request(k.app).post(path).set('authorization','Bearer fresh').set('content-type','application/json').send(bytes)).status,413);
+ assert.equal(k.calls.length,1);assert.equal(k.iamCalls.length,1);
+ for(const suffix of ['?other=1','/','/extra'])assert.ok([403,404].includes((await request(k.app).post(path+suffix).set('authorization','Bearer fresh').send({})).status));
+ for(const method of ['put','patch','delete'])assert.equal((await request(k.app)[method](path).set('authorization','Bearer fresh').send({})).status,404);
+ assert.equal(k.calls.length,1);
+});
+test('workspace-only flag leaves every other allowlisted write blocked before IAM',async()=>{
+ const k=kit({allowWrites:false,allowWorkspaceBootstrap:true,allowGenerationConfirmation:false,allowSocialWrites:false,allowStripeCheckout:false}),u='11111111-1111-4111-8111-111111111111';
+ const writes=[['POST','/billing/stripe/checkout'],['POST','/customer/workspace/select'],['POST','/customer/workspace/brands'],['PUT','/customer/workspace/brand-brain'],['PUT','/customer/workspace/onboarding'],['POST','/customer/generation-quotes'],['POST','/customer/campaign-recommendations'],['POST','/customer/campaigns'],['PATCH','/customer/campaigns/'+u],['DELETE','/customer/assets/'+u],['POST','/customer/assets/uploads'],['PUT','/customer/assets/uploads/'+u+'/bytes']];
+ for(const action of ['confirm','cancel'])writes.push(['POST','/customer/generation-quotes/'+u+'/'+action]);
+ for(const action of ['attach','cancel'])writes.push(['POST','/customer/creative-jobs/quoted:fixture/'+action]);
+ for(const action of ['archive','restore','content-items'])writes.push(['POST','/customer/campaigns/'+u+'/'+action]);
+ for(const action of ['review','preview-renders','preview-acknowledgements','approval','schedule','reschedule','unschedule','measurements'])writes.push(['POST','/customer/campaigns/'+u+'/variants/'+u+'/'+action]);
+ for(const action of ['complete','revoke'])writes.push(['POST','/customer/assets/'+u+'/'+action]);
+ for(const path of ['oauth-intents','oauth-complete','connections/'+u+'/refresh','connections/'+u+'/disconnect','dispatches','dispatches/'+u+'/cancel'])writes.push(['POST','/customer/social/'+path]);
+ for(const [method,path] of writes){const r=await request(k.app)[method.toLowerCase()](path).set('authorization','Bearer valid').send({});assert.equal(r.status,403,method+' '+path);assert.equal(r.body.error.code,'STAGING_WRITES_DISABLED',path);}
+ assert.equal(writes.length,35);assert.equal(k.calls.length,0);assert.equal(k.iamCalls.length,0);
+});
+test('workspace-only exception preserves GET HEAD and unauthenticated OPTIONS; default remains closed',async()=>{
+ const k=kit({allowWrites:false,allowWorkspaceBootstrap:true});
+ const p=await request(k.app).options('/customer/workspace/bootstrap').set('origin',target.origin).set('access-control-request-method','POST').set('access-control-request-headers','authorization,content-type');assert.equal(p.status,204);assert.equal(k.iamCalls.length,0);
+ for(const method of ['get','head'])assert.equal((await request(k.app)[method]('/customer/workspace').set('authorization','Bearer valid')).status,200);
+ const off=kit({allowWrites:false});assert.equal((await request(off.app).post('/customer/workspace/bootstrap').set('authorization','Bearer fresh').send({})).status,403);assert.equal(off.iamCalls.length,0);
+});
