@@ -56,12 +56,16 @@ function goalKind(goal, brandBrain = {}) {
   if (/\b(retailer|retailers|wholesaler|wholesalers|distributor|distributors|trade|stocking|stockists|distribution|trade enquiries|businesses)\b/.test(value)) return "lead";
   if (/\b(event|opening|launch|grand opening|new product|product launch)\b/.test(value)) return "launch";
   if (/\b(offer|sale|discount|deal|promo)\b/.test(value)) return "offer";
-  if (/\b(book|appointment|enquiry|enquiries|lead|leads|quote)\b/.test(value)) return "lead";
+  if (/\b(book|booking|bookings|appointment|consultation|consultations|valuation|valuations|enquiry|enquiries|lead|leads|quote)\b/.test(value) || /\b(sales|lettings?)\b/.test(value) && /\binstructions\b/.test(value)) return "lead";
   return "awareness";
 }
 
-function titleCase(value) {
-  return value.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => word[0].toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+function naturalGoalTitle(value,kind) {
+  const text=value.trim().replace(/\s+/g,' ').replace(/[.!?]+$/,'');
+  if (/\bbookings?\b/i.test(text)) return 'Booking requests';
+  if (/\bconsultations?\b/i.test(text)) return 'Consultation enquiries';
+  if (text.length<=160) return text.charAt(0).toUpperCase()+text.slice(1);
+  return {lead:'Customer enquiries',launch:'Launch awareness',offer:'Offer enquiries',awareness:'Brand awareness'}[kind];
 }
 
 function itemSet(kind, { goal = "", brandBrain = {} } = {}) {
@@ -137,7 +141,7 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
   const kind = goalKind(request.goal, context.brand_brain);
   const generatedAt = iso(now());
   const strategy = planRecommendation(request.goal, context.brand_brain);
-  const campaignName = strategy ? strategy.title : `${titleCase(request.goal)} Campaign`;
+  const campaignName = strategy ? strategy.title : naturalGoalTitle(request.goal,kind);
   const suggestedItems = itemSet(kind, {
     goal: request.goal,
     brandBrain: context.brand_brain,

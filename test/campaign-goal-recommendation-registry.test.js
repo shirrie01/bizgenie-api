@@ -192,3 +192,15 @@ it('SM Properties full lead goal gets a complete property title and grounded ite
  assert.equal(record.create_campaign_payload.goal,goal);assert.equal(record.create_campaign_payload.display_timezone,'Europe/London');assert.match(record.suggested_items[0].name,/Property/);
  assert.doesNotMatch(JSON.stringify(record),/Northgate|stockist|clinic|Birmingham|guaranteed|£\d/);assert.equal(record.not_enough_data_yet,true);
 });
+
+it('F1/F2 preserve landlord/property/booking conversion intent without five-word title truncation',async()=>{
+ for(const [goal,title] of [['Get more valuation requests from landlords','Landlord valuation requests'],['Get more enquiries for vacant rental property','Rental property enquiries'],['Get more sales and lettings instructions','Sales and lettings instructions'],['Get more booking requests','Booking requests'],['Generate consultation enquiries','Consultation enquiries']]){
+  const registry=createDefaultGoalRecommendationRegistry({idFactory:()=>RECOMMENDATION_ID,now:()=>new Date(NOW)});
+  const r=await registry.recommend(context,{...request,goal});assert.equal(r.recommendation_kind,'lead',goal);assert.equal(r.campaign_name,title,goal);assert.equal(r.create_campaign_payload.goal,goal);assert.doesNotMatch(r.campaign_name,/From Campaign$|Campaign$/);
+ }
+});
+it('industry-neutral short goals retain their full wording and long goals retain full payload not a chopped title',async()=>{
+ const registry=createDefaultGoalRecommendationRegistry({idFactory:()=>RECOMMENDATION_ID,now:()=>new Date(NOW)});
+ const goal='Help more customers discover our locally made ceramics';const r=await registry.recommend(context,{...request,goal});assert.equal(r.campaign_name,goal);
+ const longGoal='Build brand awareness '+ 'through thoughtful customer stories '.repeat(8);const q=await createDefaultGoalRecommendationRegistry().recommend(context,{...request,goal:longGoal,idempotency_key:'long_intent'});assert.equal(q.campaign_name,'Brand awareness');assert.equal(q.create_campaign_payload.goal,longGoal.trim());
+});

@@ -99,7 +99,7 @@ describe("customer goal recommendation API", () => {
     assert.equal(response.body.recommendation.goal, "Launch a September offer for local shops");
     assert.equal(response.body.recommendation.recommendation_kind, "launch");
     assert.equal(response.body.recommendation.next_action.code, "create_campaign");
-    assert.equal(response.body.recommendation.create_campaign_payload.name, "Launch A September Offer For Campaign");
+    assert.equal(response.body.recommendation.create_campaign_payload.name, "Launch a September offer for local shops");
     assert.equal(response.body.recommendation.suggested_items.length, 3);
     for (const item of response.body.recommendation.suggested_items) {
       assert.match(item.reason, /because/i);
