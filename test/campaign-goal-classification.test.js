@@ -67,15 +67,15 @@ describe("goal classification follows the conversion objective (F2)", () => {
 describe("campaign titles are complete phrases (F1)", () => {
   it("the four reproduced titles are fixed", () => {
     assert.equal(campaignTitle("Get more valuation requests from landlords"), "Get More Valuation Requests from Landlords Campaign");
-    assert.equal(campaignTitle("Get more enquiries for my residential lettings and sales"), "Get More Enquiries for My Residential Lettings Campaign");
-    assert.equal(campaignTitle("Increase instructions for sales and lettings in Bradford"), "Increase Instructions for Sales and Lettings Campaign");
+    assert.equal(campaignTitle("Get more enquiries for my residential lettings and sales"), "Get More Enquiries for My Residential Lettings and Sales Campaign");
+    assert.equal(campaignTitle("Increase instructions for sales and lettings in Bradford"), "Increase Instructions for Sales and Lettings in Bradford Campaign");
     assert.equal(campaignTitle("Promote our new soft drink flavour to cafes"), "Promote Our New Soft Drink Flavour to Cafes Campaign");
   });
 
-  it("every industry goal yields a title of at most 60 characters that never ends on a connecting word", () => {
+  it("every industry goal yields a title of at most 200 code points that never ends on a connecting word", () => {
     for (const goal of ALL_GOALS) {
       const title = campaignTitle(goal);
-      assert.ok(title.length > 0 && title.length <= 60, `${goal} -> ${title} (${title.length})`);
+      assert.ok(title.length > 0 && [...title].length <= 200, `${goal} -> ${title} (${title.length})`);
       assert.match(title, / Campaign$/, title);
       assert.doesNotMatch(stem(title), DANGLING, `${goal} -> ${title}`);
     }
@@ -88,11 +88,11 @@ describe("campaign titles are complete phrases (F1)", () => {
 
   it("a long goal is cut at a word boundary and never mid-phrase", () => {
     const title = campaignTitle("Get more valuation requests from landlords and homeowners across Greater Manchester and the north west");
-    assert.ok(title.length <= 60, title);
+    assert.ok([...title].length <= 200, title);
     assert.doesNotMatch(stem(title), DANGLING, title);
-    assert.equal(title, "Get More Valuation Requests from Landlords Campaign");
+    assert.equal(title, "Get More Valuation Requests from Landlords and Homeowners Across Greater Manchester and the North West Campaign");
     const huge = campaignTitle("x".repeat(200));
-    assert.ok(huge.length <= 60, huge.length);
+    assert.ok([...huge].length <= 200, huge.length);
     assert.doesNotMatch(huge, /\s$/);
   });
 
@@ -139,7 +139,7 @@ describe("recommendations keep their structure (no second engine)", () => {
     for (const goal of ["Get more valuation requests from landlords", "Fill our vacant rental properties", "Increase instructions for sales and lettings in Bradford"]) {
       const rec = make(goal);
       assert.equal(rec.recommendation_kind, "lead", goal);
-      assert.deepEqual(rec.suggested_items.map((i) => i.name), ["Enquiry post", "LinkedIn credibility post", "Follow-up email"], goal);
+      assert.deepEqual(rec.suggested_items.map((i) => i.name), ["Property information explainer", "Property enquiry post", "Consent-based property follow-up"], goal);
     }
     assert.deepEqual(make("Build awareness of our new flavour").suggested_items.map((i) => i.name), ["Brand awareness post", "Facebook story post", "Simple email update"]);
   });
@@ -147,5 +147,22 @@ describe("recommendations keep their structure (no second engine)", () => {
   it("no recommendation text mentions an unrelated industry (no drinks wording for a property goal)", () => {
     const rec = make("Get more valuation requests from landlords");
     assert.doesNotMatch(JSON.stringify(rec), /drink|beverage|cocktail|fonzo|flavour/i);
+  });
+});
+
+// BG-EXEC-009: retain location/intent from both implementations; no provider or inferred property facts.
+describe("reconciled campaign contract", () => {
+  const make = goal => buildRecommendation({context:{tenant_id:"t",project_id:"p",brand_id:"b",brand_brain:{}},request:{goal,brand_id:"b",display_timezone:"Europe/London"},now:()=>new Date("2026-11-09T10:00:00Z"),idFactory:()=>"rec_once"});
+  it("keeps booking locations and property locations in natural titles", () => {
+    for (const goal of ["Get more bookings for our spa in Bradford", "Increase instructions for sales and lettings in Bradford", "Get more valuation requests from landlords in Leeds"]) {
+      const r=make(goal);assert.equal(r.recommendation_kind,"lead");assert.match(r.campaign_name,/Bradford|Leeds/);assert.equal(r.create_campaign_payload.goal,goal);assert.equal(r.create_campaign_payload.name,r.campaign_name);assert.equal(r.create_campaign_payload.display_timezone,"Europe/London");
+    }
+  });
+  it("retains specific property items without importing bridge activation", () => {
+    const r=make("Get more enquiries for vacant rental property");assert.equal(r.recommendation_kind,"lead");assert.match(r.suggested_items[0].name,/Property/);assert.doesNotMatch(JSON.stringify(r),/guaranteed|Northgate|£/);
+  });
+  it("Unicode title boundaries match the existing campaign name schema", () => {
+    const {name}=require("../src/campaigns/schema");
+    const title=campaignTitle("🏠".repeat(200));assert.equal(name.safeParse(title).success,true);assert.equal(title.isWellFormed(),true);assert.ok([...title].length<=200);
   });
 });

@@ -74,7 +74,8 @@ function goalKind(goal, brandBrain = {}) {
 
 // Campaign name from the customer's own goal: the whole phrase when it fits, otherwise cut at a word boundary and never left
 // ending on a connecting word ("...Requests From Campaign"). Always at most CAMPAIGN_TITLE_MAX characters.
-const CAMPAIGN_TITLE_MAX = 60;
+// Existing campaign command schema allows200 Unicode code points; a60-character UI cap lost locations.
+const CAMPAIGN_TITLE_MAX = 200;
 const CAMPAIGN_SUFFIX = " Campaign";
 const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of", "on", "or", "per", "the", "to", "via", "with"]);
 const DANGLING = new Set([...SMALL_WORDS, "my", "our", "your", "their", "its", "this", "that", "these", "those", "some", "any", "all", "more", "most", "new", "other", "local"]);
@@ -94,7 +95,7 @@ function campaignTitle(goal) {
   const room = CAMPAIGN_TITLE_MAX - (hasSuffix ? 0 : CAMPAIGN_SUFFIX.length);
   let words = text.split(" ").map((word, index) => titleWord(word, index, shout));
   const joined = () => words.join(" ");
-  if (joined().length > room) {
+  if ([...joined()].length > room) {
     const kept = [];
     let length = 0;
     for (const word of words) {
@@ -182,7 +183,7 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
   const kind = goalKind(request.goal, context.brand_brain);
   const generatedAt = iso(now());
   const strategy = planRecommendation(request.goal, context.brand_brain);
-  const campaignName = strategy ? strategy.title : campaignTitle(request.goal);
+  const campaignName = strategy && strategy.kind !== "property" ? strategy.title : campaignTitle(request.goal);
   const suggestedItems = itemSet(kind, {
     goal: request.goal,
     brandBrain: context.brand_brain,
@@ -193,6 +194,12 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
       { name: "Local appointment enquiry post", format: "text", platform: "facebook", placement: "feed", destination_label: "Facebook", reason: "" },
       { name: "Consent-based appointment follow-up", format: "text", platform: "email", placement: "message", destination_label: "Email", reason: "" }
     );
+  }
+  if (strategy?.kind === "property") {
+    suggestedItems.splice(0, suggestedItems.length,
+      { name: "Property information explainer", format: "text", platform: "instagram", placement: "feed", destination_label: "Instagram", reason: "" },
+      { name: "Property enquiry post", format: "text", platform: "facebook", placement: "feed", destination_label: "Facebook", reason: "" },
+      { name: "Consent-based property follow-up", format: "text", platform: "email", placement: "message", destination_label: "Email", reason: "" });
   }
   if (strategy) suggestedItems.forEach((item, index) => { if (strategy.reasons[index]) item.reason = strategy.reasons[index]; });
   // Saved channel preferences (completed onboarding only) put preferred channels first. This never adds,

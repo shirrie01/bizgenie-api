@@ -34,6 +34,15 @@ function planRecommendation(goal, brandBrain = {}) {
       gaps: "Confirm approved treatment descriptions, booking URL, practitioner credentials, geographic catchment and claims policy."
     };
   }
+  if (/\b(property|properties|estate agency)\b/.test(text) && /\b(residential|rental|sales|lettings|letting|buyers|landlords)\b/.test(text) || /\blandlords?\b/.test(text) && /\bvaluations?\b/.test(text) || /\bsales\b/.test(text) && /\blettings?\b/.test(text) && /\binstructions\b/.test(text)) {
+    const sales=/\bsales\b/.test(text),lettings=/\blettings?\b/.test(text);
+    const title=/\blandlords?\b/.test(text)&&/\bvaluations?\b/.test(text)?'Landlord valuation requests':sales&&lettings&&/\binstructions\b/.test(text)?'Sales and lettings instructions':/\bvacant\b/.test(text)&&/\brental\b/.test(text)?'Rental property enquiries':sales&&lettings?'Property sales and lettings enquiries':sales?'Property sales enquiries':lettings?'Property lettings enquiries':'Property enquiries';
+    return {kind:'property',title,
+      summary:'Generate enquiries using customer-confirmed property details and an approved contact route. Do not invent available listings, locations, prices or results.',
+      explanation:'Funnel: verified property information → enquiry → qualified conversation. Track actual enquiries; no conversion rates, financial returns or demand are assumed.',
+      reasons:['Explain only verified property details and direct interested customers to the approved enquiry route.','Use customer-approved property marketing content; confirm availability and permission to market before publication.','Use consent-based follow-up; do not assume permission to contact buyers or landlords.'],
+      gaps:'Confirm services, listing facts, availability, marketing permissions, enquiry destination and geographic coverage.'};
+  }
   return null;
 }
 module.exports = { planRecommendation };
