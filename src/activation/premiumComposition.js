@@ -15,7 +15,7 @@
 //                                 STRATEGY_WORKFLOW_PRICE_POLICY_ID; no approved workflow pricing exists yet, so this stays off until a founder-approved policy is supplied)
 const { ActivationConfigurationError, activationFlag, requireActivationEnvironment } = require("./config");
 
-const FLAGS = ["QUOTED_GENERATION_ENABLED", "MEDIA_INTAKE_ENABLED", "SOCIAL_PUBLISHING_ENABLED", "LEARNING_ENABLED", "STRATEGY_WORKFLOWS_ENABLED"];
+const FLAGS = ["QUOTED_GENERATION_ENABLED", "MEDIA_INTAKE_ENABLED", "SOCIAL_PUBLISHING_ENABLED", "LEARNING_ENABLED", "LEARNING_NATIVE_COLLECTION_ENABLED", "STRATEGY_WORKFLOWS_ENABLED"];
 const need = (cond, message) => { if (!cond) throw new ActivationConfigurationError(message); };
 const positiveInt = (env, name, fallback = null) => {
   const raw = env[name];
@@ -180,13 +180,15 @@ async function createPremiumComposition({
     capabilities.social = wanted;
   }
 
+  if (flags.LEARNING_NATIVE_COLLECTION_ENABLED) need(flags.LEARNING_ENABLED, "Native collection requires LEARNING_ENABLED");
   if (flags.LEARNING_ENABLED) {
     need(socialPublishingService, "LEARNING_ENABLED requires SOCIAL_PUBLISHING_ENABLED");
     const hours = positiveInt(env, "LEARNING_EVIDENCE_MAX_AGE_HOURS");
     const { DurableLearningService } = require("../learning-persistence/service");
     const analytics = {};
     for (const [name, platform] of Object.entries(socialPublishingService.platforms)) if (platform.analytics) analytics[name] = platform.analytics;
-    learningService = new DurableLearningService({ billingRepository, socialService: socialPublishingService, connectors: analytics, maxAgeMs: hours * 3600000, enabled: true, now });
+    learningService = new DurableLearningService({ billingRepository, socialService: socialPublishingService, connectors: analytics, allowCollection: flags.LEARNING_NATIVE_COLLECTION_ENABLED, maxAgeMs: hours * 3600000, enabled: true, now });
+    if(flags.LEARNING_NATIVE_COLLECTION_ENABLED) need(Object.values(analytics).some(c=>c.collectionContract==='native-analytics-collection.v1'&&typeof c.fetchObservations==='function'&&typeof c.verifyObservation==='function'&&Number.isSafeInteger(c.learningPolicy?.minimumSampleSize)&&c.learningPolicy.minimumSampleSize>0&&c.dictionary?.version), "No reviewed native analytics collector configured");
     capabilities.learning = Object.keys(analytics);
   }
 
