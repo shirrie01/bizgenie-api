@@ -184,3 +184,11 @@ it("trade acquisition objective is classified as lead and receives trade-specifi
     false
   );
 });
+it('SM Properties full lead goal gets a complete property title and grounded item/calendar payload',async()=>{
+ const goal='Generate more enquiries for residential property sales and lettings, build a professional social media presence, create engaging property marketing content and convert more enquiries into customers.';
+ const registry=createDefaultGoalRecommendationRegistry({idFactory:()=>RECOMMENDATION_ID,now:()=>new Date(NOW)});
+ const record=await registry.recommend({...context,brand_brain:{name:'SM Properties'}},{...request,goal,idempotency_key:'property_once'});
+ assert.equal(record.campaign_name,'Property sales and lettings enquiries');assert.equal(record.recommendation_kind,'lead');
+ assert.equal(record.create_campaign_payload.goal,goal);assert.equal(record.create_campaign_payload.display_timezone,'Europe/London');assert.match(record.suggested_items[0].name,/Property/);
+ assert.doesNotMatch(JSON.stringify(record),/Northgate|stockist|clinic|Birmingham|guaranteed|£\d/);assert.equal(record.not_enough_data_yet,true);
+});

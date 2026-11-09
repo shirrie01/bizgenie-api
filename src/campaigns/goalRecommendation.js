@@ -149,6 +149,12 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
       { name: "Consent-based appointment follow-up", format: "text", platform: "email", placement: "message", destination_label: "Email", reason: "" }
     );
   }
+  if (strategy?.kind === 'property') {
+    suggestedItems.splice(0,suggestedItems.length,
+      {name:'Property information explainer',format:'text',platform:'instagram',placement:'feed',destination_label:'Instagram',reason:''},
+      {name:'Property enquiry post',format:'text',platform:'facebook',placement:'feed',destination_label:'Facebook',reason:''},
+      {name:'Consent-based property follow-up',format:'text',platform:'email',placement:'message',destination_label:'Email',reason:''});
+  }
   if (strategy) suggestedItems.forEach((item, index) => { if (strategy.reasons[index]) item.reason = strategy.reasons[index]; });
   // Saved channel preferences (completed onboarding only) put preferred channels first. This never adds,
   // removes or rewrites an item, so nothing is fabricated for a channel the engine has no format for.
