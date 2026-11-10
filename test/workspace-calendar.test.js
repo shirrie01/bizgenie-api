@@ -35,3 +35,58 @@ it('HTTP verifies token/project before reading, returns honest errors and never 
  assert.equal((await request(app).get('/customer/calendar').query(base).set('Authorization','Bearer ok')).status,200);assert.equal(reads,1);
  assert.equal((await request(app).get('/customer/calendar').query({...base,to:base.from}).set('Authorization','Bearer ok')).status,400);
 });
+
+// Exercise the actual selected-workspace authorization and app privacy middleware,
+// rather than a stub that accepts a caller-supplied tenant/project.
+function scopedCalendarFixture() {
+ const {createApp}=require('../index');
+ const {InMemoryAuthorizationRepository,createCustomerActorFromVerifiedIdentity}=require('../src/authorization');
+ const user=id(99),reads=[];
+ const authorizationRepository=new InMemoryAuthorizationRepository({
+  customerProfiles:[{auth_user_id:user}],
+  tenants:[{tenant_id:'tenant_a'},{tenant_id:'tenant_b'}],
+  memberships:[{tenant_id:'tenant_a',auth_user_id:user,role:'member'},{tenant_id:'tenant_b',auth_user_id:user,role:'owner'}],
+  projects:[{project_id:'project_a',tenant_id:'tenant_a'},{project_id:'project_a2',tenant_id:'tenant_a'},{project_id:'project_b',tenant_id:'tenant_b'}],
+ });
+ const app=createApp({authorizationRepository,
+  customerTokenVerifier:{verifyAccessToken:async token=>{
+   if(token!=='selected-a')throw new AuthenticationRequiredError();
+   return createCustomerActorFromVerifiedIdentity({verifiedAuthUserId:user,verifiedScope:{tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a'}});
+  }},
+  campaignRepository:{listWorkspaceCalendar:async(context,query)=>{
+   reads.push({tenant_id:context.tenant_id,project_id:context.project_id});
+   return {contract_version:'workspace-calendar.v1',entries:[],unscheduled:[],next_cursor:null};
+  }},logger:{warn(){},error(){},info(){}}
+ });
+ return {app,reads,authorizationRepository,user};
+}
+function assertPrivate(response) {
+ assert.equal(response.headers['cache-control'],'private, no-store');
+ assert.match(response.headers.vary,/(?:^|,\s*)Authorization(?:,|$)/i);
+}
+it('real HTTP authorization binds calendar to selected tenant/project even with membership in both workspaces',async()=>{
+ const {app,reads}=scopedCalendarFixture();
+ const ok=await request(app).get('/customer/calendar').query(base).set('Authorization','Bearer selected-a');
+ assert.equal(ok.status,200);assertPrivate(ok);
+ assert.deepEqual(reads,[{tenant_id:'tenant_a',project_id:'project_a'}]);
+ for(const scope of [{tenant_id:'tenant_b',project_id:'project_b'},{project_id:'project_a2'},{tenant_id:'foreign'}]) {
+  const denied=await request(app).get('/customer/calendar').query({...base,...scope}).set('Authorization','Bearer selected-a');
+  assert.equal(denied.status,404);assertPrivate(denied);
+ }
+ assert.equal(reads.length,1);
+});
+it('revoked calendar membership is denied on the next request without reading campaign data',async()=>{
+ const {app,reads,authorizationRepository,user}=scopedCalendarFixture();
+ assert.equal((await request(app).get('/customer/calendar').query(base).set('Authorization','Bearer selected-a')).status,200);
+ authorizationRepository.memberships.delete(`tenant_a\u0000${user}`);
+ const denied=await request(app).get('/customer/calendar').query(base).set('Authorization','Bearer selected-a');
+ assert.equal(denied.status,404);assertPrivate(denied);assert.equal(reads.length,1);
+});
+it('calendar rejects absent/expired bearer and admin-only credentials with private error responses',async()=>{
+ const {app,reads}=scopedCalendarFixture();
+ for(const headers of [{},{Authorization:'Bearer expired'},{'x-admin-key':'not-a-customer-token'}]) {
+  const denied=await request(app).get('/customer/calendar').query(base).set(headers);
+  assert.equal(denied.status,401);assertPrivate(denied);
+ }
+ assert.equal(reads.length,0);
+});
