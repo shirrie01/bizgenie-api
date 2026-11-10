@@ -57,15 +57,18 @@ function assess(profile, facts) {
       const ratio = f.width / f.height;
       if (ratio < c.aspect_ratio.min - 0.005 || ratio > c.aspect_ratio.max + 0.005) add("ASPECT_RATIO_UNSUPPORTED", `${f.width}:${f.height}`);
     }
-    if (Number.isFinite(f.byte_size) && f.byte_size > c.max_bytes) add("FILE_TOO_LARGE", `${f.byte_size} bytes, maximum ${c.max_bytes}`);
+    if (!Number.isSafeInteger(f.byte_size) || f.byte_size <= 0) add("FILE_SIZE_UNKNOWN");
+    else if (f.byte_size > c.max_bytes) add("FILE_TOO_LARGE", `${f.byte_size} bytes, maximum ${c.max_bytes}`);
     if (profile.format === "video") {
       if (!Number.isFinite(f.duration_seconds)) add("DURATION_UNKNOWN");
       else if (f.duration_seconds < c.min_duration_seconds || f.duration_seconds > c.max_duration_seconds) add("DURATION_UNSUPPORTED", `${f.duration_seconds}s, allowed ${c.min_duration_seconds}-${c.max_duration_seconds}s`);
       if (f.container !== undefined && !c.containers.includes(f.container)) add("CONTAINER_UNSUPPORTED", String(f.container));
       if (f.video_codec !== undefined && !c.video_codecs.includes(f.video_codec)) add("VIDEO_CODEC_UNSUPPORTED", String(f.video_codec));
       if (c.audio === "forbidden" && Number(f.audio_tracks) > 0) add("AUDIO_UNSUPPORTED");
-      if (f.mime_type && f.mime_type !== "video/mp4") add("MIME_TYPE_UNSUPPORTED", f.mime_type);
-    } else if (f.mime_type && !c.mime_types.includes(f.mime_type)) add("MIME_TYPE_UNSUPPORTED", f.mime_type);
+      if (!f.mime_type) add("MIME_TYPE_UNKNOWN");
+      else if (f.mime_type !== "video/mp4") add("MIME_TYPE_UNSUPPORTED", f.mime_type);
+    } else if (!f.mime_type) add("MIME_TYPE_UNKNOWN");
+    else if (!c.mime_types.includes(f.mime_type)) add("MIME_TYPE_UNSUPPORTED", f.mime_type);
   }
   return Object.freeze({ profile_id: profile.profile_id, profile_version: profile.version, requirements_status: profile.requirements_status, suitable: reasons.length === 0, reasons: Object.freeze(reasons) });
 }
@@ -79,7 +82,8 @@ function validateGeneratedVideo(measured, expected = {}) {
   if (!GENERATED_VIDEO.containers.includes(measured.container)) reasons.push("CONTAINER_UNSUPPORTED");
   if (!GENERATED_VIDEO.video_codecs.includes(v.codec)) reasons.push("VIDEO_CODEC_UNSUPPORTED");
   if (measured.audio?.length && !expected.allow_audio) reasons.push("AUDIO_UNSUPPORTED");
-  if (measured.byte_size > GENERATED_VIDEO.max_bytes) reasons.push("FILE_TOO_LARGE");
+  if (!Number.isSafeInteger(measured.byte_size) || measured.byte_size <= 0) reasons.push("FILE_SIZE_UNKNOWN");
+  else if (measured.byte_size > GENERATED_VIDEO.max_bytes) reasons.push("FILE_TOO_LARGE");
   if (!(v.duration_seconds > 0) || v.duration_seconds > GENERATED_VIDEO.max_duration_seconds) reasons.push("DURATION_UNSUPPORTED");
   if (expected.duration_seconds && Math.abs(v.duration_seconds - expected.duration_seconds) > GENERATED_VIDEO.duration_tolerance_seconds) reasons.push("DURATION_MISMATCH");
   if (v.sample_aspect_ratio && v.sample_aspect_ratio.numerator !== v.sample_aspect_ratio.denominator) reasons.push("PIXEL_ASPECT_UNSUPPORTED");
@@ -88,7 +92,7 @@ function validateGeneratedVideo(measured, expected = {}) {
     const [a, b] = String(expected.aspect_ratio).split(":").map(Number);
     if (!(a > 0 && b > 0) || Math.abs(v.width / v.height - a / b) > GENERATED_VIDEO.aspect_tolerance) reasons.push("ASPECT_RATIO_MISMATCH");
   }
-  if (v.width < 2 || v.height < 2) reasons.push("DIMENSIONS_UNSUPPORTED");
+  if (!Number.isSafeInteger(v.width) || !Number.isSafeInteger(v.height) || v.width < 2 || v.height < 2) reasons.push("DIMENSIONS_UNSUPPORTED");
   return reasons;
 }
 

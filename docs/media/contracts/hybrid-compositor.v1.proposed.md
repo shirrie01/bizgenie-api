@@ -26,3 +26,11 @@ Quote/confirm and credit reservation; `intake.referenceForComposition` (re-check
 
 ## Decision needed from the founder
 Keep Hybrid UGC post-launch (recommended: launch scope above is already large and depends on items 1 and 3), or schedule the four preconditions before launch.
+
+## 10 November 2026 — integration safety correction (code only)
+
+A reproduced fail-open fact-validation gap allowed complete-looking geometry to be marked suitable when stored MIME or byte size was missing/invalid; generated video marked measured could also pass with absent size or invalid dimensions. Two regression tests failed before the correction (5PASS/2FAIL). The bounded repair requires a positive safe-integer byte size, explicit supported MIME and valid measured integer dimensions. Unknown facts now withhold suitability instead of inventing conformance. Existing profile limits, versioning, provenance/rights, approval, provider and billing gates are unchanged; no schema or activation added.
+
+Node22 focused media/review/video44/44PASS and full disposable-PostgreSQL suite1037/1037PASS,0FAIL/skip after correction. Exact head/hostedCI are recorded in the integration checkpoint; no live or paid media test occurred. Missing metadata on a legacy asset may now block preview with existing MEDIA_NOT_SUITABLE; restore trustworthy metadata only through separately authorised existing services, never fabricate it. New FILE_SIZE_UNKNOWN/MIME_TYPE_UNKNOWN reasons are additive; response envelopes remain unchanged.
+
+Apply this safety fix through the existing PR223 branch. Downstream225/226/228 already have additional validator behaviour (including later allow_audio handling); preserve those changes during integration, do not replace entire files with this older base. This repair does not make the proposed Hybrid compositor operational and does not authorise profile provisioning, provider activation, deployment or publication.
