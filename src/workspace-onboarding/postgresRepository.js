@@ -67,7 +67,9 @@ class PostgresWorkspaceOnboardingRepository {
     try {
       client = await this.pool.connect();
       await client.query("begin");
-      await preflight(client);
+      const schema = await preflight(client);
+      // Preserve legacy reads/writes during app-first rollout; new sector needs its durable CHECK.
+      if (record.sector_key === "professional_services" && !schema.professional) throw new OnboardingPersistenceError();
       const authority = await client.query(`select b.name,b.identity from public.tenant_memberships tm
         join public.projects p on p.tenant_id=tm.tenant_id
         join public.brand_brains b on b.project_id=p.project_id
