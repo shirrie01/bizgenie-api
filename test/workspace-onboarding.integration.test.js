@@ -18,6 +18,12 @@ const SCOPE_A = { tenant_id: "tenant_a", project_id: "project_a", brand_id: "bra
 const SCOPE_A2 = { tenant_id: "tenant_a", project_id: "project_a2", brand_id: "brand_a2" };
 const SCOPE_B = { tenant_id: "tenant_b", project_id: "project_b", brand_id: "brand_b" };
 const actor = (id, scope) => ({ kind: "customer", auth_user_id: id, trusted_scope: scope });
+// Fixture-only catalog transition: this branch deliberately adds no shared migration.
+async function fixtureSectorContract(client, professional) {
+  const manifest = require(professional ? "../src/workspace-onboarding/schemaContractProfessional.json" : "../src/workspace-onboarding/schemaContract.json");
+  const { name, definition } = manifest.constraints.find(c => c.name === "workspace_onboarding_profiles_sector_key_check");
+  await client.query(`alter table workspace_onboarding_profiles drop constraint ${name}, add constraint ${name} ${definition}`);
+}
 let n = 0;
 const body = (extra = {}) => ({ idempotency_key: `k-${++n}`, expected_version: 0, ...extra });
 
@@ -237,6 +243,23 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     await repo.preflight();
   });
 
+  it("accepts the exact logically restored idempotency constraint without accepting weaker checks", async () => {
+    const repo = new PostgresWorkspaceOnboardingRepository({ pool });
+    const name = "workspace_onboarding_profiles_last_idempotency_key_check";
+    const original = (await pool.query("select pg_get_constraintdef(oid) definition from pg_constraint where conrelid='workspace_onboarding_profiles'::regclass and conname=$1", [name])).rows[0].definition;
+    try {
+      // pg_dump emits this expression; reparsing flattens redundant AND grouping.
+      await pool.query(`alter table workspace_onboarding_profiles drop constraint ${name}, add constraint ${name} ${original}`);
+      await repo.preflight();
+      await pool.query(`alter table workspace_onboarding_profiles drop constraint ${name}, add constraint ${name}
+        check(length(last_idempotency_key)>=1 and length(last_idempotency_key)<=4096 and last_idempotency_key ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$')`);
+      await assert.rejects(repo.preflight(), { code: "ONBOARDING_UNAVAILABLE" });
+    } finally {
+      await pool.query(`alter table workspace_onboarding_profiles drop constraint ${name}, add constraint ${name} ${original}`);
+    }
+    await repo.preflight();
+  });
+
   it("detects a weakened named constraint rather than trusting its name", async () => {
     const repo = new PostgresWorkspaceOnboardingRepository({ pool });
     try {
@@ -268,6 +291,95 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     const resumed = await build().save({ actor: actor(AUTH_A, SCOPE_A), request });
     assert.equal(resumed.replayed, true); assert.equal(resumed.onboarding.version, before.onboarding.version + 1);
     assert.deepEqual(resumed.onboarding.channels.values, ["website"]);
+  });
+
+  it("supports legacy rollout but blocks professional writes until the reviewed CHECK is present", async () => {
+    const { preflight } = require("../src/workspace-onboarding/preflight");
+    const old = require("../src/workspace-onboarding/schemaContract.json").constraints.find(c => c.name === "workspace_onboarding_profiles_sector_key_check");
+    // Stage already has the professional CHECK; tests emulate the reviewed catalog only.
+    try {
+      await pool.query(`alter table workspace_onboarding_profiles drop constraint ${old.name},add constraint ${old.name} ${old.definition}`);
+      assert.deepEqual(await preflight(pool), { professional: false });
+      const before = await service.get({ actor: actor(AUTH_A,SCOPE_A) });
+      const saved = await service.save({ actor: actor(AUTH_A,SCOPE_A), request: body({ expected_version: before.onboarding.version, sector_key: "neutral" }) });
+      await assert.rejects(service.save({ actor: actor(AUTH_A,SCOPE_A), request: body({ expected_version: saved.onboarding.version, sector_key: "professional_services" }) }), { code: "ONBOARDING_UNAVAILABLE" });
+      assert.equal((await service.get({ actor: actor(AUTH_A,SCOPE_A) })).onboarding.version,saved.onboarding.version);
+    } finally { await fixtureSectorContract(pool, true); }
+    assert.deepEqual(await preflight(pool), { professional: true });
+
+  });
+
+  it("keeps RLS, grants and exact constraints fail-closed for both reviewed schemas", async () => {
+    const {preflight}=require("../src/workspace-onboarding/preflight");
+    const drift=[
+      "alter table workspace_onboarding_profiles disable row level security",
+      "grant select(draft) on workspace_onboarding_profiles to authenticated",
+      "alter table workspace_onboarding_profiles add constraint unexpected_check check(profile_version>0)",
+      "alter table workspace_onboarding_profiles add constraint pending_check check(profile_version>0) not valid"
+    ];
+    for (const professional of [false,true]) {
+      const client=await pool.connect();
+      try {
+        await client.query("begin");await fixtureSectorContract(client,professional);
+        assert.deepEqual(await preflight(client),{professional});
+        for(const sql of drift){
+          await client.query("savepoint drift");await client.query(sql);
+          await assert.rejects(preflight(client),{code:"ONBOARDING_UNAVAILABLE"});
+          await client.query("rollback to savepoint drift");
+          assert.deepEqual(await preflight(client),{professional});
+        }
+      } finally { try {await client.query("rollback");} finally {client.release();} }
+    }
+  });
+
+  it("persists inferred professional, restarts, replays, confirms and rejects stale/foreign/demoted writes", async () => {
+    await pool.query("update brand_brains set identity=$1 where brand_id='brand_b'",[{description:"We provide accountancy and advisory services."}]);
+    const before = await service.get({ actor: actor(AUTH_B,SCOPE_B) });
+    const request = body({ expected_version: before.onboarding.version,sector_key:"professional_services",sector_source:"inferred",channels:["email"] });
+    const first = await service.save({ actor:actor(AUTH_B,SCOPE_B),request });
+    assert.equal(first.onboarding.sector.key,"professional_services");
+    assert.equal((await build().get({ actor:actor(AUTH_B,SCOPE_B) })).onboarding.sector.source,"inferred");
+    assert.equal((await build().save({ actor:actor(AUTH_B,SCOPE_B),request })).replayed,true);
+    await assert.rejects(service.save({ actor:actor(AUTH_B,SCOPE_B),request:{...request,sector_key:"neutral"} }),{code:"IDEMPOTENCY_KEY_CONFLICT"});
+    const confirmed = await service.save({ actor:actor(AUTH_B,SCOPE_B),request:body({expected_version:first.onboarding.version,sector_key:"professional_services",sector_source:"customer",complete:true}) });
+    assert.equal(confirmed.onboarding.status,"completed");
+    await assert.rejects(service.save({ actor:actor(AUTH_B,SCOPE_B),request:body({expected_version:first.onboarding.version,sector_key:"professional_services"}) }),{code:"VERSION_CONFLICT"});
+    await assert.rejects(service.save({ actor:actor(AUTH_B,SCOPE_B),request:body({expected_version:confirmed.onboarding.version,sector_key:"neutral",sector_source:"inferred"}) }),{code:"ONBOARDING_VALIDATION_ERROR"});
+    await assert.rejects(service.save({ actor:actor(AUTH_A,SCOPE_B),request:body({sector_key:"professional_services"}) }),{code:"WORKSPACE_NOT_AUTHORIZED"});
+    try {
+      await pool.query("update tenant_memberships set role='member' where tenant_id='tenant_b'");
+      await assert.rejects(service.save({ actor:actor(AUTH_B,SCOPE_B),request:body({expected_version:confirmed.onboarding.version,sector_key:"professional_services"}) }),{code:"WORKSPACE_NOT_AUTHORIZED"});
+    } finally { await pool.query("update tenant_memberships set role='owner' where tenant_id='tenant_b'"); }
+    const now=await service.get({actor:actor(AUTH_B,SCOPE_B)});
+    const raced=await Promise.allSettled(["First","Second"].map(industry_text=>service.save({actor:actor(AUTH_B,SCOPE_B),request:body({expected_version:now.onboarding.version,sector_key:"professional_services",industry_text})})));
+    assert.equal(raced.filter(r=>r.status==="fulfilled").length,1);
+    assert.equal(raced.find(r=>r.status==="rejected").reason.code,"VERSION_CONFLICT");
+    const row=(await pool.query("select sector_key,sector_source from workspace_onboarding_profiles where tenant_id='tenant_b'")).rows[0];
+    assert.deepEqual(row,{sector_key:"professional_services",sector_source:"customer"});
+  });
+
+  it("retains all seven sectors and rejects unknown SQL values without weakening preflight", async () => {
+    for (const sector_key of ["leasing","perfume","aesthetics","beverage","charity","takeaway","neutral"]) {
+      const before=await service.get({actor:actor(AUTH_A,SCOPE_A)});
+      assert.equal((await service.save({actor:actor(AUTH_A,SCOPE_A),request:body({expected_version:before.onboarding.version,sector_key})})).onboarding.sector.key,sector_key);
+    }
+    await assert.rejects(pool.query("update workspace_onboarding_profiles set sector_key='arbitrary' where tenant_id='tenant_b'"),/sector_key_check/);
+    // A down-constraint cannot erase or silently relabel new-sector records.
+    const old=require("../src/workspace-onboarding/schemaContract.json").constraints.find(c=>c.name==="workspace_onboarding_profiles_sector_key_check");
+    await assert.rejects(pool.query(`alter table workspace_onboarding_profiles drop constraint ${old.name},add constraint ${old.name} ${old.definition}`),/violated/);
+    await new PostgresWorkspaceOnboardingRepository({pool}).preflight();
+  });
+
+  it("rejects weakened sector constraints without changing the schema", async () => {
+    const client=await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("alter table workspace_onboarding_profiles drop constraint workspace_onboarding_profiles_sector_key_check, add constraint workspace_onboarding_profiles_sector_key_check check(true)");
+      await assert.rejects(require("../src/workspace-onboarding/preflight").preflight(client), { code:"ONBOARDING_UNAVAILABLE" });
+      const actual=(await client.query("select pg_get_constraintdef(oid) definition from pg_constraint where conrelid='workspace_onboarding_profiles'::regclass and conname='workspace_onboarding_profiles_sector_key_check'")).rows[0].definition;
+      assert.equal(actual,"CHECK (true)","runtime preflight must not self-heal shared SQL");
+    } finally { try { await client.query("rollback"); } finally { client.release(); } }
+    await new PostgresWorkspaceOnboardingRepository({pool}).preflight();
   });
 
 });
