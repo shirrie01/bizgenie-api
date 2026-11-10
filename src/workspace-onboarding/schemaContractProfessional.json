@@ -1,0 +1,86 @@
+{
+  "postgres_major": 17,
+  "constraints": [
+    {
+      "name": "workspace_onboarding_channels_source_pair",
+      "definition": "CHECK (((jsonb_array_length(channels) = 0) = (channels_source IS NULL)))"
+    },
+    {
+      "name": "workspace_onboarding_channels_values",
+      "definition": "CHECK (((channels <@ '[\"instagram\", \"tiktok\", \"facebook\", \"linkedin\", \"email\", \"website\"]'::jsonb) AND (jsonb_array_length(channels) = ((((( CASE WHEN (channels ? 'instagram'::text) THEN 1 ELSE 0 END + CASE WHEN (channels ? 'tiktok'::text) THEN 1 ELSE 0 END) + CASE WHEN (channels ? 'facebook'::text) THEN 1 ELSE 0 END) + CASE WHEN (channels ? 'linkedin'::text) THEN 1 ELSE 0 END) + CASE WHEN (channels ? 'email'::text) THEN 1 ELSE 0 END) + CASE WHEN (channels ? 'website'::text) THEN 1 ELSE 0 END))))"
+    },
+    {
+      "name": "workspace_onboarding_completed_consistent",
+      "definition": "CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL)))"
+    },
+    {
+      "name": "workspace_onboarding_completed_requires_answers",
+      "definition": "CHECK (((status <> 'completed'::text) OR ((sector_key IS NOT NULL) AND (jsonb_array_length(channels) > 0))))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_brand_fkey",
+      "definition": "FOREIGN KEY (project_id, brand_id) REFERENCES brand_brains(project_id, brand_id) ON DELETE RESTRICT"
+    },
+    {
+      "name": "workspace_onboarding_profiles_channels_check",
+      "definition": "CHECK (((jsonb_typeof(channels) = 'array'::text) AND (jsonb_array_length(channels) <= 6)))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_channels_source_check",
+      "definition": "CHECK ((channels_source = ANY (ARRAY['customer'::text, 'inferred'::text])))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_current_step_check",
+      "definition": "CHECK (((current_step IS NULL) OR ((current_step >= 0) AND (current_step <= 20))))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_draft_check",
+      "definition": "CHECK (((jsonb_typeof(draft) = 'object'::text) AND (length((draft)::text) <= 12000)))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_industry_text_check",
+      "definition": "CHECK (((industry_text IS NULL) OR ((length(industry_text) >= 1) AND (length(industry_text) <= 200))))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_last_idempotency_key_check",
+      "definition": "CHECK ((((length(last_idempotency_key) >= 1) AND (length(last_idempotency_key) <= 128)) AND (last_idempotency_key ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'::text)))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_last_request_hash_check",
+      "definition": "CHECK ((last_request_hash ~ '^[a-f0-9]{64}$'::text))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_pkey",
+      "definition": "PRIMARY KEY (tenant_id, project_id, brand_id)"
+    },
+    {
+      "name": "workspace_onboarding_profiles_profile_version_check",
+      "definition": "CHECK ((profile_version >= 1))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_project_tenant_fkey",
+      "definition": "FOREIGN KEY (project_id, tenant_id) REFERENCES projects(project_id, tenant_id) ON DELETE RESTRICT"
+    },
+    {
+      "name": "workspace_onboarding_profiles_sector_key_check",
+      "definition": "CHECK ((sector_key = ANY (ARRAY['leasing'::text, 'perfume'::text, 'aesthetics'::text, 'beverage'::text, 'charity'::text, 'takeaway'::text, 'neutral'::text, 'professional_services'::text])))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_sector_source_check",
+      "definition": "CHECK ((sector_source = ANY (ARRAY['customer'::text, 'inferred'::text])))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_status_check",
+      "definition": "CHECK ((status = ANY (ARRAY['in_progress'::text, 'completed'::text])))"
+    },
+    {
+      "name": "workspace_onboarding_profiles_updated_by_fkey",
+      "definition": "FOREIGN KEY (updated_by) REFERENCES customer_profiles(auth_user_id) ON DELETE RESTRICT"
+    },
+    {
+      "name": "workspace_onboarding_sector_source_pair",
+      "definition": "CHECK (((sector_key IS NULL) = (sector_source IS NULL)))"
+    }
+  ],
+  "sector_contract": "professional.v1"
+}
