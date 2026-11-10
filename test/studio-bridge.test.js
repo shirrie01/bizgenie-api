@@ -91,3 +91,30 @@ test('workspace-only exception preserves GET HEAD and unauthenticated OPTIONS; d
  for(const method of ['get','head'])assert.equal((await request(k.app)[method]('/customer/workspace').set('authorization','Bearer valid')).status,200);
  const off=kit({allowWrites:false});assert.equal((await request(off.app).post('/customer/workspace/bootstrap').set('authorization','Bearer fresh').send({})).status,403);assert.equal(off.iamCalls.length,0);
 });
+test('draft workflow admits only12 exact deterministic writes and preserves request identities',async()=>{
+ const k=kit({allowWrites:false,allowDraftWorkflow:true}),u='11111111-1111-4111-8111-111111111111';
+ const allowed=[['PUT','/customer/workspace/brand-brain'],['PUT','/customer/workspace/onboarding'],['POST','/customer/campaign-recommendations'],['POST','/customer/campaigns'],['POST','/customer/campaigns/'+u+'/content-items']];
+ for(const action of ['review','preview-renders','preview-acknowledgements','approval','schedule','reschedule','unschedule'])allowed.push(['POST','/customer/campaigns/'+u+'/variants/'+u+'/'+action]);
+ for(const [method,path]of allowed){const r=await request(k.app)[method.toLowerCase()](path).set('authorization','Bearer valid').send({...k.scope,idempotency_key:'same_intent',expected_campaign_version:7});assert.equal(r.status,200,path);const body=JSON.parse(k.calls.at(-1).init.body);assert.equal(body.idempotency_key,'same_intent');assert.equal(body.expected_campaign_version,7);}
+ assert.equal(allowed.length,12);
+});
+test('draft workflow never admits bootstrap providers credits uploads billing analytics or dispatch writes',async()=>{
+ const k=kit({allowWrites:false,allowDraftWorkflow:true,allowWorkspaceBootstrap:false,allowGenerationConfirmation:false,allowSocialWrites:false,allowStripeCheckout:false}),u='11111111-1111-4111-8111-111111111111';
+ const denied=[['POST','/billing/stripe/checkout'],['POST','/customer/workspace/bootstrap'],['POST','/customer/workspace/select'],['POST','/customer/workspace/brands'],['POST','/customer/generation-quotes'],['PATCH','/customer/campaigns/'+u],['DELETE','/customer/assets/'+u],['POST','/customer/assets/uploads'],['POST','/customer/assets/'+u+'/complete'],['POST','/customer/assets/'+u+'/revoke'],['PUT','/customer/assets/uploads/'+u+'/bytes'],['POST','/customer/campaigns/'+u+'/variants/'+u+'/measurements']];
+ for(const action of ['confirm','cancel'])denied.push(['POST','/customer/generation-quotes/'+u+'/'+action]);
+ for(const action of ['attach','cancel'])denied.push(['POST','/customer/creative-jobs/quoted:fixture/'+action]);
+ for(const action of ['archive','restore'])denied.push(['POST','/customer/campaigns/'+u+'/'+action]);
+ for(const path of ['oauth-intents','oauth-complete','connections/'+u+'/refresh','connections/'+u+'/disconnect','dispatches','dispatches/'+u+'/cancel'])denied.push(['POST','/customer/social/'+path]);
+ for(const [method,path]of denied){const r=await request(k.app)[method.toLowerCase()](path).set('authorization','Bearer valid').send({});assert.equal(r.status,403,path);assert.equal(r.body.error.code,'STAGING_WRITES_DISABLED');}
+ assert.equal(denied.length,24);assert.equal(k.calls.length,0);assert.equal(k.iamCalls.length,0);
+});
+test('draft workflow fails closed for absent flag foreign scope expired auth path suffix and large body',async()=>{
+ const path='/customer/campaign-recommendations';const off=kit({allowWrites:false});assert.equal((await request(off.app).post(path).set('authorization','Bearer valid').send({})).status,403);
+ const k=kit({allowWrites:false,allowDraftWorkflow:true});
+ assert.equal((await request(k.app).post(path).set('authorization','Bearer expired').send({})).status,401);
+ assert.equal((await request(k.app).post(path).set('authorization','Bearer valid').send({...k.scope,tenant_id:'foreign'})).status,404);
+ assert.equal((await request(k.app).post(path+'?x=1').set('authorization','Bearer valid').send({})).status,403);
+ assert.equal((await request(k.app).put('/customer/workspace/brand-brain').set('authorization','Bearer valid').send({description:'x'.repeat(17000)})).status,413);
+ for(const p of ['/customer/generate-image','/customer/generate-video','/_admin/ping'])assert.equal((await request(k.app).post(p).set('authorization','Bearer valid').send({})).status,404);
+ assert.equal(k.calls.length,0);assert.equal(k.iamCalls.length,0);
+});

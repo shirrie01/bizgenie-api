@@ -22,6 +22,13 @@ const routes=[
  ['GET|HEAD|DELETE','/customer/assets/'+UUID],['GET|HEAD','/customer/assets/'+UUID+'/preview'],['POST','/customer/assets/(?:uploads|'+UUID+'/complete|'+UUID+'/revoke)'],['PUT','/customer/assets/uploads/'+UUID+'/bytes'],
  ['POST','/customer/social/(?:oauth-intents|oauth-complete|connections/'+UUID+'/(?:refresh|disconnect)|dispatches|dispatches/'+UUID+'/cancel)']
 ].map(([methods,path])=>({methods:new Set(methods.split('|')),path:new RegExp('^'+path+'$')}));
+// Deterministic persisted draft/review/calendar only: never providers, credits or dispatch.
+function isDraftWorkflowWrite(method,path){
+ if(method==='PUT')return ['/customer/workspace/brand-brain','/customer/workspace/onboarding'].includes(path);
+ if(method!=='POST')return false;
+ if(['/customer/campaign-recommendations','/customer/campaigns'].includes(path))return true;
+ return new RegExp('^/customer/campaigns/'+UUID+'/content-items$').test(path)||new RegExp('^/customer/campaigns/'+UUID+'/variants/'+UUID+'/(?:review|preview-renders|preview-acknowledgements|approval|schedule|reschedule|unschedule)$').test(path);
+}
 const IDENTITY=/^\/customer\/workspace(?:\/(?:bootstrap|select|brands))?$/;
 const PRIVATE_HEADERS=['x-serverless-authorization','x-admin-key','x-api-key','proxy-authorization'];
 function config(input){
@@ -51,7 +58,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(requested.some(x=>!['authorization','content-type','range'].includes(x)))return failure(res,403,'HEADERS_FORBIDDEN');
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
-  if(!['GET','HEAD'].includes(req.method)&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap'))return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(!['GET','HEAD'].includes(req.method)&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
   if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true)return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
   if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true)return failure(res,403,'SOCIAL_WRITES_DISABLED');
@@ -68,7 +75,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });
- const bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
+ const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
  app.use(async(req,res)=>{
   const controller=res.locals.controller;let upstream;
   const cancel=()=>controller.abort();req.once('aborted',cancel);res.once('close',cancel);
