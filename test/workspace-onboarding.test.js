@@ -476,3 +476,22 @@ describe("BG-STUDIO-011 owner, confirmation and privacy hardening", () => {
     }
   });
 });
+
+describe("DEC-023 professional-services HTTP contract", () => {
+  it("persists professional and preserves customer choice, idempotency and tenant isolation", async () => {
+    const { client } = fixture();
+    const input = base({ sector_key: "professional_services", sector_source: "customer", channels: ["email"], complete: true });
+    const first = await save(client, input);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.onboarding.sector.key, "professional_services");
+    assert.equal(first.body.onboarding.status, "completed");
+    const retry = await save(client, input);
+    assert.equal(retry.body.replayed, true);
+    assert.equal(retry.body.onboarding.version, 1);
+    assert.equal((await save(client, base({ sector_key: "professional_services" }), "token-b-forged")).status, 403);
+    assert.equal((await save(client, { idempotency_key: key(), expected_version: 1, sector_key: "neutral", sector_source: "inferred" })).status, 400);
+    const resumed = await as(client.get(URL));
+    assert.equal(resumed.body.onboarding.sector.key, "professional_services");
+    assert.equal(resumed.body.onboarding.sector.source, "customer");
+  });
+});
