@@ -53,6 +53,22 @@ test("no platform preview, so no approval or schedule, for media that is missing
   await assert.rejects(run(null), { code: "MEDIA_NOT_SUITABLE" });
   await assert.rejects(run({ media_kind: "video", mime_type: "video/mp4", width: 1, height: 1, duration_seconds: "4", byte_size: "9", status: "active" }), { code: "MEDIA_NOT_SUITABLE" });
   await assert.rejects(run({ media_kind: "video", mime_type: "video/mp4", width: 720, height: 1280, duration_seconds: "4", byte_size: "9", status: "quarantined" }), { code: "MEDIA_NOT_SUITABLE" });
+  for (const patch of [{byte_size:null},{mime_type:null}]) await assert.rejects(run({ media_kind:"video",mime_type:"video/mp4",width:720,height:1280,duration_seconds:"4",byte_size:"900000",status:"active",...patch }),{code:"MEDIA_NOT_SUITABLE"});
   await run({ media_kind: "video", mime_type: "video/mp4", width: 720, height: 1280, duration_seconds: "4.000", byte_size: "900000", status: "active" });
   await registry.requireSuitableMedia(client(null), campaign, { format: "text" }, variant, { content: { asset_refs: [] } }); // text needs no media
+});
+
+// BG-API-INTEGRATION-BATCH-03: incomplete persisted/measured facts must not pass a safety gate.
+test("missing MIME or invalid byte size is never reported as suitable", () => {
+  const profile=profiles.get("instagram.feed.video");
+  for(const byte_size of [undefined,null,NaN,0,-1,"1000000"]){
+    const r=assess(profile,{...video,byte_size});assert.equal(r.suitable,false,String(byte_size));assert.ok(r.reasons.some(x=>x.code==="FILE_SIZE_UNKNOWN"));
+  }
+  for(const mime_type of [undefined,null,""]){const r=assess(profile,{...video,mime_type});assert.equal(r.suitable,false);assert.ok(r.reasons.some(x=>x.code==="MIME_TYPE_UNKNOWN"));}
+});
+test("measured status alone cannot validate a generated video with missing size or geometry", () => {
+  const good={status:"measured",container:"mp4",byte_size:1000000,audio:[],video:{codec:"h264",width:720,height:1280,duration_seconds:4}};
+  for(const byte_size of [undefined,null,NaN,0,-1,"1000000"])assert.ok(validateGeneratedVideo({...good,byte_size},{aspect_ratio:"9:16",duration_seconds:4}).includes("FILE_SIZE_UNKNOWN"));
+  for(const patch of [{width:undefined},{height:undefined},{width:NaN},{height:2.5}])assert.ok(validateGeneratedVideo({...good,video:{...good.video,...patch}},{aspect_ratio:"9:16",duration_seconds:4}).includes("DIMENSIONS_UNSUPPORTED"));
+  assert.deepEqual(validateGeneratedVideo(good,{aspect_ratio:"9:16",duration_seconds:4}),[]);
 });
