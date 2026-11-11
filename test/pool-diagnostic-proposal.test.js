@@ -134,3 +134,79 @@ describe("additional safeguards", () => {
     assert.doesNotMatch(src, /select\s+\*|from\s+public\.(workspace_onboarding_profiles|tenant_memberships|projects|brand_brains)\b/i);
   });
 });
+
+// Closure-07 finding A: nothing may continue after a timeout or failed cleanup, and success is never reported after incomplete cleanup.
+describe("timeout and cleanup safety (Closure-07 finding A)", () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  function scripted({ hangAt = null, lateRows = true, hangRollback = false, hangEnd = false, rollbackThrows = false } = {}) {
+    const log = { queries: [], releaseArgs: [], ended: 0, afterTimeoutQueries: 0, timedOut: false };
+    class Pool {
+      async connect() {
+        return {
+          async query(sql) {
+            const s = String(sql); log.queries.push(s.slice(0, 30)); if (log.timedOut) log.afterTimeoutQueries++;
+            if (/^rollback/.test(s)) { if (hangRollback) await new Promise(() => {}); if (rollbackThrows) throw new Error("rb"); return { rows: [] }; }
+            if (hangAt && hangAt.test(s)) { await sleep(150); if (!lateRows) throw new Error("socket closed"); } // resolves LATE with valid rows: must not flip the verdict
+            if (/^begin|^set local/.test(s)) return { rows: [] };
+            if (/row_security_active/.test(s)) return { rows: TABLES.map((t) => grantRow(t)) };
+            if (/current_user as current_user_name/.test(s)) return { rows: [{ current_user_name: "postgres", session_user_name: "postgres", database_name: "postgres", server_version: "17.6", row_security_setting: "on" }] };
+            if (/from pg_roles where rolname = current_user/.test(s)) return { rows: [{ rolsuper: false, rolbypassrls: true, rolinherit: true }] };
+            if (/pg_stat_ssl/.test(s)) return { rows: [{ ssl_in_use: true }] };
+            throw new Error("unexpected");
+          },
+          release(arg) { log.releaseArgs.push(arg === true ? "destroy" : "return"); },
+        };
+      }
+      async end() { log.ended++; if (hangEnd) await new Promise(() => {}); }
+    }
+    return { pg: { Pool }, log };
+  }
+  const goodPreflight = okMod();
+
+  it("a statement that hangs past the overall deadline yields timeout (exit 16), destroys the connection, and a LATE successful result cannot turn it into accepted", async () => {
+    const { pg, log } = scripted({ hangAt: /current_user as current_user_name/, lateRows: true });
+    const t = setTimeout(() => { log.timedOut = true; }, 40);
+    const r = await run({ env: goodEnv(), pgModule: pg, loader: goodPreflight, overallMs: 40, cleanupMs: 50 }); clearTimeout(t); log.timedOut = true;
+    assert.equal(r.status, "timeout"); assert.equal(r.exit, EXIT.timeout); assert.equal(r.output.accepted, false); assert.equal(r.output.connection_destroyed, true);
+    assert.deepEqual(log.releaseArgs, ["destroy"]); assert.equal(log.ended, 1);
+    await sleep(250); // the hung statement now resolves with valid rows
+    assert.equal(r.status, "timeout"); assert.equal(r.output.accepted, false);
+    assert.equal(log.queries.filter((q) => /^rollback/.test(q)).length, 0, "no rollback is issued on a connection that still has a statement in flight; it is destroyed instead");
+    assert.equal(log.afterTimeoutQueries, 0, "no statement was issued after the deadline");
+    assert.ok(!log.queries.some((q) => /pg_stat_ssl|row_security_active/.test(q)), "no later step ran after the hang");
+  });
+  it("the preflight cannot run statements once the run is aborted", async () => {
+    const { pg, log } = scripted({ hangAt: /pg_stat_ssl/, lateRows: true });
+    let preflightAfter = null;
+    const loader = () => ({ preflight: async (c) => { await sleep(200); try { await c.query("select 1"); preflightAfter = "ran"; } catch (e) { preflightAfter = e.code; } return { professional: true }; }, layout_root: "/app", verified: true });
+    const r = await run({ env: goodEnv(), pgModule: pg, loader, overallMs: 40, cleanupMs: 50 });
+    assert.equal(r.status, "timeout"); await sleep(400); assert.notEqual(preflightAfter, "ran");
+  });
+  it("a hanging rollback is bounded; an otherwise accepted run becomes cleanup_failed (nonzero) and the connection is destroyed", async () => {
+    const { pg, log } = scripted({ hangRollback: true });
+    const r = await run({ env: goodEnv(), pgModule: pg, loader: goodPreflight, overallMs: 2000, cleanupMs: 40 });
+    assert.equal(r.status, "cleanup_failed"); assert.equal(r.exit, EXIT.cleanup_failed); assert.notEqual(r.exit, 0); assert.equal(r.output.accepted, false); assert.equal(r.output.cleanup_ok, false);
+    assert.deepEqual(log.releaseArgs, ["destroy"]);
+  });
+  it("a rollback that throws after a good result is not success", async () => {
+    const { pg, log } = scripted({ rollbackThrows: true });
+    const r = await run({ env: goodEnv(), pgModule: pg, loader: goodPreflight });
+    assert.equal(r.status, "cleanup_failed"); assert.equal(r.exit, 21); assert.deepEqual(log.releaseArgs, ["destroy"]);
+  });
+  it("a pool.end() that never returns is bounded and reported as cleanup_failed", async () => {
+    const { pg } = scripted({ hangEnd: true });
+    const t0 = Date.now(); const r = await run({ env: goodEnv(), pgModule: pg, loader: goodPreflight, overallMs: 2000, cleanupMs: 40 });
+    assert.equal(r.status, "cleanup_failed"); assert.ok(Date.now() - t0 < 1500);
+  });
+  it("an earlier failure is not overwritten by a cleanup failure, and a clean accepted run returns the connection to the pool", async () => {
+    const a = scripted({ rollbackThrows: true }); const r1 = await run({ env: goodEnv(), pgModule: a.pg, loader: throwingPreflight });
+    assert.equal(r1.status, "preflight_failed"); assert.equal(r1.output.cleanup_ok, false);
+    const b = scripted(); const r2 = await run({ env: goodEnv(), pgModule: b.pg, loader: goodPreflight });
+    assert.equal(r2.status, "accepted"); assert.equal(r2.exit, 0); assert.equal(r2.output.cleanup_ok, true); assert.deepEqual(b.log.releaseArgs, ["return"]); assert.equal(b.log.ended, 1);
+  });
+  it("the CLI exits explicitly with the status code (no lingering handle): no URL configured -> 10", () => {
+    const { spawnSync } = require("node:child_process");
+    const res = spawnSync(process.execPath, [require.resolve("../docs/staging/pool-diagnostic/pool-diagnostic.proposal.cjs")], { encoding: "utf8", env: { PATH: process.env.PATH }, timeout: 10000 });
+    assert.equal(res.status, 10); assert.match(res.stdout, /"status":"config_invalid"/); assert.equal(res.stderr, "");
+  });
+});

@@ -100,16 +100,30 @@ function classify(grants, preflight) {
   return { status: "accepted", privilegeOk, rls, rlsOk };
 }
 
-// A5: acquisition, rollback, release and pool shutdown are all inside the protected boundary; the first failure is preserved over any cleanup failure.
-async function run({ env = process.env, pgModule, loader = loadReviewedModule, overallMs = 45000 } = {}) {
-  let pool = null, client = null, status = "internal_error", report = {}, primary = null, cleanupFailed = false;
+// Cleanup/abort contract (Codex Closure-07 finding A): an abort flag stops all further database work (the guarded client refuses new statements, including those issued by the
+// reviewed preflight); the result object is returned by the work promise and is IGNORED if the run already timed out or failed (no late success); every cleanup step is
+// time-bounded; after a timeout or a failed rollback the connection is DESTROYED (release(true)) rather than returned to the pool; any cleanup failure turns an otherwise
+// accepted result into cleanup_failed (nonzero exit); the first failure is never overwritten.
+const CLEANUP_STEP_MS = 3000;
+const bounded = (p, ms) => new Promise((resolve, reject) => { const t = setTimeout(() => reject(new Error("bound")), ms); Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); }); });
+
+async function run({ env = process.env, pgModule, loader = loadReviewedModule, overallMs = 45000, cleanupMs = CLEANUP_STEP_MS } = {}) {
+  const state = { aborted: false, pool: null, client: null };
   const work = (async () => {
     const target = parseTarget(env);
     const mod = loader();
     const { Pool } = pgModule || require("pg");
-    pool = new Pool({ connectionString: target.connectionString, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 5000, query_timeout: 8000, idle_in_transaction_session_timeout: 10000, application_name: "bg017c07-pool-diagnostic" });
-    try { client = await pool.connect(); } catch { fail("connect_failed"); }
-    const q = async (sql, params) => { try { return await client.query(sql, params); } catch { throw new DiagnosticError("query_failed"); } };
+    state.pool = new Pool({ connectionString: target.connectionString, max: 1, connectionTimeoutMillis: 5000, statement_timeout: 5000, query_timeout: 8000, idle_in_transaction_session_timeout: 10000, application_name: "bg017c07-pool-diagnostic" });
+    if (state.aborted) fail("timeout");
+    try { state.client = await state.pool.connect(); } catch { fail(state.aborted ? "timeout" : "connect_failed"); }
+    const client = state.client;
+    const q = async (sql, params) => {
+      if (state.aborted) throw new DiagnosticError("timeout");
+      let r; try { r = await client.query(sql, params); } catch { throw new DiagnosticError(state.aborted ? "timeout" : "query_failed"); }
+      if (state.aborted) throw new DiagnosticError("timeout");
+      return r;
+    };
+    const guarded = { query: (sql, params) => q(sql, params) }; // the reviewed preflight can only run statements while the run is live
     await q("begin read only");
     await q("set local statement_timeout = '5s'");
     await q("set local lock_timeout = '1s'");
@@ -120,31 +134,44 @@ async function run({ env = process.env, pgModule, loader = loadReviewedModule, o
     const grants = (await q(Q_TABLES, [TABLES])).rows;
     if (!who || !role || !ssl || grants.length !== TABLES.length) fail("query_failed");
     let preflight;
-    try { preflight = await mod.preflight(client); } catch { fail("preflight_failed"); }
+    try { preflight = await mod.preflight(guarded); } catch (e) { fail(state.aborted ? "timeout" : "preflight_failed"); }
+    if (state.aborted) fail("timeout");
     const verdict = classify(grants, preflight);
-    status = verdict.status;
-    report = {
-      target: { host_kind: target.host_kind, port: target.port, sslmode_param: target.sslmode_param, identity: target.identity, database_name: who.database_name, secret_reference: "UNVERIFIED by this script (check the Job definition)" },
-      connection: { current_user_name: who.current_user_name, session_user_name: who.session_user_name, server_version: who.server_version, ssl_in_use: ssl.ssl_in_use, row_security_setting: who.row_security_setting },
-      role: { rolsuper: role.rolsuper, rolbypassrls: role.rolbypassrls, rolinherit: role.rolinherit },
-      grants, rls_effect: verdict.rls, preflight, module: { layout_root: mod.layout_root, digests_verified: mod.verified },
+    return {
+      status: verdict.status,
+      report: {
+        target: { host_kind: target.host_kind, port: target.port, sslmode_param: target.sslmode_param, identity: target.identity, database_name: who.database_name, secret_reference: "UNVERIFIED by this script (check the Job definition)" },
+        connection: { current_user_name: who.current_user_name, session_user_name: who.session_user_name, server_version: who.server_version, ssl_in_use: ssl.ssl_in_use, row_security_setting: who.row_security_setting },
+        role: { rolsuper: role.rolsuper, rolbypassrls: role.rolbypassrls, rolinherit: role.rolinherit },
+        grants, rls_effect: verdict.rls, preflight, module: { layout_root: mod.layout_root, digests_verified: mod.verified },
+      },
     };
   })();
-  let timer;
+  work.catch(() => {}); // a late rejection after the race is already decided is not an unhandled rejection
+  let timer, outcome = null, primary = null;
   try {
-    await Promise.race([work, new Promise((_, rej) => { timer = setTimeout(() => rej(new DiagnosticError("timeout")), overallMs); })]);
-  } catch (e) { primary = e instanceof DiagnosticError ? e.code : "internal_error"; status = primary; report = {}; }
+    outcome = await Promise.race([work, new Promise((_, rej) => { timer = setTimeout(() => { state.aborted = true; rej(new DiagnosticError("timeout")); }, overallMs); })]);
+  } catch (e) { state.aborted = true; primary = e instanceof DiagnosticError ? e.code : "internal_error"; }
   clearTimeout(timer);
-  if (client) { try { await client.query("rollback"); } catch { cleanupFailed = true; } try { client.release(); } catch { cleanupFailed = true; } }
-  if (pool) { try { await pool.end(); } catch { cleanupFailed = true; } }
-  if (cleanupFailed && status === "accepted") status = "cleanup_failed"; // never overwrites an earlier failure
+  state.aborted = true; // from here on nothing may start new database work, whatever the work promise still does
+  let cleanupFailed = false, destroyed = false;
+  if (state.client) {
+    let rolledBack = false;
+    if (primary !== "timeout") { try { await bounded(state.client.query("rollback"), cleanupMs); rolledBack = true; } catch { cleanupFailed = true; } }
+    try { if (primary === "timeout" || !rolledBack) { destroyed = true; state.client.release(true); } else { state.client.release(); } } catch { cleanupFailed = true; }
+  }
+  if (state.pool) { try { await bounded(state.pool.end(), cleanupMs); } catch { cleanupFailed = true; } }
+  let status = primary || outcome.status;
+  const report = primary ? {} : outcome.report;
+  if (cleanupFailed && status === "accepted") status = "cleanup_failed"; // success is never reported after incomplete cleanup; an earlier failure is never overwritten
   const out = { diagnostic_version: VERSION, evidence_class: EVIDENCE_CLASS, existing_app_pool_observed: false, status, accepted: status === "accepted",
-    tenant_isolation_asserted: false, cleanup_ok: !cleanupFailed, ...report };
+    tenant_isolation_asserted: false, cleanup_ok: !cleanupFailed, connection_destroyed: destroyed, ...report };
   return { status, exit: EXIT[status], output: out };
 }
 
 module.exports = { run, parseTarget, loadReviewedModule, classify, REVIEWED, EXIT, VERSION, EVIDENCE_CLASS, TABLES };
 // Runs as a file (`node file`) or, for a Job whose image does not contain the file, as `node -e "<exact reviewed text>"` with POOL_DIAGNOSTIC_AUTORUN=1.
 if (require.main === module || process.env.POOL_DIAGNOSTIC_AUTORUN === "1") {
-  run().then((r) => { process.stdout.write(JSON.stringify(r.output) + "\n"); process.exitCode = r.exit; }, () => { process.stdout.write(JSON.stringify({ diagnostic_version: VERSION, status: "internal_error", accepted: false }) + "\n"); process.exitCode = EXIT.internal_error; });
+  const finish = (line, code) => process.stdout.write(line + "\n", () => process.exit(code)); // explicit exit: no lingering socket or timer can continue database work
+  run().then((r) => finish(JSON.stringify(r.output), r.exit), () => finish(JSON.stringify({ diagnostic_version: VERSION, status: "internal_error", accepted: false }), EXIT.internal_error));
 }
