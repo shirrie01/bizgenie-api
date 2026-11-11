@@ -49,14 +49,22 @@ describe('disabled features on legacy and advanced disposable schemas', { skip: 
         for (const file of files) await pool.query(fs.readFileSync(path.join(directory, file), 'utf8'));
         const before = await publicTables(pool);
         if (!advanced) {
-          // Activation cannot bypass absent authority migrations or reach cloud credentials/storage.
+          // Main already has the media authority FK. Model an incomplete schema explicitly,
+          // only in this disposable DB and a rolled-back transaction; do not weaken the rule.
+          const schemaClient = await pool.connect();
           let externalCalls = 0;
-          await assert.rejects(require('../src/activation').createMediaProductionComposition({
-            pool, env: { BIZGENIE_ENVIRONMENT: 'staging', MEDIA_STORAGE_ENABLED: 'true', MEDIA_STORAGE_BUCKET: 'synthetic-private-fixture' },
-            accessTokenProvider: async () => { externalCalls++; throw new Error('Unexpected credential access'); },
-            fetchImpl: async () => { externalCalls++; throw new Error('Unexpected storage request'); },
-          }), require('../src/media/errors').MediaPersistenceError);
-          assert.equal(externalCalls, 0, 'missing authority schema must fail before cloud credential/storage access');
+          try {
+            await schemaClient.query('begin');
+            await schemaClient.query('alter table public.media_assets drop constraint media_assets_generation_authority_fkey');
+            await assert.rejects(require('../src/activation').createMediaProductionComposition({
+              pool: schemaClient,
+              env: { BIZGENIE_ENVIRONMENT: 'staging', MEDIA_STORAGE_ENABLED: 'true', MEDIA_STORAGE_BUCKET: 'synthetic-private-fixture' },
+              accessTokenProvider: async () => { externalCalls++; throw new Error('Unexpected credential access'); },
+              fetchImpl: async () => { externalCalls++; throw new Error('Unexpected storage request'); },
+            }), require('../src/media/errors').MediaConfigurationError);
+            assert.equal(externalCalls, 0, 'missing authority schema must fail before cloud credential/storage access');
+          } finally { try { await schemaClient.query('rollback'); } finally { schemaClient.release(); } }
+          assert.equal((await pool.query("select exists(select 1 from pg_constraint where conrelid='public.media_assets'::regclass and conname='media_assets_generation_authority_fkey') present")).rows[0].present, true);
         }
 
         for (const name of additions) {
