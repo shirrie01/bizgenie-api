@@ -118,3 +118,29 @@ test('draft workflow fails closed for absent flag foreign scope expired auth pat
  for(const p of ['/customer/generate-image','/customer/generate-video','/_admin/ping'])assert.equal((await request(k.app).post(p).set('authorization','Bearer valid').send({})).status,404);
  assert.equal(k.calls.length,0);assert.equal(k.iamCalls.length,0);
 });
+
+test('draft gate ON or OFF never replaces independent paid/social authorizations',async()=>{
+ const u='11111111-1111-4111-8111-111111111111';
+ const operations=[
+  {flag:'allowSocialWrites',path:'/customer/social/dispatches',code:'SOCIAL_WRITES_DISABLED',body:{tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a'}},
+  {flag:'allowGenerationConfirmation',path:'/customer/generation-quotes/'+u+'/confirm',code:'GENERATION_CONFIRMATION_DISABLED',body:{tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a'}},
+  {flag:'allowStripeCheckout',path:'/billing/stripe/checkout',code:'STRIPE_CHECKOUT_DISABLED',body:{tenant_id:'tenant_a',plan_code:'standard',request_id:'synthetic_checkout_intent'}},
+ ];
+ for(const allowDraftWorkflow of [false,true])for(const allowWrites of [false,true])for(const own of [false,true])for(const op of operations){
+  const k=kit({allowDraftWorkflow,allowWrites,allowSocialWrites:false,allowGenerationConfirmation:false,allowStripeCheckout:false,[op.flag]:own});
+  const result=await request(k.app).post(op.path).set('authorization','Bearer valid').send(op.body);
+  const permitted=allowWrites&&own;
+  assert.equal(result.status,permitted?200:403,JSON.stringify({flag:op.flag,allowDraftWorkflow,allowWrites,own}));
+  if(!permitted)assert.equal(result.body.error.code,allowWrites?op.code:'STAGING_WRITES_DISABLED');
+  assert.equal(k.calls.length,permitted?1:0);assert.equal(k.iamCalls.length,permitted?1:0);
+ }
+ // Each explicit permission admits only its own category; others remain blocked.
+ for(const allowed of operations){
+  const k=kit({allowDraftWorkflow:true,allowWrites:true,allowSocialWrites:false,allowGenerationConfirmation:false,allowStripeCheckout:false,[allowed.flag]:true});
+  for(const denied of operations.filter(x=>x.flag!==allowed.flag)){
+   const result=await request(k.app).post(denied.path).set('authorization','Bearer valid').send(denied.body);
+   assert.equal(result.status,403);assert.equal(result.body.error.code,denied.code);
+  }
+  assert.equal(k.calls.length,0);assert.equal(k.iamCalls.length,0);
+ }
+});
