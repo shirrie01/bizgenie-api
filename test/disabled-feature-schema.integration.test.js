@@ -10,6 +10,11 @@ const { createProductionApp } = require('../index');
 const { PostgresWorkspaceOnboardingRepository } = require('../src/workspace-onboarding');
 
 const connection = process.env.TEST_DATABASE_URL;
+if (connection) {
+  let local = false;
+  try { local = ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(connection).hostname); } catch {}
+  if (!local) throw new Error('Disposable schema tests require an explicit loopback PostgreSQL instance');
+}
 const cutoff = '20260924110000'; // Existing twenty-migration main schema, before onboarding/premium additions.
 const additions = ['workspace_onboarding_profiles', 'generation_execution_claims', 'social_connections'];
 const flags = ['BILLING_DURABLE_ENABLED', 'STRIPE_BILLING_ENABLED', 'PAID_BETA_CAPTURE_ENABLED',
