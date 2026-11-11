@@ -42,3 +42,30 @@ it('LinkedIn cancellation during author/journal work never starts provider trans
   const c=new LinkedInConnector({...k.options,postingPolicy:policy});assert.equal((await c.publish({identity:phase,token_reference:ref,connection_binding:binding,signal:controller.signal,payload:{content:{body:'Approved',asset_refs:[]}}})).status,'failed');assert.equal(k.calls.length,0);
  }
 });
+
+it('LinkedIn staging redirect is explicit, exact and pinned through authorization and token exchange', async()=>{
+ const k=kit(),redirect='https://staging-api.getbizgenie.com/customer/social/oauth/callback/linkedin';
+ const p=await createLinkedInPlatform({...k.options,env:{BIZGENIE_ENVIRONMENT:'staging',LINKEDIN_REDIRECT_URI:redirect,LINKEDIN_CLIENT_ID:k.options.clientId,LINKEDIN_CLIENT_SECRET:'synthetic_secret',LINKEDIN_APP_REVIEW_APPROVED:'true',LINKEDIN_OAUTH_REVIEW_REF:'synthetic_staging_review'}});
+ const config=configuration('linkedin',p),url=new URL(authorizeURL(config,{state:'synthetic_state',challenge:'internal_only'}));
+ assert.equal(url.searchParams.get('redirect_uri'),redirect);
+ assert.deepEqual(p.oauth.approved_redirect_uris,[redirect]);
+ k.setFetch(async(url,options)=>{if(url.endsWith('/accessToken')){assert.equal(new URLSearchParams(options.body).get('redirect_uri'),redirect);return json(token);}return json({sub:binding.account_id,name:'Synthetic staging member'});});
+ const connected=await p.connector.exchange({code:'synthetic_code',redirect_uri:redirect,authorization_context:binding});
+ assert.equal(connected.account_id,binding.account_id);
+ const calls=k.calls.length;
+ await assert.rejects(p.connector.exchange({code:'synthetic',redirect_uri:REDIRECT_URI,authorization_context:binding}),{code:'OAUTH_CONFIGURATION_CHANGED'});
+ assert.equal(k.calls.length,calls);
+});
+it('LinkedIn production default is unchanged and rejects staging callbacks outside explicit staging',async()=>{
+ const k=kit(),make=extra=>createLinkedInPlatform({...k.options,env:{LINKEDIN_CLIENT_ID:k.options.clientId,LINKEDIN_CLIENT_SECRET:'synthetic_secret',LINKEDIN_APP_REVIEW_APPROVED:'true',LINKEDIN_OAUTH_REVIEW_REF:'synthetic',...extra}});
+ for(const env of [{},{BIZGENIE_ENVIRONMENT:'production'},{BIZGENIE_ENVIRONMENT:'staging'}])assert.equal((await make(env)).oauth.redirect_uri,REDIRECT_URI);
+ for(const environment of [undefined,'production','preview'])await assert.rejects(make({BIZGENIE_ENVIRONMENT:environment,LINKEDIN_REDIRECT_URI:'https://staging-api.getbizgenie.com/customer/social/oauth/callback/linkedin'}),{code:'LINKEDIN_NOT_CONFIGURED'});
+ assert.equal(k.calls.length,0);
+});
+it('LinkedIn staging configuration rejects lookalike hosts, alternate paths, credentials, ports, query and fragments',async()=>{
+ const k=kit(),exact='https://staging-api.getbizgenie.com/customer/social/oauth/callback/linkedin';
+ for(const redirect of [exact+'/',exact+'?x=1',exact+'#x',exact.replace('https:','http:'),exact.replace('staging-api.','staging-api.evil.'),exact.replace('.com/','.com:443/'),exact.replace('https://','https://user@'),exact.replace('/linkedin','/tiktok'),' https://getbizgenie.com/customer/social/oauth/callback/linkedin']){
+  await assert.rejects(createLinkedInPlatform({...k.options,env:{BIZGENIE_ENVIRONMENT:'staging',LINKEDIN_REDIRECT_URI:redirect,LINKEDIN_CLIENT_ID:k.options.clientId,LINKEDIN_CLIENT_SECRET:'synthetic_secret',LINKEDIN_APP_REVIEW_APPROVED:'true',LINKEDIN_OAUTH_REVIEW_REF:'synthetic'}}),{code:'LINKEDIN_NOT_CONFIGURED'});
+ }
+ assert.equal(k.calls.length,0);
+});
