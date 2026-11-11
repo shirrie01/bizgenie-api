@@ -4,7 +4,7 @@
 
 ## 1. The file
 - Path in this branch: `docs/staging/pool-diagnostic/pool-diagnostic.proposal.cjs`
-- SHA-256: `b86db00b3a4edb05178a` **(first 20 hex shown; verify the full digest with `sha256sum` — the full value is printed in the PR description and the #191 checkpoint)**
+- SHA-256: `b86db00b3a4edb05178a32b2d9e8292d0bc17ccf9a1fd34f4b1748b5bcc282be` (verify with `sha256sum` on the file below)
 - Behaviour: opens ONE connection from a `pg` Pool built from `BRAND_BRAIN_DATABASE_URL` (`max: 1`, 5 s connect timeout), runs `begin read only`, then six read-only statements (current_user/session_user; `rolsuper/rolbypassrls` for current_user; for the four tables `has_table_privilege(current_user, …, select|insert|update)`, `relrowsecurity`, `relforcerowsecurity`, policy count, ownership flag; then the **unmodified** `preflight(client)` from `src/workspace-onboarding/preflight.js`), prints ONE JSON line and `rollback`s. It prints role **names**, booleans and the preflight result; it never prints the connection string, a stack trace or any application row. On any error it prints only `{"error": <code|class name>}` and exits 1.
 - Stubbed run only (stub `pg`): values from that run are not evidence.
 
