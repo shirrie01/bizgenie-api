@@ -70,8 +70,8 @@ contracts before a release claims these capabilities; no PR merged or closed by 
 
 New head796731fc31e01ba646450ee241d4a49c4ea44a8b, obtained via native Git AFTER publication.
 Script SHA2565f9da0fa7cce5758527b1498cf3a0d9c01b5558f34cbbc585b0b54940799d3a0,
-independently matches README. Original seven concerns addressed; all15 submitted stub
-checks pass. Reviewed module hashes match tagged-source f1fc2f51. Evidence class now
+independently matches README. All seven original areas now have corrections; all15 submitted stub
+checks pass, but the deadline cleanup guarantee remains incomplete below. Reviewed module hashes match tagged-source f1fc2f51. Evidence class now
 correctly says SEPARATE_PROCESS_NEW_POOL_NOT_EXISTING_APP_POOL. No new Job is approved.
 
 Additional independently reproduced findings require Claude changes before execution:
