@@ -48,6 +48,17 @@ describe('disabled features on legacy and advanced disposable schemas', { skip: 
         if (!advanced) assert.equal(files.length, 20);
         for (const file of files) await pool.query(fs.readFileSync(path.join(directory, file), 'utf8'));
         const before = await publicTables(pool);
+        if (!advanced) {
+          // Activation cannot bypass absent authority migrations or reach cloud credentials/storage.
+          let externalCalls = 0;
+          await assert.rejects(require('../src/activation').createMediaProductionComposition({
+            pool, env: { BIZGENIE_ENVIRONMENT: 'staging', MEDIA_STORAGE_ENABLED: 'true', MEDIA_STORAGE_BUCKET: 'synthetic-private-fixture' },
+            accessTokenProvider: async () => { externalCalls++; throw new Error('Unexpected credential access'); },
+            fetchImpl: async () => { externalCalls++; throw new Error('Unexpected storage request'); },
+          }), require('../src/media/errors').MediaPersistenceError);
+          assert.equal(externalCalls, 0, 'missing authority schema must fail before cloud credential/storage access');
+        }
+
         for (const name of additions) {
           const relation = (await pool.query('select to_regclass($1) relation', ['public.' + name])).rows[0].relation;
           assert.equal(Boolean(relation), advanced, name);
