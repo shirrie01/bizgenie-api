@@ -1,3 +1,5 @@
+> Current source integration checkpoint: [BG-STUDIO-MEDIA-05](../media/BG-STUDIO-MEDIA-05.md), based on main2251e54 and Issue #191 comment6839114123. The dated reports below retain historical evidence; they do not supersede current Mission Control, activate profiles or authorize deployment.
+
 # BizGenie Mission Control v1.0
 
 ## Current campaign and paid-activation authority
