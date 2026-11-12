@@ -31,7 +31,7 @@ Counts overlap; do not add them. Browser smoke uses local authenticated syntheti
 
 ## Frontend contract and security
 
-Use authenticated metadata to obtain the scoped preview URL. Delivery is GET/HEAD `/customer/campaigns/:campaignId/variants/:variantId/revisions/:revisionId/assets/:assetId/preview?expected_campaign_version=<version>` with customer bearer token; range requests retain that token. No bucket/key or signed URL is a customer contract. Unauthenticated: 401; hidden foreign/missing/revoked media: 404; stale campaign/revision: 409. Consume the existing structured errors; never treat a preview read as acknowledgement, approval or publication.
+Use authenticated metadata to obtain the scoped preview URL. Delivery is GET/HEAD `/customer/campaigns/:campaignId/variants/:variantId/revisions/:revisionId/assets/:assetId/preview?tenant_id=<tenant>&project_id=<project>&expected_campaign_version=<version>` with customer bearer token; range requests retain that token. No bucket/key or signed URL is a customer contract. Unauthenticated: 401; hidden foreign/missing/revoked media: 404; stale campaign/revision: 409. Consume the existing structured errors; never treat a preview read as acknowledgement, approval or publication.
 
 Tenant/project/brand, current version/revision, revision attachment, immutable generation-job lineage, asset status, preview rights and MIME are checked before storage. Storage reads pin both GCS generation and ifGenerationMatch. Strict response length/range/encoding checks and exact byte counters prevent oversized or mismatched delivery. Responses are private/no-store with nosniff and sandbox headers. CORS grants only configured exact origins; preview methods GET/HEAD/OPTIONS and bearer/range headers, without cookie credentials.
 
