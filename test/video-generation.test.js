@@ -152,6 +152,7 @@ describe("video reference asset authority", () => {
     }));
     assert.deepEqual(calls, [{
       asset_id: "approved_start",
+      brand_id: "brand_001",
       project_id: "project_001",
       requested_by_user_id: "user_001",
       required_right: "video.generate.reference",
