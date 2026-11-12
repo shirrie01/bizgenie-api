@@ -1,0 +1,48 @@
+{
+  "contract_id": "bizgenie.instagram-feed-video-preview.v1.proposed",
+  "status": "proposal_not_provisionable",
+  "authority": "BG-STUDIO-007-BE",
+  "registry_identity": {
+    "profile_id": "instagram.feed.video",
+    "profile_version": 1,
+    "platform": "instagram",
+    "placement": "feed",
+    "format": "video",
+    "renderer_version": "bizgenie-instagram-feed-video-preview.v1"
+  },
+  "bizgenie_preview_constraints": {
+    "container": "mp4",
+    "mime_type": "video/mp4",
+    "video_codec": "h264_avc",
+    "audio": "no_audio_track",
+    "pixel_aspect_ratio": "1:1",
+    "rotation_degrees": 0,
+    "dimensions": [
+      { "width": 720, "height": 1280, "aspect_ratio": "9:16" },
+      { "width": 1280, "height": 720, "aspect_ratio": "16:9" }
+    ],
+    "duration_seconds": [4, 6, 8],
+    "max_object_bytes": 33554432,
+    "max_transfer_bytes": 8388608,
+    "representation": "original_asset_and_escaped_persisted_copy_no_crop_no_transcode",
+    "platform_artifact_status": "unrendered",
+    "autoplay": false,
+    "controls_required": true,
+    "accessible_description_required": true,
+    "acknowledgement": "I reviewed this campaign revision's video and copy. This preview is not an Instagram render or a guarantee of Instagram acceptance. Approval does not publish anything."
+  },
+  "required_evidence": [
+    "current_scope_revision_version_and_generation_lineage",
+    "active_campaign_preview_rights",
+    "trusted_byte_bound_container_codec_audio_dimensions_duration_inspection",
+    "successful_complete_authenticated_transfer_and_browser_playback",
+    "same_actor_explicit_acknowledgement_then_current_version_approval"
+  ],
+  "unresolved_before_provisioning": [
+    "current_official_meta_feed_vs_reels_contract_and_limits",
+    "trusted_byte_bound_video_inspection_authority",
+    "renderer_contract_review_and_owner_acceptance",
+    "frontend_accessibility_playback_and_32_mib_budget_proof",
+    "separate_founder_approval_for_profile_provisioning_and_staging"
+  ]
+}
