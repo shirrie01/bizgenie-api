@@ -53,6 +53,7 @@ async function createMediaProductionComposition({
       imageEnabled: false,
       videoEnabled: false,
       mediaAssetRepository: null,
+      mediaPreviewStorage: null,
       imageProvider: new UnconfiguredImageGenerationProvider(),
       videoProvider: new UnconfiguredVideoGenerationProvider(),
       videoAssetStore: new UnconfiguredVideoAssetStore(),
@@ -124,6 +125,7 @@ async function createMediaProductionComposition({
 
   return Object.freeze({
     mediaEnabled: true,
+    mediaPreviewStorage: storage,
     imageEnabled,
     videoEnabled,
     mediaAssetRepository,
