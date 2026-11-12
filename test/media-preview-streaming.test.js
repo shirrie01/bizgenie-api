@@ -79,3 +79,43 @@ test("already disconnected requests start no storage work",async()=>{
   const storage={bucket:asset.bucket,async statPreview(){calls++;throw new Error("must not run");}};
   await deliverPreview(req,res,asset,storage);assert.equal(calls,0);
 });
+
+test('storage adapter rejects and cancels a response arriving after abort without waiting for cancellation',async()=>{
+  let release,started,cancelled=false;
+  const entered=new Promise(resolve=>{started=resolve;});
+  const storage=new GoogleCloudMediaStorage({bucket:'private-test',accessTokenProvider:async()=> 'fixture-token',fetchImpl:async()=>{
+    started();return new Promise(resolve=>{release=resolve;});
+  }});
+  const controller=new AbortController();
+  const pending=storage.previewRequest('https://storage.googleapis.com/synthetic-only',{signal:controller.signal});
+  await entered;controller.abort();
+  release(new Response(new ReadableStream({cancel(){cancelled=true;return new Promise(()=>{});}})));
+  await assert.rejects(Promise.race([pending,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('cancellation stalled')),250);})]),{code:'MEDIA_PERSISTENCE_UNAVAILABLE'});
+  assert.equal(cancelled,true);
+});
+test('storage error rejection is not held hostage by an upstream cancellation promise',async()=>{
+  let cancelled=false;
+  const storage=new GoogleCloudMediaStorage({bucket:'private-test',accessTokenProvider:async()=> 'fixture-token',fetchImpl:async()=>
+    new Response(new ReadableStream({cancel(){cancelled=true;return new Promise(()=>{});}}),{status:403})});
+  await assert.rejects(Promise.race([storage.previewRequest('https://storage.googleapis.com/synthetic-only',{signal:new AbortController().signal}),
+    new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('cancellation stalled')),100);})]),{code:'MEDIA_PERSISTENCE_UNAVAILABLE'});
+  assert.equal(cancelled,true);
+});
+
+test('disconnect while metadata is pending prevents any object read even after late metadata resolves',async()=>{
+  let entered,release,signal,opened=0;
+  const pending=new Promise(resolve=>{entered=resolve;});
+  const storage={bucket:asset.bucket,statPreview(input){signal=input.signal;entered();return new Promise(resolve=>{release=()=>resolve({size:1024,mimeType:'video/mp4',generation:'42'});});},async openPreview(){opened++;throw Error('must not read');}};
+  const server=appFor(storage,1000).listen(0,'127.0.0.1');
+  try {
+    await new Promise(resolve=>server.once('listening',resolve));
+    const client=http.get({host:'127.0.0.1',port:server.address().port,path:'/'});
+    client.on('error',()=>{});
+    await pending;
+    const closed=new Promise(resolve=>client.once('close',resolve));client.destroy();await closed;
+    // Wait for the server-side abort notification before releasing the storage stand-in.
+    if(!signal.aborted)await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+    release();await new Promise(setImmediate);
+    assert.equal(signal.aborted,true);assert.equal(opened,0);
+  } finally {await new Promise(resolve=>server.close(resolve));}
+});

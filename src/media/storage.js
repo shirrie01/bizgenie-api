@@ -78,15 +78,21 @@ class GoogleCloudMediaStorage {
   }
 
   async previewRequest(url, { signal, headers = {} }) {
+    let response;
     try {
       const token = await this.accessTokenProvider();
       signal.throwIfAborted();
       if (typeof token !== "string" || !token.trim()) throw new MediaPersistenceError();
-      const response = await this.fetchImpl(url, { method: "GET", redirect: "error", signal,
+      response = await this.fetchImpl(url, { method: "GET", redirect: "error", signal,
         headers: { authorization: `Bearer ${token}`, "Accept-Encoding": "identity", ...headers } });
-      if (![200, 206].includes(response.status)) { await response.body?.cancel(); throw new MediaPersistenceError(); }
+      signal.throwIfAborted();
+      if (![200, 206].includes(response.status)) throw new MediaPersistenceError();
       return response;
-    } catch { throw new MediaPersistenceError(); }
+    } catch {
+      // A failed/late response cannot retain a request while cancellation stalls.
+      try { Promise.resolve(response?.body?.cancel()).catch(() => {}); } catch {}
+      throw new MediaPersistenceError();
+    }
   }
 
   async statPreview({ key, signal }) {

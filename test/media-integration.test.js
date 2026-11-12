@@ -52,3 +52,17 @@ test("repeated authorised reads are not an aggregate egress budget or a generati
   assert.equal(f.state.storage.filter(x=>new URL(x.url).searchParams.has("generation")).length,3);
   assert.equal(f.state.providerCalls,1);assert.deepEqual(await f.s.get(),before);
 });
+
+test('combined main reference-rights recovery denies a revoked input before storage access',async()=>{
+  const f=await integrationFixture();
+  f.mediaRepository.assets.get(f.referenceId).status='revoked';f.state.storage=[];
+  const {RightsAwareMediaReferenceLoader}=require('../src/media');
+  for(const delivery of ['bytes','gcs']){
+    const loader=new RightsAwareMediaReferenceLoader({repository:f.mediaRepository,storage:f.storage,delivery});
+    await assert.rejects(loader.load({asset_id:f.referenceId,tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a',required_right:'image.generate.reference'}),{code:'MEDIA_ASSET_NOT_AVAILABLE'});
+  }
+  assert.equal(f.state.storage.length,0);assert.equal(f.state.providerCalls,1);
+  // Rights on the already-generated output are independent, never inferred from the input.
+  f.mediaRepository.assets.get(f.assetId).allowed_uses=[];
+  assert.equal((await bytes(f)).status,404);assert.equal(f.state.storage.length,0);
+});
