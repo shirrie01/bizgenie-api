@@ -3,7 +3,7 @@ const {describe,it,before,after,beforeEach}=require('node:test');
 const {readFileSync}=require('node:fs');
 const {randomUUID}=require('node:crypto');
 const {spawn}=require('node:child_process');
-const {Pool}=require('pg');
+const {createDrainedPool:Pool}=require('./helpers/drained-pg-pool');
 const {MonthlyProviderSpend}=require('../src/provider-spend');
 const adminUrl=process.env.TEST_DATABASE_URL;
 const suite=adminUrl?describe:describe.skip;
@@ -17,7 +17,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
   await owner.query(readFileSync(require.resolve('../docs/provider-spend/schema-proposal.sql'),'utf8').replaceAll('bizgenie_provider_spend_runtime',role));
   runtime=new Pool({connectionString:url,options:`-c role=${role}`});s=new MonthlyProviderSpend({pool:runtime,enabled:true});
  });
- after(async()=>{await runtime?.end();await owner?.end();if(admin){await admin.query(`drop database if exists "${db}" with(force)`);await admin.query(`drop role if exists "${role}"`);await admin.end();}});
+ after(async()=>{try{await Promise.all([runtime?.end(),owner?.end()]);if(admin){await admin.query(`drop database if exists "${db}"`);await admin.query(`drop role if exists "${role}"`);}}finally{await admin?.end();}});
  beforeEach(async()=>{
   await owner.query('truncate provider_spend_reservations,provider_spend_customers,provider_spend_policy');
   await owner.query("insert into provider_spend_customers values('tenant_a',1,true),('tenant_b',2,true)");
@@ -33,7 +33,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
  });
  it('independent Node processes race on the same durable id without double reservation',async()=>{
   const run=()=>new Promise((resolve,reject)=>{
-   const code=`const{Pool}=require('pg');const{MonthlyProviderSpend}=require('./src/provider-spend');const p=new Pool({connectionString:process.env.SPEND_TEST_URL,options:process.env.SPEND_TEST_ROLE});new MonthlyProviderSpend({pool:p,enabled:true}).reserve(${JSON.stringify(input('shared'))}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e.code);process.exitCode=1}).finally(()=>p.end());`;
+   const code=`const{createDrainedPool:Pool}=require('./test/helpers/drained-pg-pool');const{MonthlyProviderSpend}=require('./src/provider-spend');const p=new Pool({connectionString:process.env.SPEND_TEST_URL,options:process.env.SPEND_TEST_ROLE});new MonthlyProviderSpend({pool:p,enabled:true}).reserve(${JSON.stringify(input('shared'))}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e.code);process.exitCode=1}).finally(()=>p.end());`;
    const child=spawn(process.execPath,['-e',code],{cwd:require('node:path').join(__dirname,'..'),env:{...process.env,SPEND_TEST_URL:url,SPEND_TEST_ROLE:`-c role=${role}`},stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);child.on('error',reject);child.on('close',c=>c?reject(Error(err)):resolve(JSON.parse(out)));
   });
   const r=await Promise.all([run(),run()]);assert.equal(r.filter(x=>x.replay).length,1);assert.equal((await owner.query('select count(*)::int n from provider_spend_reservations')).rows[0].n,1);
