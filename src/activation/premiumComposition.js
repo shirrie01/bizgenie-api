@@ -29,6 +29,7 @@ async function createPremiumComposition({
   toolchainCheck = require("../media/toolchainSelfTest").runToolchainSelfTest, // test seam only; not reachable from the environment
   mediaInspector = null, connectors = null, workflowStageHandlerFactory = null,
   socialKeyProvider = null, socialFetch = undefined,
+  providerSpend = null, providerSpendOperations = null, // Server-owned only; never loaded from customer input or enabled by a daily budget.
 } = {}) {
   let unscannedAccepted = false;
   const flags = Object.fromEntries(FLAGS.map((name) => [name, activationFlag(env, name)]));
@@ -96,6 +97,11 @@ async function createPremiumComposition({
     }
     const router = new QuotedExecutionRouter({ jobs, executionPolicy: generationExecutionPolicy, text, creative });
     generationWorker = new FencedGenerationWorker({ quoteService: generationQuoteService, provider: router, executionPolicy: generationExecutionPolicy });
+    if (providerSpend || providerSpendOperations) {
+      need(providerSpend && typeof providerSpendOperations === 'function', 'Monthly provider spend requires both approved durable ledger and operation authority');
+      generationWorker.providerScope = require('../provider-spend/fencedWorkerScope').createFencedWorkerScope({worker:generationWorker,spend:providerSpend,operationsForRow:providerSpendOperations});
+    }
+    // Without this explicit scope every concrete real SDK/fetch still defaults deny; synthetic providers stay independent.
     Object.assign(capabilities, { text: Boolean(text), image: Boolean(media?.imageEnabled), video: Boolean(media?.videoEnabled), strategyWorkflows: Boolean(strategyWorkflowService) });
   } else if (flags.STRATEGY_WORKFLOWS_ENABLED) need(false, "STRATEGY_WORKFLOWS_ENABLED requires QUOTED_GENERATION_ENABLED");
 
