@@ -55,6 +55,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
  });
  it('partial/zero final bills retain the whole bound; settlement is idempotent and token-bound',async()=>{
   await s.reserve(input('job'));const permit=await s.start(input('job'));
+  await assert.rejects(s.settle({...permit,tenantId:'tenant_a',outcome:'settled',actualMinor:100,evidenceRef:'final.invoice',currency:'USD'}),{code:'PROVIDER_SPEND_INVALID_REQUEST'});
   await s.settle({...permit,tenantId:'tenant_a',outcome:'settled',actualMinor:100,evidenceRef:'final.invoice'});
   assert.equal((await s.settle({...permit,tenantId:'tenant_a',outcome:'settled',actualMinor:100,evidenceRef:'final.invoice'})).replay,true);
   await assert.rejects(s.settle({...permit,tenantId:'tenant_a',outcome:'settled',actualMinor:0,evidenceRef:'different'}),{code:'PROVIDER_SPEND_IDEMPOTENCY_CONFLICT'});

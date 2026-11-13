@@ -103,8 +103,8 @@ class MonthlyProviderSpend {
       return { id, state:'cancelled' };
     });
   }
-  async settle({ id, tenantId, token, actualMinor = null, outcome = 'uncertain', evidenceRef = null } = {}) {
-    if (![id,tenantId].every(text) || typeof token !== 'string' || !['uncertain','settled'].includes(outcome) || (actualMinor !== null && !integer(actualMinor)) || (outcome === 'settled' && (actualMinor === null || !text(evidenceRef))) || (outcome === 'uncertain' && (actualMinor !== null || evidenceRef !== null))) deny('PROVIDER_SPEND_INVALID_REQUEST');
+  async settle({ id, tenantId, token, actualMinor = null, outcome = 'uncertain', evidenceRef = null, currency = 'GBP' } = {}) {
+    if (currency !== 'GBP' || ![id,tenantId].every(text) || typeof token !== 'string' || !['uncertain','settled'].includes(outcome) || (actualMinor !== null && !integer(actualMinor)) || (outcome === 'settled' && (actualMinor === null || !text(evidenceRef))) || (outcome === 'uncertain' && (actualMinor !== null || evidenceRef !== null))) deny('PROVIDER_SPEND_INVALID_REQUEST');
     const result = await this.transaction(async client => {
       // Old-month settlement does not depend on new policy availability, and never frees exposure.
       const row = (await client.query('select * from public.provider_spend_reservations where id=$1 and tenant_id=$2 for update',[id,tenantId])).rows[0];
