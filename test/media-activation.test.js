@@ -142,6 +142,8 @@ describe("Image reference-rights boundary", () => {
     await repository.create(asset());
     let providerCalls = 0;
     const provider = new OpenAIImageProvider({
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic transport fixture only.
+
       apiKey: "test-key",
       assetStore: { async save() { throw new Error("must not store"); } },
       referenceAssetLoader: new RightsAwareMediaReferenceLoader({

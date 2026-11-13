@@ -142,6 +142,14 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
   const row=(await owner.query('select actual_minor,evidence_ref from provider_spend_reservations')).rows[0];assert.equal(Number(row.actual_minor),7000);assert.equal(row.evidence_ref,'corrected.invoice');
   await assert.rejects(s.reserve(input('next')),{code:'PROVIDER_SPEND_BREACH'});
  });
+ it('common admission binds durable worker identity and cannot redispatch after ambiguous provider outcome',async()=>{
+  const {withProviderJob,admitProviderDispatch}=require('../src/provider-spend/dispatch');
+  const job={job_id:'immutable',tenant_id:'tenant_a',project_id:'project',brand_id:'brand',claim_token:'claim',fence:1,state:'calling'};
+  let calls=0;await withProviderJob({spend:s,job,resolveJob:async()=>job,operations:{image:{id:'worker-job',estimateVersion:'estimate.v1'}}},async()=>{
+   await assert.rejects(admitProviderDispatch('image',()=>{calls++;throw Error('ambiguous');}),/ambiguous/);
+   await assert.rejects(admitProviderDispatch('image',()=>calls++),{code:'PROVIDER_SPEND_DISPATCH_HELD'});
+  });assert.equal(calls,1);
+ });
  it('runtime cannot edit policy/cohort/delete ledger, unsafe superuser pool denied',async()=>{
   await assert.rejects(runtime.query('update provider_spend_policy set enabled=true'),{code:'42501'});await assert.rejects(runtime.query('delete from provider_spend_reservations'),{code:'42501'});
   await assert.rejects(new MonthlyProviderSpend({pool:owner,enabled:true}).reserve(input('unsafe')),{code:'PROVIDER_SPEND_SCHEMA_UNSAFE'});

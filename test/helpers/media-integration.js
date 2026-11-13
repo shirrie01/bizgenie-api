@@ -41,7 +41,9 @@ async function integrationFixture({ kind = "image", allowedOrigins = ["https://s
   const lineage={generation_id:"generation_"+randomUUID(),generation_job_id:jobId,tenant_id:job.tenant_id,project_id:job.project_id};
   let result;
   if(kind==="image"){
-    const provider=new OpenAIImageProvider({apiKey:"fixture-only",outputFormat:"png",assetStore:new DurableMediaAssetStore({mediaKind:"image",repository:mediaRepository,storage,now:()=>new Date(NOW)}),
+    const provider=new OpenAIImageProvider({
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic transport fixture only.
+apiKey:"fixture-only",outputFormat:"png",assetStore:new DurableMediaAssetStore({mediaKind:"image",repository:mediaRepository,storage,now:()=>new Date(NOW)}),
       referenceAssetLoader:new RightsAwareMediaReferenceLoader({repository:mediaRepository,storage,delivery:"bytes"}),fetchImpl:async()=>{state.providerCalls++;return new Response(JSON.stringify({data:[{b64_json:PNG.toString("base64")}]}),{headers:{"x-request-id":"fixture-image-request"}});}});
     const service=new ImageGenerationService({repository:new InMemoryImageGenerationRepository(),provider,brandBrainRepository:new InMemoryBrandBrainRepository(),now:()=>new Date(NOW)});
     result=await service.generate({execution_id:"execution_image",generation_id:lineage.generation_id,user_id:context.actor.auth_user_id,project_id:job.project_id,brand_id:job.brand_id,topic:"Synthetic fixture",image_purpose:"Integration test",aspect_ratio:"1:1",reference_assets:[{asset_id:referenceId}]},{job});

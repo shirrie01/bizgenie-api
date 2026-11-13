@@ -67,6 +67,8 @@ function provider({ fetchImpl, ...overrides } = {}) {
   return {
     deps,
     instance: new OpenAIImageProvider({
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic transport fixture only.
+
       apiKey: API_KEY,
       assetStore: deps.assetStore,
       referenceAssetLoader: deps.referenceAssetLoader,
@@ -288,6 +290,8 @@ describe("OpenAIImageProvider retry and error integrity", () => {
     const delays = [];
     const deps = dependencies();
     const instance = new OpenAIImageProvider({
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic transport fixture only.
+
       apiKey: API_KEY,
       assetStore: deps.assetStore,
       referenceAssetLoader: deps.referenceAssetLoader,
@@ -449,6 +453,8 @@ describe("OpenAIImageProvider configuration allowlist", () => {
     const deps = dependencies();
     const create = (overrides) =>
       new OpenAIImageProvider({
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic transport fixture only.
+
         apiKey: API_KEY,
         assetStore: deps.assetStore,
         referenceAssetLoader: deps.referenceAssetLoader,
