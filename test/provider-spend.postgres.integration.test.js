@@ -17,7 +17,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
   await owner.query(readFileSync(require.resolve('../docs/provider-spend/schema-proposal.sql'),'utf8').replaceAll('bizgenie_provider_spend_runtime',role));
   runtime=new Pool({connectionString:url,options:`-c role=${role}`});s=new MonthlyProviderSpend({pool:runtime,enabled:true});
  });
- after(async()=>{try{await Promise.all([runtime?.end(),owner?.end()]);if(admin){await admin.query(`drop database if exists "${db}"`);await admin.query(`drop role if exists "${role}"`);}}finally{await admin?.end();}});
+ after(async()=>{try{const closed=await Promise.allSettled([runtime?.end(),owner?.end()]);const errors=closed.filter(r=>r.status==='rejected').map(r=>r.reason);if(errors.length)throw new AggregateError(errors,'PostgreSQL fixture drain failed');if(admin){await admin.query(`drop database if exists "${db}"`);await admin.query(`drop role if exists "${role}"`);}}finally{await admin?.end();}});
  beforeEach(async()=>{
   await owner.query('truncate provider_spend_reservations,provider_spend_customers,provider_spend_policy');
   await owner.query("insert into provider_spend_customers values('tenant_a',1,true),('tenant_b',2,true)");
@@ -36,7 +36,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
    const code=`const{createDrainedPool:Pool}=require('./test/helpers/drained-pg-pool');const{MonthlyProviderSpend}=require('./src/provider-spend');const p=new Pool({connectionString:process.env.SPEND_TEST_URL,options:process.env.SPEND_TEST_ROLE});new MonthlyProviderSpend({pool:p,enabled:true}).reserve(${JSON.stringify(input('shared'))}).then(x=>console.log(JSON.stringify(x))).catch(e=>{console.error(e.code);process.exitCode=1}).finally(()=>p.end());`;
    const child=spawn(process.execPath,['-e',code],{cwd:require('node:path').join(__dirname,'..'),env:{...process.env,SPEND_TEST_URL:url,SPEND_TEST_ROLE:`-c role=${role}`},stdio:['ignore','pipe','pipe']});let out='',err='';child.stdout.on('data',x=>out+=x);child.stderr.on('data',x=>err+=x);child.on('error',reject);child.on('close',c=>c?reject(Error(err)):resolve(JSON.parse(out)));
   });
-  const r=await Promise.all([run(),run()]);assert.equal(r.filter(x=>x.replay).length,1);assert.equal((await owner.query('select count(*)::int n from provider_spend_reservations')).rows[0].n,1);
+  const outcomes=await Promise.allSettled([run(),run()]);for(const result of outcomes)assert.equal(result.status,'fulfilled',result.reason?.message);const r=outcomes.map(result=>result.value);assert.equal(r.filter(x=>x.replay).length,1);assert.equal((await owner.query('select count(*)::int n from provider_spend_reservations')).rows[0].n,1);
  });
  it('restart/replay and cross-tenant idempotency never create a second exposure',async()=>{
   await s.reserve(input('job'));const restarted=new MonthlyProviderSpend({pool:runtime,enabled:true});assert.equal((await restarted.reserve(input('job'))).replay,true);
@@ -105,7 +105,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
  });
  it('exact aggregate ceiling is permitted and exhausted requests cannot create another reservation',async()=>{
   await owner.query("update provider_spend_policy set estimates=jsonb_set(estimates,'{image,upper_bound_minor}','5000')");
-  await Promise.all([s.reserve(input('one')),s.reserve(input('two','tenant_b'))]);
+  const outcomes=await Promise.allSettled([s.reserve(input('one')),s.reserve(input('two','tenant_b'))]);for(const result of outcomes)assert.equal(result.status,'fulfilled',result.reason?.message);
   await assert.rejects(s.reserve(input('three')),{code:'PROVIDER_SPEND_CAP_EXHAUSTED'});
   assert.equal((await owner.query('select sum(bound_minor)::int n from provider_spend_reservations')).rows[0].n,10000);
  });
