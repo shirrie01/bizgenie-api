@@ -86,6 +86,7 @@ function appWithCapturedPrompt(repository, capture, logger) {
         projectId: "test-project",
         modelName: "gemini-test",
         VertexAIClient: FakeVertexAI,
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic SDK fixture only.
       }),
     logger,
   });

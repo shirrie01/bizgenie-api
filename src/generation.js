@@ -1,3 +1,4 @@
+const { admitProviderDispatch } = require('./provider-spend/dispatch');
 const { VertexAI } = require("@google-cloud/vertexai");
 const { buildSystemRole, compilePrompt } = require("./prompts/compiler");
 
@@ -305,6 +306,7 @@ async function generateScriptWithVertex(
     location = process.env.VERTEX_LOCATION || DEFAULT_LOCATION,
     modelName = process.env.VERTEX_MODEL || DEFAULT_MODEL_NAME,
     VertexAIClient = VertexAI,
+    dispatchAdmission = admitProviderDispatch,
   } = {}
 ) {
   if (!projectId) {
@@ -341,14 +343,14 @@ async function generateScriptWithVertex(
       : GENERATION_CONFIG,
   });
 
-  const result = await model.generateContent({
+  const result = await dispatchAdmission(`vertex.text.${modelName}`, () => model.generateContent({
     contents: [
       {
         role: "user",
         parts: [{ text: compiledPrompt }],
       },
     ],
-  });
+  }));
 
   return validateGenerationResponse(result.response, { model: modelName, structuredMode });
 }

@@ -1,3 +1,4 @@
+const { admitProviderDispatch } = require('../provider-spend/dispatch');
 const {
   ImageProviderRejectedError,
   ImageProviderResponseError,
@@ -208,6 +209,7 @@ class OpenAIImageProvider extends ImageGenerationProvider {
     assetStore,
     referenceAssetLoader,
     fetchImpl = globalThis.fetch,
+    dispatchAdmission = admitProviderDispatch,
     sleepImpl = sleep,
     model = OPENAI_IMAGE_MODEL,
     quality = DEFAULT_QUALITY,
@@ -249,6 +251,7 @@ class OpenAIImageProvider extends ImageGenerationProvider {
       "Reference asset loader"
     );
     this.fetchImpl = fetchImpl;
+    this.dispatchAdmission = dispatchAdmission;
     this.sleepImpl = sleepImpl;
     this.model = model;
     this.quality = quality;
@@ -342,12 +345,16 @@ class OpenAIImageProvider extends ImageGenerationProvider {
     }, this.timeoutMs);
 
     try {
-      const response = await this.fetchImpl(url, {
-        ...createInit(),
+      const init = createInit();
+      const size = typeof init.body === 'string' ? JSON.parse(init.body).size : init.body?.get?.('size');
+      const action = url.endsWith('/images/edits') ? 'edit' : 'generate';
+      const response = await this.dispatchAdmission(`openai.image.${this.model}.${this.quality}.${size}.${this.outputFormat}.${action}`, () => this.fetchImpl(url, {
+        ...init,
         signal: controller.signal,
-      });
+      }));
       return { response };
     } catch (_error) {
+      if (typeof _error?.code === 'string' && _error.code.startsWith('PROVIDER_')) throw _error;
       return { timedOut, networkFailure: !timedOut };
     } finally {
       clearTimeout(timer);

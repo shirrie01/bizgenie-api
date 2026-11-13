@@ -333,6 +333,7 @@ describe("Vertex generation configuration", () => {
       location: "europe-west1",
       modelName: "gemini-test",
       VertexAIClient: FakeVertexAI,
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic SDK fixture only.
     });
 
     assert.deepEqual(clientOptions, {
@@ -386,6 +387,7 @@ describe("Vertex generation configuration", () => {
       projectId: "test-project",
       modelName: "gemini-test",
       VertexAIClient: FakeVertexAI,
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic SDK fixture only.
       promptOptions: {
         platform: "instagram",
         campaignObjective: "Launch a product",
@@ -432,6 +434,7 @@ describe("Vertex generation configuration", () => {
       projectId: "test-project",
       modelName: "gemini-test",
       VertexAIClient: FakeVertexAI,
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic SDK fixture only.
       promptOptions: {
         platform: "instagram",
         campaignObjective: "Launch a product",
@@ -526,6 +529,7 @@ describe("generate-script completion contract", () => {
           projectId: "test-project",
           modelName: "gemini-test",
           VertexAIClient: FakeVertexAI,
+      dispatchAdmission: async (_operation, dispatch) => dispatch(), // Synthetic SDK fixture only.
         }),
       logger: silentLogger,
     });

@@ -1,3 +1,4 @@
+const { admitProviderDispatch } = require('../provider-spend/dispatch');
 const {
   VideoProviderRejectedError,
   VideoProviderResponseError,
@@ -53,12 +54,13 @@ function unwrap(response) {
 }
 
 class GoogleVertexRestTransport {
-  constructor({ accessTokenProvider, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  constructor({ accessTokenProvider, fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS, dispatchAdmission = admitProviderDispatch } = {}) {
     if (typeof accessTokenProvider !== "function") throw new TypeError("Google Vertex transport requires an access token provider");
     if (typeof fetchImpl !== "function") throw new TypeError("Google Vertex transport requires fetch");
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) throw new TypeError("Google Vertex transport timeout is invalid");
     this.accessTokenProvider = accessTokenProvider;
     this.fetchImpl = fetchImpl;
+    this.dispatchAdmission = dispatchAdmission;
     this.timeoutMs = timeoutMs;
   }
 
@@ -68,12 +70,14 @@ class GoogleVertexRestTransport {
     try {
       const token = await this.accessTokenProvider();
       if (typeof token !== "string" || !token.trim()) throw new VideoProviderUnavailableError();
-      const response = await this.fetchImpl(url, {
+      const action = url.endsWith(':predictLongRunning') ? 'submit' : url.endsWith(':fetchPredictOperation') ? 'reconcile' : 'unknown';
+      const model = /models\/([^/:]+)/.exec(url)?.[1];
+      const response = await this.dispatchAdmission(`vertex.video.${model}.${action}.${body.parameters?.durationSeconds ?? 'status'}.${body.parameters?.resolution ?? 'status'}.${body.parameters?.generateAudio ?? false}`, () => this.fetchImpl(url, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
         body: JSON.stringify(body),
         signal: controller.signal,
-      });
+      }));
       if (!response?.ok) {
         if ([400, 422].includes(response?.status)) throw new VideoProviderRejectedError();
         throw new VideoProviderUnavailableError();
