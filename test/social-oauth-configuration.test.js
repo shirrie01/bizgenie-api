@@ -1,0 +1,13 @@
+const {it}=require('node:test');const assert=require('node:assert/strict');const {configuration,authorizeURL}=require('../src/social-publishing/oauthConfiguration');
+const config=()=>({authorization_endpoint:'https://www.facebook.com/vTEST/dialog/oauth',redirect_uri:'https://app.example.test/connections',approved_redirect_uris:['https://app.example.test/connections'],client_id:'synthetic_app',scopes:['synthetic_permission'],pkce_method:'S256',pkce_support_verified:true,app_review_status:'approved',review_ref:'synthetic_review_only',documentation_ref:'https://example.test/docs'});
+it('OAuth URL builder requires reviewed S256 support, exact redirect and provider origin; never infers Meta approval',()=>{
+ assert.equal(configuration('facebook',{requiredScopes:['synthetic_permission']}),null);
+ for(const patch of [{authorization_endpoint:'https://evil.example/oauth'},{authorization_endpoint:'https://www.facebook.com/dialog/oauth?redirect_uri=https://evil.example'},{redirect_uri:'http://app.example.test/connections'},{redirect_uri:'https://app.example.test/connections?next=https://evil.example'},{approved_redirect_uris:[]},{pkce_support_verified:false},{review_ref:''},{scopes:['unapproved'] }])assert.throws(()=>configuration('facebook',{requiredScopes:['synthetic_permission'],oauth:{...config(),...patch}}),{code:'OAUTH_CONFIGURATION_UNAVAILABLE'});
+ assert.throws(()=>configuration('facebook',{requiredScopes:['synthetic_permission'],oauth:{...config(),app_review_status:'pending'}}),{code:'PLATFORM_APP_REVIEW_REQUIRED'});
+ const v=configuration('facebook',{requiredScopes:['synthetic_permission'],oauth:config()}),url=new URL(authorizeURL(v,{state:'synthetic_state',challenge:'synthetic_challenge'}));assert.equal(url.origin,'https://www.facebook.com');assert.equal(url.searchParams.get('response_type'),'code');assert.equal(url.searchParams.get('scope'),'synthetic_permission');
+});
+
+it('connection reads expose expiry and optional verified display name without token references',()=>{
+ const {DurableSocialPublishing}=require('../src/social-publishing/service'),service=new DurableSocialPublishing({now:()=>new Date('2026-10-27T12:00:00Z')}),row={connection_id:'synthetic',platform:'instagram',account_id:'synthetic',display_name:'Synthetic account',token_reference:'must-not-leak',status:'active',expires_at:'2026-10-27T11:00:00Z',version:1};
+ const view=service.publicConnection(row);assert.equal(view.status,'expired');assert.equal(view.display_name,'Synthetic account');assert.equal(row.status,'active');assert.doesNotMatch(JSON.stringify(view),/must-not-leak|token_reference/);
+});

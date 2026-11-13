@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-27",
+  "classification": "agent-run synthetic/disposable local evidence; not live Meta/staging/hosted CI",
+  "base": "653482f09d27df40e0cb79813ddcad79b7ebd134",
+  "branch": "bg-studio-025-social-contract",
+  "frontend59": "4ebbe13cae9b331d46030855a47c074e1724eec6",
+  "hybrid189": "ae0f148f23f4e5cf2cf7823266e03bed08d992dd",
+  "node": "22.23.3",
+  "postgres": "17.11",
+  "full": {
+    "pass": 966,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0
+  },
+  "focused": {
+    "pass": 9
+  },
+  "separate_pg": {
+    "pass": 57
+  },
+  "syntax": 313,
+  "restore": {
+    "result": "PASS",
+    "tool": "pg_dump (PostgreSQL) 17.11",
+    "scope": "two new disposable databases only",
+    "rows_preserved": 1,
+    "sector": "professional_services",
+    "preflight": {
+      "professional": true
+    },
+    "dump_bytes": 456471,
+    "shared_or_managed_restore": false,
+    "financial_tables_preserved": true,
+    "bg021_populated_tables_preserved": [
+      "generation_job_revision_links",
+      "customer_media_intakes",
+      "customer_media_intake_audit",
+      "media_assets",
+      "social_oauth_intents",
+      "social_connections",
+      "social_dispatches",
+      "social_dispatch_audit",
+      "campaign_performance_objectives",
+      "platform_performance_observations",
+      "performance_evidence_snapshots",
+      "learning_recommendations",
+      "learning_customer_feedback"
+    ],
+    "bg025_populated_tables_preserved": [
+      "creative_content_dna",
+      "creative_experiments",
+      "creative_experiment_versions",
+      "creative_experiment_assignments",
+      "creative_experiment_evaluations",
+      "customer_product_sources",
+      "customer_product_decisions",
+      "runtime_limit_policies",
+      "runtime_limit_activation",
+      "runtime_budget_consumption",
+      "strategy_workflows",
+      "strategy_workflow_stages"
+    ],
+    "bg025_workflow_replay_verified": true,
+    "oauth_configuration_binding_preserved": true,
+    "private_object_bytes_restored": false,
+    "restored_job_association_readable": true,
+    "restored_published_dispatch_readable": true,
+    "restored_accepted_learning_readable": true,
+    "restored_execution_state": "queued",
+    "reserved_credits": 2
+  },
+  "log_hashes": {
+    "bg025-final-suite.log": "707cc6a9431f6f2e70b44e1581acb4571dfc86c80cc26a33f9e5cf995da99de3",
+    "bg025-focused-final2.log": "39d00cdfb373b6398b4608ccec5734d539eaf34593f399ca20ef4556f7dfb8fe",
+    "bg025-pg.log": "edc287a35640f31a6f2c22dc015319fe8b01ec3cff5418457bd6d8e688df4f54",
+    "bg025-restore-final.log": "f760ce5cbe2f66cb82a601bc119b850bc4b048f44eb9551a18613098ec8be830",
+    "bg025-exact-code.log": "faa893887b1403096847a5fa041534ffcecc48580306ebabe06dd7fb467b4f0f"
+  },
+  "meta_documentation": "403; contents not verified",
+  "hosted_ci": "UNKNOWN; GraphQL Forbidden",
+  "live_activated": false,
+  "shared_migrations": false,
+  "verified_code_sha": "e653ed346c41887261ff6861342e3861995edcc0",
+  "exact_commit_suite": {
+    "pass": 966,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0,
+    "duration_ms": 26485.815356,
+    "node22_path_prepend": true
+  },
+  "draft_creation": "GraphQL Forbidden; prepared comparison/body, no PR created"
+}
