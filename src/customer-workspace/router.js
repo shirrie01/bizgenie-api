@@ -5,6 +5,7 @@ const {
   CustomerWorkspaceValidationError,
 } = require("./errors");
 const express = require("express");
+const { BrandBrainError } = require("../brand-brain/errors");
 
 const AUTHENTICATION_ERROR = Object.freeze({
   code: "AUTHENTICATION_REQUIRED",
@@ -126,6 +127,10 @@ function sendWorkspaceError({ error, res, logger, path }) {
       path,
     });
     return res.status(401).json({ status: "failed", error: AUTHENTICATION_ERROR });
+  }
+
+  if (error instanceof BrandBrainError) {
+    return res.status(error.status).json(errorBody(error));
   }
 
   if (error instanceof CustomerWorkspaceValidationError) {
