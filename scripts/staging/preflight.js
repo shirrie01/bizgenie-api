@@ -74,6 +74,7 @@ const tool = (n) => { const r = spawnSync("sh", ["-c", `command -v ${n}`], { enc
   if (has("OPENAI_API_KEY")) { try { const r = await fetch("https://api.openai.com/v1/models", { headers: { authorization: `Bearer ${env.OPENAI_API_KEY}` }, signal: AbortSignal.timeout(8000) }); add("founder", "openai", "key accepted (free model list)", r.ok, `HTTP ${r.status}`); } catch (e) { add("founder", "openai", "key accepted", false, "unreachable"); } }
   if (has("STRIPE_SECRET_KEY") && /^(s|r)k_test_/.test(env.STRIPE_SECRET_KEY)) { try { const r = await fetch("https://api.stripe.com/v1/balance", { headers: { authorization: `Bearer ${env.STRIPE_SECRET_KEY}` }, signal: AbortSignal.timeout(8000) }); add("founder", "stripe", "test key accepted (free balance read)", r.ok, `HTTP ${r.status}`); } catch { add("founder", "stripe", "test key accepted", false, "unreachable"); } }
 
+  add('founder','monthly-spend','BG-COST-001 aggregate GBP monthly runtime acceptance',false,'HOLD: USD harness/daily limits are not the approved £100 monthly cap; actual ledger/role/policy/cohort/FX and reconciliation acceptance are not supplied by this script.');
   const failed = rows.filter((r) => !r.ok);
   if (flag("--json")) console.log(JSON.stringify({ ready: failed.length === 0, rows }, null, 1));
   else {
