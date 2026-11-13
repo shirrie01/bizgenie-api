@@ -1,3 +1,4 @@
+const { approvedEstimate } = require('./estimateAuthority');
 // Internal, operator-configured boundary. Not wired to any live provider or worker.
 const { randomUUID, createHash } = require('node:crypto');
 class SpendError extends Error {
@@ -67,7 +68,7 @@ class MonthlyProviderSpend {
         return { id, state: prior.state, month: prior.month, reservedMinor: prior.bound_minor, replay: true };
       }
       const estimate = p.estimates[operation];
-      if (!estimate || estimate.version !== estimateVersion || !text(estimate.source_ref) || estimate.currency !== 'GBP' ||
+      if (!estimate || !approvedEstimate(estimate,p.db_now) || estimate.version !== estimateVersion || !text(estimate.source_ref) || estimate.currency !== 'GBP' ||
         !integer(estimate.upper_bound_minor) || estimate.upper_bound_minor < 1 || estimate.upper_bound_minor > 10000 ||
         !Number.isFinite(Date.parse(estimate.valid_until)) || Date.parse(estimate.valid_until) <= p.db_now.getTime()) deny('PROVIDER_SPEND_ESTIMATE_UNAVAILABLE');
       const sum = (await client.query(`select coalesce(sum(bound_minor),0)::text as exposure
@@ -88,7 +89,7 @@ class MonthlyProviderSpend {
       // Recheck current operator cohort and pricing, including at a month rollover.
       const member = await client.query('select 1 from public.provider_spend_customers where tenant_id=$1 and active=true',[tenantId]);
       const estimate = p.estimates[row.operation];
-      if (!member.rowCount || row.month !== p.month || row.policy_version !== p.version || row.policy_hash !== policyHash(p) || !estimate || estimate.version !== row.estimate_version || estimate.currency !== 'GBP' || estimate.upper_bound_minor !== row.bound_minor || !text(estimate.source_ref) || !(Date.parse(estimate.valid_until) > p.db_now.getTime())) deny('PROVIDER_SPEND_DISPATCH_HELD');
+      if (!member.rowCount || row.month !== p.month || row.policy_version !== p.version || row.policy_hash !== policyHash(p) || !estimate || !approvedEstimate(estimate,p.db_now) || estimate.version !== row.estimate_version || estimate.currency !== 'GBP' || estimate.upper_bound_minor !== row.bound_minor || !text(estimate.source_ref) || !(Date.parse(estimate.valid_until) > p.db_now.getTime())) deny('PROVIDER_SPEND_DISPATCH_HELD');
       const token = randomUUID();
       await client.query("update public.provider_spend_reservations set state='dispatching',dispatch_token=$2,updated_at=clock_timestamp() where id=$1",[id,token]);
       return { id, token };
