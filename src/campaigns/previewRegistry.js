@@ -17,7 +17,6 @@ const DEFAULT_PROFILES = Object.freeze([
   { profile_id: "facebook.feed.text", platform: "facebook", placement: "feed", format: "text" },
   { profile_id: "linkedin.feed.text", platform: "linkedin", placement: "feed", format: "text" },
   // BG-LAUNCH-002: launch image/video placements. The media requirements themselves live in src/media/platformMediaProfiles.js (versioned, configurable).
-  { profile_id: "instagram.feed.video", platform: "instagram", placement: "feed", format: "video" },
   { profile_id: "facebook.feed.image", platform: "facebook", placement: "feed", format: "image" },
   { profile_id: "facebook.feed.video", platform: "facebook", placement: "feed", format: "video" },
   { profile_id: "linkedin.feed.image", platform: "linkedin", placement: "feed", format: "image" },
