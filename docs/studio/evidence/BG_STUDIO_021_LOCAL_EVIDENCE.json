@@ -1,0 +1,144 @@
+{
+  "work_order": "BG-STUDIO-021-BE",
+  "date": "2026-10-26",
+  "classification": "INTEGRATED LOCAL with synthetic providers and data",
+  "staging": "RED",
+  "launch": "NO-GO",
+  "code_sha": "fe97156cee87a34efd665b6d97b8677e92ef17e2",
+  "branch": "bg-studio-021-backend-integration",
+  "base_pr": 217,
+  "base_sha": "23f49038f36acf8414a079e27a8d5ffc8d302f2b",
+  "frontend_branch": "bg-studio-020-fe-integration",
+  "frontend_head": "ac2c14f057f64e372641c845d2020e2a051ee7c4",
+  "node": "v22.23.3",
+  "full_suite": {
+    "command": "TEST_DATABASE_URL=<disposable loopback fixture> node --test",
+    "tests": 948,
+    "passed": 948,
+    "failed": 0,
+    "skipped": 0,
+    "suites": 128
+  },
+  "separate_postgres_billing_campaign": {
+    "tests": 57,
+    "passed": 57,
+    "skipped": 0
+  },
+  "optional_brand_brain_postgres": {
+    "tests": 1,
+    "passed": 1,
+    "scope": "newly created and dropped unique local database; synthetic FK parents"
+  },
+  "syntax_files": 299,
+  "logical_restore": {
+    "result": "PASS",
+    "tool": "pg_dump (PostgreSQL) 17.11",
+    "scope": "two new disposable databases only",
+    "rows_preserved": 1,
+    "sector": "professional_services",
+    "preflight": {
+      "professional": true
+    },
+    "dump_bytes": 373034,
+    "shared_or_managed_restore": false,
+    "financial_tables_preserved": true,
+    "bg021_populated_tables_preserved": [
+      "generation_job_revision_links",
+      "customer_media_intakes",
+      "customer_media_intake_audit",
+      "media_assets",
+      "social_oauth_intents",
+      "social_connections",
+      "social_dispatches",
+      "social_dispatch_audit",
+      "campaign_performance_objectives",
+      "platform_performance_observations",
+      "performance_evidence_snapshots",
+      "learning_recommendations",
+      "learning_customer_feedback"
+    ],
+    "private_object_bytes_restored": false,
+    "restored_job_association_readable": true,
+    "restored_published_dispatch_readable": true,
+    "restored_accepted_learning_readable": true,
+    "restored_execution_state": "queued",
+    "reserved_credits": 2
+  },
+  "media_browser": {
+    "image": {
+      "metadata": 200,
+      "source": "generated",
+      "head": 200,
+      "mime": "image/png",
+      "displayWidth": 1,
+      "bytes": 68,
+      "anonymous": 401,
+      "foreign": 404,
+      "stale": 409
+    },
+    "videoRange": {
+      "status": 206,
+      "range": "bytes 0-7/64",
+      "bytes": 8
+    },
+    "foreignOriginBlocked": true,
+    "revoked": 404,
+    "cookiesOmitted": true,
+    "scope": "local synthetic transport, not live provider or MP4 playback"
+  },
+  "h264_browser": {
+    "seeked": true,
+    "width": 1280,
+    "height": 720,
+    "duration": 4,
+    "playedToEnd": true,
+    "bytes": 5716,
+    "range": 206,
+    "rangeBytes": 8,
+    "inspectedSha256": "754b4da354d6852cc1eda4565514a9f6b57894f6f7f29246f5b0b59512811bb2",
+    "revoked": 404,
+    "scope": "local synthetic H264 decode/playback; not staging or Meta compliance"
+  },
+  "container_contract": "PASS; no fresh Docker/Buildpack artifact build",
+  "dependency_audit": {
+    "vulnerabilities": {
+      "info": 0,
+      "low": 0,
+      "moderate": 6,
+      "high": 0,
+      "critical": 0,
+      "total": 6
+    },
+    "affected_packages": [
+      "@google-cloud/vertexai",
+      "gaxios",
+      "gcp-metadata",
+      "google-auth-library",
+      "gtoken",
+      "uuid"
+    ],
+    "root_advisory": "https://github.com/advisories/GHSA-w5hq-g745-h8pq",
+    "unsafe_overrides_added": false
+  },
+  "github_pr_creation": {
+    "status": "BLOCKED",
+    "error": "Post \"https://api.github.com/graphql\": Forbidden"
+  },
+  "github_exact_head_ci": {
+    "status": "UNVERIFIED",
+    "error": "failed to get runs: Get \"https://api.github.com/repos/shirrie01/bizgenie-api/actions/runs?per_page=5&exclude_pull_requests=true&branch=bg-studio-021-backend-integration\": Forbidden"
+  },
+  "live_provider_stripe_oauth_publishing_calls": false,
+  "shared_migrations_or_cloud_modifications": false,
+  "mission_control_modified": false,
+  "s1_branch_unchanged_sha": "16c1d71fd32a5240d531585f22afd38ad6c66195",
+  "evidence_log_sha256": {
+    "bg021-final-full.log": "4d8a47fe66cb5794a3b5abea76f33ede3b3fa3dce750e29413f693c6dddc772f",
+    "bg021-ci-postgres.log": "9734599ba32a00399ad4efcb5ae11362b31f62d09f8bb5936ead8ee2b1b0a715",
+    "bg021-brand-brain-postgres.log": "3d3fa0d1be6ecf6b6fc3e84b9b6619dfa6d56f9929d4bb6a120863dcd72358b7",
+    "bg021-restore.json": "b9c0dbfe640ccf7847f25bff24280db84f02c96486af30d73e409c07af126574",
+    "bg021-media-browser.log": "7b87f8990b412ec0674273e9be2a5dfab42886416fd3cf208ef7069be9e93729",
+    "bg021-video-browser.log": "1d49c5d480a1c0b4893f862c36ccbd7b9d4cd3d577449087384d2542d8d042ae",
+    "bg021-audit.json": "ed3cafef5aa8548eb5ec91820945bd72fd4f4cf4e4263389c36c053290a34b6b"
+  }
+}

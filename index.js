@@ -288,7 +288,15 @@ function createApp({
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   generationJobRepository = new InMemoryGenerationJobRepository(),
   mediaAssetRepository = null,
+  mediaIntakeService = null,
+  socialPublishingService = null,
+  learningService = null,
+  creativeIntelligenceService = null,
+  growthReadModel = null,
+  productIntelligenceService = null,
+  strategyWorkflowService = null,
   mediaPreviewStorage = null,
+  runtimeDeliveryLimits = null,
   generationJobService,
   generationBillingOrchestrator = new UnconfiguredGenerationBillingOrchestrator(),
   campaignGenerationService,
@@ -299,10 +307,17 @@ function createApp({
   billingRepository,
   commercialCatalog = null,
   generationQuoteService = null,
+  generationExecutionPolicy = null,
   env = process.env,
   corsConfig = { enabled: false, allowedOrigins: [] },
   logger = console,
 } = {}) {
+  const {GenerationExecutionPolicy}=require('./src/generation-quotes/executionPolicy');
+  const executionPolicy=generationExecutionPolicy||new GenerationExecutionPolicy();
+  if(!(executionPolicy instanceof GenerationExecutionPolicy)||executionPolicy.mode==='quoted_v1'&&executionPolicy.quotes!==generationQuoteService)throw new TypeError('Incompatible durable generation composition');
+  scriptGenerator=executionPolicy.guard(scriptGenerator);
+  imageProvider=executionPolicy.provider(imageProvider,'generate');
+  videoProvider=executionPolicy.provider(videoProvider,'submit');
   const resolvedBranding = BrandingConfigSchema.parse(branding);
   const resolvedAuthorizationService =
     authorizationService || new AuthorizationService({
@@ -378,6 +393,7 @@ function createApp({
   }
 
   app.use(express.json());
+  app.use(executionPolicy.legacyBoundary({tokenVerifier:customerTokenVerifier,requireAdmin}));
   if (billing) app.use("/internal/launch-proof/paid-beta", createPaidBetaLaunchProofRouter({ billing, env, logger }));
   const scriptHandler = createGenerateScriptHandler({
     brandBrainRepository,
@@ -515,6 +531,21 @@ function createApp({
     customerVideoRouter
   );
 
+  if(strategyWorkflowService&&strategyWorkflowService.quotes!==generationQuoteService)throw new TypeError('Strategy workflow must share generation quote service');
+  app.use('/customer/strategy-workflows',require('./src/strategy-workflows/router').createStrategyRouter({service:strategyWorkflowService,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/product-intelligence',require('./src/product-intelligence/router').createProductRouter({service:productIntelligenceService,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/intelligence',require('./src/creative-intelligence/router').createCreativeIntelligenceRouter({service:creativeIntelligenceService,growth:growthReadModel,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/insights',require('./src/learning-persistence/router').createLearningRouter({service:learningService,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/social',require('./src/social-publishing/router').createSocialRouter({service:socialPublishingService,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/assets',require('./src/media-intake/router').createMediaIntakeRouter({service:mediaIntakeService,tokenVerifier:customerTokenVerifier}));
+
+  app.use('/customer/creative-jobs',require('./src/generation-quotes/jobsRouter').createCreativeJobsRouter({service:generationQuoteService?new(require('./src/generation-quotes/jobs').CreativeJobService)({quoteService:generationQuoteService,campaignRepository}):null,tokenVerifier:customerTokenVerifier}));
+
   app.use('/customer/generation-quotes',require('./src/generation-quotes/router').createGenerationQuoteRouter({service:generationQuoteService,tokenVerifier:customerTokenVerifier}));
 
   app.use('/customer/calendar', createCustomerWorkspaceCalendarRouter({
@@ -532,6 +563,7 @@ function createApp({
       campaignGenerationService: resolvedCampaignGenerationService,
       measurementRegistry: campaignMeasurementRegistry,
       mediaPreviewStorage,
+      runtimeDeliveryLimits,
       logger,
     })
   );

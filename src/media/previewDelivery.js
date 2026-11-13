@@ -64,9 +64,10 @@ async function deliverPreview(req, res, asset, storage, { timeoutMs = PREVIEW_TI
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
+    if(asset.reserveDelivery)await abortable(()=>asset.reserveDelivery({method:req.method}),controller.signal);
     const stat = await abortable(() => storage.statPreview({ key: asset.key, signal: controller.signal }), controller.signal);
     const max = asset.mediaKind === "video" ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
-    if (!Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.mimeType !== asset.mimeType ||
+    if ((asset.expectedGeneration && asset.expectedGeneration !== stat.generation) || !Number.isSafeInteger(stat.size) || stat.size <= 0 || stat.mimeType !== asset.mimeType ||
         (asset.byteSize != null && Number(asset.byteSize) !== stat.size) || !/^[0-9]+$/.test(stat.generation)) throw unavailable();
     if (stat.size > max) throw new PreviewDeliveryError(413, "MEDIA_PREVIEW_TOO_LARGE", "This media exceeds the preview size limit");
     let range;
@@ -99,6 +100,7 @@ async function deliverPreview(req, res, asset, storage, { timeoutMs = PREVIEW_TI
     if (res.headersSent || res.destroyed) { res.destroy(); return; }
     for (const header of ["Content-Length", "Content-Type", "Content-Disposition", "Accept-Ranges"]) res.removeHeader(header);
     if (error instanceof PreviewDeliveryError) throw error;
+    if(['DISTRIBUTED_BUDGET_EXHAUSTED','RUNTIME_POLICY_CONFLICT','PRIVATE_SCHEMA_UNAVAILABLE'].includes(error.code))throw new PreviewDeliveryError(error.status||503,error.code,'Media delivery budget unavailable');
     throw unavailable();
   } finally {
     clearTimeout(timer); req.off("aborted", disconnect); res.off("close", disconnect); controller.abort();

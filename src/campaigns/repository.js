@@ -165,6 +165,11 @@ class InMemoryCampaignRepository extends CampaignRepository {
     catch (error) { if (error instanceof CampaignError) throw error; throw new CampaignPersistenceError(); }
   }
 
+  async discoverCampaigns(context,q) {
+    if(!authorization.safeParse(context).success||!(await this.authorize(clone(context))))throw new CampaignResourceError();
+    const d=require('./discovery');const campaigns=[...this.state.campaigns.values()].filter(c=>c.tenant_id===context.tenant_id&&c.project_id===context.project_id).map(projection.decorate);
+    return d.page(q,d.memoryRows(campaigns,q));
+  }
   async listCampaigns(context) {
     if(!authorization.safeParse(context).success)throw new CampaignResourceError();
     if (!(await this.authorize(clone(context)))) throw new CampaignResourceError();
@@ -305,7 +310,7 @@ class CampaignTransaction {
     requireFields(this.command.payload, ["content_item_id","reason"]);
     const item = this.item(campaign, this.command.payload.content_item_id);
     if (campaign.archived_at || Boolean(item.archived_at) === archive ||
-        [...item.variants.values()].some((variant) => variant.pending_attempt_id || variant.active_schedule_id)) throw new CampaignTransitionError(archive ? "INVALID_TRANSITION" : "CAMPAIGN_ARCHIVED");
+        [...item.variants.values()].some((variant) => variant.pending_attempt_id || variant.active_schedule_id&&campaign.platform_publications?.get(variant.variant_id)?.schedule_id!==variant.active_schedule_id)) throw new CampaignTransitionError(archive ? "INVALID_TRANSITION" : "CAMPAIGN_ARCHIVED");
     item.archived_at = archive ? this.now : null; item.updated_at = this.now;
     this.event(`content_item.${archive ? "archived" : "restored"}`, { content_item_id: item.content_item_id, reason: this.command.payload.reason });
   }
@@ -461,7 +466,7 @@ class CampaignTransaction {
   restoreCampaign(campaign) { this._campaignArchive(campaign, false); }
   _campaignArchive(campaign, archive) {
     requireFields(this.command.payload, ["reason"]);
-    if (Boolean(campaign.archived_at) === archive || [...campaign.items.values()].some((item) => [...item.variants.values()].some((v) => v.pending_attempt_id || v.active_schedule_id))) throw new CampaignTransitionError();
+    if (Boolean(campaign.archived_at) === archive || [...campaign.items.values()].some((item) => [...item.variants.values()].some((v) => v.pending_attempt_id || v.active_schedule_id&&campaign.platform_publications?.get(v.variant_id)?.schedule_id!==v.active_schedule_id))) throw new CampaignTransitionError();
     campaign.archived_at = archive ? this.now : null; this.event(`campaign.${archive ? "archived" : "restored"}`, { reason: this.command.payload.reason });
   }
   result() {

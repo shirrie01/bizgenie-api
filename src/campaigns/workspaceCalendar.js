@@ -79,4 +79,11 @@ const SQL = `with occurrences as (
  and (not $8::boolean or ($9::timestamptz is null and occurrence_at is null and variant_id>$10::uuid)
  or ($9::timestamptz is not null and (occurrence_at is null or occurrence_at>$9 or (occurrence_at=$9 and variant_id>$10))))
  order by occurrence_at asc nulls last,variant_id asc limit $11`;
-module.exports={parseQuery,page,memoryRows,SQL,MAX_WINDOW_DAYS};
+const platformSQL=SQL
+ .replace('v.destination_label,v.workflow,',"v.destination_label,case when vp.dispatch_id is not null then 'published' else v.workflow end workflow,")
+ .replace("case when p.publication_id is not null then coalesce(pc.published_at,p.published_at) else s.scheduled_for end occurrence_at", "case when vp.dispatch_id is not null then vp.published_at when p.publication_id is not null then coalesce(pc.published_at,p.published_at) else s.scheduled_for end occurrence_at")
+ .replace("case when p.publication_id is not null then 'published'", "case when vp.dispatch_id is not null or p.publication_id is not null then 'published'")
+ .replace('case when p.publication_id is null then s.schedule_id else null end schedule_id,p.publication_id',"case when p.publication_id is null and vp.dispatch_id is null then s.schedule_id else null end schedule_id,coalesce(vp.dispatch_id,p.publication_id) publication_id,vp.evidence_kind,vp.provider_publication_id")
+ .replace(' left join public.campaign_schedule_entries s'," left join lateral(select x.* from public.verified_campaign_publications x where x.tenant_id=v.tenant_id and x.project_id=v.project_id and x.campaign_id=v.campaign_id and x.variant_id=v.variant_id order by x.published_at desc,x.dispatch_id desc limit 1)vp on true\n left join public.campaign_schedule_entries s")
+ .replace('or v.workflow=$7)',"or (case when vp.dispatch_id is not null then 'published' else v.workflow end)=$7)");
+module.exports={parseQuery,page,memoryRows,SQL,platformSQL,MAX_WINDOW_DAYS};

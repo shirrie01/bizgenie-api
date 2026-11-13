@@ -1,0 +1,13 @@
+# BG-STUDIO-021 creative jobs checkpoint
+
+26 October2026. Local draft only; no provider activation. Reuses generation_jobs, generation_quotes/claims, existing ledger and campaign commands. New SQL adds only an immutable job-to-revision association; no competing generation queue.
+
+Authenticated `/customer/creative-jobs`: GET list with tenant_id/project_id/brand_id,limit1..100,cursor; GET /:jobId same scope; POST /:jobId/attach and /cancel with that scope JSON. Owner can discover workspace jobs; members see their own jobs. Confirmation/cancellation remain actor-bound; attachment requires current owner project:write authority. Outputs are scoped active asset IDs/provenance, never bucket keys/signed URLs/claim tokens. List is bounded metadata, not full histories. Cursor binds actor/scope and is not a frozen write snapshot.
+
+`creative-job.v1` reports durable worker state, cancellation/reconciliation guidance, private asset references and persisted revision association/currentness/approval state. Associated current revisions expose authenticated relative preview paths plus expected campaign version. Existing preview, same-actor receipt acknowledgement and approval endpoints remain mandatory; job success/attachment does not approve or publish.
+
+Owner attachment derives content only from the settled immutable worker result and pinned original content/Brand Brain snapshot. It executes the existing save_revision CAS/receipt/event transaction and inserts generation_job_revision_links in that **same transaction**. Failure rolls both back; retry is idempotent. It refuses stale campaign writes instead of overwriting later customer changes. A new quote against the current revision is the supported regeneration path; no provider retry is inferred from a failed attachment.
+
+The single-call text adapter explicitly pins modelName, frozen Brand Brain context/platform and input, uses the existing generator, validates content and keeps unknown synchronous-provider outcomes in reconciliation-required. This supports a text draft operation; it does not replace mandatory multi-step campaign strategy with a reduced contract. Quoted activation still blocks legacy two-call strategy until its independently priced durable-step profile is implemented/reviewed.
+
+Focused PostgreSQL23/23 at this checkpoint covers existing financial scenarios plus text worker/reload/list/poll, cross-scope cursor denial, atomic attach/rollback/retry and no automatic approval. Full suite will be recorded at final integrated head. New association SQL remains local-only. Current API exceptions use401/404/409/503; queue/confirm stays202. No capability flag changed.

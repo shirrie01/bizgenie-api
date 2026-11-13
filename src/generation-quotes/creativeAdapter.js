@@ -2,7 +2,7 @@ const {QuoteError,digest}=require('./service');
 const {ImageGenerationRequestSchema}=require('../image-generation/schema');const {VideoGenerationRequestSchema}=require('../video-generation/schema');
 // Bridge only: existing services/providers/storage remain authoritative. Never composed by default.
 class ExistingCreativeServicesAdapter{
- constructor({jobs,mediaAssets,imageService,videoService}){Object.assign(this,{jobs,mediaAssets,imageService,videoService});}
+ constructor({jobs,mediaAssets,imageService,videoService,executionPolicy=null,referenceIntakeService=null}){this.referenceIntakeService=referenceIntakeService;this.rawImageProvider=imageService?.provider;this.executionPolicy=executionPolicy;if(executionPolicy?.mode==='quoted_v1'){if(imageService){const view=Object.create(imageService);view.provider=executionPolicy.provider(imageService.provider,'generate');imageService=view;}if(videoService){const view=Object.create(videoService);view.provider=executionPolicy.provider(videoService.provider,'submit');videoService=view;}}Object.assign(this,{jobs,mediaAssets,imageService,videoService});}
  async bound(id,request,profile){const job=await this.jobs.getById(id),stored=await this.jobs.getExecutionContent(id);
   if(!job||!stored||digest(stored.request)!==digest(request)||digest(stored.profile)!==digest(profile)||stored.request_fingerprint!==digest(request)||job.tenant_id!==request.tenant_id||job.project_id!==request.project_id||job.execution_class!==request.execution_class)throw new QuoteError('EXECUTION_BINDING_INVALID',503);
   return job;
@@ -15,7 +15,9 @@ class ExistingCreativeServicesAdapter{
   const record=profile.brand_snapshot?.record;
   if(!record||record.brand_id!==job.brand_id||record.project_id!==job.project_id||digest(record)!==profile.brand_snapshot.hash)throw new QuoteError('EXECUTION_BINDING_INVALID',503);
   // Per-job view; do not mutate a shared service or read a changed live Brand Brain after confirmation.
-  const bound=Object.create(service);bound.brandBrainRepository={getByProjectAndBrand:async(project,brand)=>project===job.project_id&&brand===job.brand_id?structuredClone(record):null};return bound;
+  const bound=Object.create(service);
+  if(job.execution_class==='image.normal'&&profile.reference_bindings?.length){if(!this.referenceIntakeService)throw new QuoteError('REFERENCE_DELIVERY_UNAVAILABLE',503);const provider=Object.create(this.rawImageProvider);provider.referenceAssetLoader={load:async request=>{const pin=profile.reference_bindings.find(r=>r.asset_id===request.asset_id);if(!pin||request.tenant_id!==job.tenant_id||request.project_id!==job.project_id||request.brand_id!==job.brand_id)throw new QuoteError('RESOURCE_NOT_AVAILABLE',404);const r=await this.referenceIntakeService.referenceForGeneration({kind:'customer',auth_user_id:job.actor_correlation.auth_user_id},pin.asset_id,{tenant_id:job.tenant_id,project_id:job.project_id,brand_id:job.brand_id},{requiredRight:'image.generate.reference',mediaKind:'image',expectedGeneration:pin.generation,expectedSha256:pin.sha256});return {asset_id:r.asset_id,data:r.bytes,mime_type:r.mime_type};}};bound.provider=this.executionPolicy?this.executionPolicy.provider(provider,'generate'):provider;}
+  bound.brandBrainRepository={getByProjectAndBrand:async(project,brand)=>project===job.project_id&&brand===job.brand_id?structuredClone(record):null};return bound;
  }
  async submit({idempotency_key,profile,request}){
   const job=await this.bound(idempotency_key,request,profile);if(!request.execution_brief)throw new QuoteError('CREATIVE_BRIEF_REQUIRED',422);
