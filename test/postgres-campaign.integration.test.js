@@ -60,8 +60,8 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     }
     const registry = new PostgresPreviewRegistry({ pool });
     const client = await pool.connect();
-    try { // BG-LAUNCH-002: the launch migration provisions instagram.feed.video under the generic renderer; the proposal's dedicated renderer is still unregistered
-      assert.equal((await registry.activeProfile(client, candidate.registry_identity)).renderer_version, "bizgenie-preview-renderer.v1");
+    try { // Neither generic nor proposed Instagram video renderer is provisioned.
+      assert.equal(await registry.activeProfile(client, candidate.registry_identity),null);
       assert.equal(rows.rows.filter((r) => r.renderer_version === candidate.registry_identity.renderer_version).length, 0); }
     finally { client.release(); }
   });
