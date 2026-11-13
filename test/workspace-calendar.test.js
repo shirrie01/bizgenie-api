@@ -90,3 +90,11 @@ it('calendar rejects absent/expired bearer and admin-only credentials with priva
  }
  assert.equal(reads.length,0);
 });
+it('offset-equivalent windows preserve UTC boundary inclusion and cursor scope',()=>{
+ const utc={...base,from:'2026-09-01T00:00:00.000Z',to:'2026-09-02T00:00:00.000Z',limit:1};
+ const offset={...utc,from:'2026-08-31T20:00:00-04:00',to:'2026-09-01T20:00:00-04:00'};
+ const rows=[campaign(1,{at:'2026-09-01T00:00:00.000Z'}),campaign(2,{at:'2026-09-01T23:30:00.000Z'}),campaign(3,{at:'2026-09-02T00:00:00.000Z'})];
+ const expected=page(parseQuery(utc),memoryRows(rows,parseQuery(utc)));
+ const actual=page(parseQuery(offset),memoryRows(rows,parseQuery(offset)));
+ assert.deepEqual(actual,expected);assert.doesNotThrow(()=>parseQuery({...utc,cursor:actual.next_cursor}));
+});

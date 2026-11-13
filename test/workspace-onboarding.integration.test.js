@@ -382,4 +382,18 @@ postgresDescribe("PostgresWorkspaceOnboardingRepository against a disposable Pos
     await new PostgresWorkspaceOnboardingRepository({pool}).preflight();
   });
 
+  it("retained professional migration is idempotent and refuses weakened schema without self-heal",async()=>{
+    const sql=fs.readFileSync(path.join(__dirname,"../supabase/migrations/20261025090000_add_professional_onboarding_sector.sql"),"utf8");
+    await pool.query(sql);await pool.query(sql);
+    assert.deepEqual(await require("../src/workspace-onboarding/preflight").preflight(pool),{professional:true});
+    const client=await pool.connect();
+    try{
+      await client.query("alter table workspace_onboarding_profiles drop constraint workspace_onboarding_profiles_sector_key_check,add constraint workspace_onboarding_profiles_sector_key_check check(true)");
+      await assert.rejects(client.query(sql),/requires the reviewed/);await client.query("rollback");
+      const row=(await client.query("select pg_get_constraintdef(oid) definition from pg_constraint where conrelid='workspace_onboarding_profiles'::regclass and conname='workspace_onboarding_profiles_sector_key_check'")).rows[0];
+      assert.equal(row.definition,"CHECK (true)");
+      await assert.rejects(require("../src/workspace-onboarding/preflight").preflight(client),{code:"ONBOARDING_UNAVAILABLE"});
+    }finally{await client.query("rollback");await fixtureSectorContract(client,true);client.release();}
+  });
+
 });
