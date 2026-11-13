@@ -128,7 +128,7 @@ class GoogleCloudMediaStorage {
     const url=new URL(`https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(this.bucket)}/o`);
     url.searchParams.set('uploadType','media');url.searchParams.set('name',key);url.searchParams.set('ifGenerationMatch','0');
     const response=await this.request(url.toString(),{method:'POST',redirect:'error',headers:{'content-type':mimeType},body:data});
-    await response.body?.cancel();
+    try { Promise.resolve(response.body?.cancel()).catch(()=>{}); } catch {}
   }
 
   async putObject({ key, data, mimeType }) {
