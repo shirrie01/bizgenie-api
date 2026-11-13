@@ -28,6 +28,7 @@ async function createPremiumComposition({
   env = process.env, logger = console, now = () => new Date(),
   toolchainCheck = require("../media/toolchainSelfTest").runToolchainSelfTest, // test seam only; not reachable from the environment
   mediaInspector = null, connectors = null, workflowStageHandlerFactory = null,
+  socialKeyProvider = null, socialFetch = undefined,
 } = {}) {
   let unscannedAccepted = false;
   const flags = Object.fromEntries(FLAGS.map((name) => [name, activationFlag(env, name)]));
