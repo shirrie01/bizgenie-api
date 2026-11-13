@@ -22,6 +22,15 @@ async function scenario(repository) {
 }
 function regressionCases(getRepository) {
   const setup=async()=>scenario(await getRepository());
+  it('unscheduling preserves approval/history and replays durably without accepting stale or foreign schedule identity',async()=>{
+    const s=await setup(),a=await s.approve(await s.add()),scheduled=await s.schedule(a);
+    const input={contract_version:'campaign-spine.v1',idempotency_key:randomUUID(),expected_campaign_version:scheduled.campaign_version,command_type:'unschedule',tenant_id:context.tenant_id,project_id:context.project_id,campaign_id:s.id,payload:{variant_id:a.variant_id,schedule_id:scheduled.created_ids.schedule_ids[0]}};
+    await s.unchanged(()=>s.repository.executeCommand(context,{...input,idempotency_key:randomUUID(),payload:{...input.payload,schedule_id:randomUUID()}}));
+    const first=await s.repository.executeCommand(context,input);assert.deepEqual(await s.repository.executeCommand(context,input),first);
+    assert.equal((await s.variant(a)).workflow,'approved');assert.equal((await s.get()).schedules.size,1);
+    await s.unchanged(()=>s.repository.executeCommand(context,{...input,idempotency_key:randomUUID()}));
+    assert.equal((await s.repository.verifyCampaignProjection(context,s.id)).valid,true);
+  });
   it('Published rejects revisions; replay and reconstruction preserve original publication',async()=>{const s=await setup(),t=await s.add(),a=await s.approve(t);await s.publish(a);await s.unchanged(()=>s.cmd('save_revision',{variant_id:t.variant_id,content,change_reason:'Must reject'}));assert.equal((await s.repository.verifyCampaignProjection(context,s.id)).valid,true);});
   it('revocation goes to Review and cancels schedule without deleting evidence',async()=>{const s=await setup(),a=await s.approve(await s.add());await s.schedule(a);await s.cmd('revoke_approval',{variant_id:a.variant_id,approval_id:a.approval_id,reason:'Review again'});assert.equal((await s.variant(a)).workflow,'review');assert.equal((await s.variant(a)).active_schedule_id,null);assert.equal((await s.get()).schedules.size,1);assert.equal((await s.repository.verifyCampaignProjection(context,s.id)).valid,true);});
   it('unknown/internal command methods and invalid metadata reject atomically',async()=>{const s=await setup();for(const name of ['result','apply','constructor','toString'])await s.unchanged(()=>s.cmd(name,{}));await s.unchanged(()=>s.cmd('update_campaign_details',{name:{bad:true},display_timezone:'not-a-zone'}));await s.unchanged(()=>s.cmd('update_campaign_details',{name:'Valid',display_timezone:'not-a-zone'}));});
