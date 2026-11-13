@@ -1,6 +1,6 @@
 const {randomUUID}=require('node:crypto');const {QuoteError,digest}=require('./service');
 class FencedGenerationWorker{
- constructor({quoteService,provider,fault=async()=>{}}){this.quotes=quoteService;this.billing=quoteService.billing;this.provider=provider;this.fault=fault;}
+ constructor({quoteService,provider,fault=async()=>{},providerScope=async(_claim,dispatch)=>dispatch()}){this.quotes=quoteService;this.billing=quoteService.billing;this.provider=provider;this.fault=fault;if(typeof providerScope!=='function')throw new TypeError('Provider scope must be a server function');this.providerScope=providerScope;}
  async load(client,jobId){await this.quotes.preflight(client);const r=await client.query('select e.*,q.tenant_id,q.project_id,q.brand_id,q.auth_user_id,q.reservation_id,q.request,q.profile,q.credit_cost from public.generation_execution_claims e join public.generation_quotes q on q.quote_id=e.quote_id and q.job_id=e.job_id where e.job_id=$1 for update of e',[jobId]);if(r.rowCount!==1)throw new QuoteError('RESOURCE_NOT_AVAILABLE',404);return r.rows[0];}
  match(row,claim){if(row.claim_token!==claim.token||Number(row.fence)!==claim.fence)throw new QuoteError('EXECUTION_FENCE_STALE');}
  async claim(jobId,{recoverBeforeCall=false}={}){return this.billing.withTransaction(async client=>{
@@ -37,7 +37,7 @@ class FencedGenerationWorker{
  }
  async run(claim){const row=await this.start(claim);try{
   await this.fault('after_call_boundary_before_provider');
-  const outcome=await this.provider.submit({idempotency_key:claim.job_id,profile:row.profile,request:row.request});
+  const outcome=await this.providerScope(claim,()=>this.provider.submit({idempotency_key:claim.job_id,profile:row.profile,request:row.request}));
   await this.fault('after_provider_before_settlement');
   if(outcome?.status==='pending'||outcome?.status==='unknown'){await this.recovery(claim,outcome.provider_reference);return {status:'recovery_required'};}
   return await this.finalize(claim,outcome);
@@ -48,7 +48,7 @@ class FencedGenerationWorker{
   if(['succeeded','failed'].includes(row.state))return {status:row.state,replay:true};
   if(typeof this.provider.reconcile!=='function')throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);
   // Reconciliation must query by stable provider identity, never submit again.
-  const outcome=await this.provider.reconcile({idempotency_key:claim.job_id,provider_reference:row.provider_reference,profile:row.profile});
+  const outcome=await this.providerScope(claim,()=>this.provider.reconcile({idempotency_key:claim.job_id,provider_reference:row.provider_reference,profile:row.profile}));
   if(!outcome||!['succeeded','failed'].includes(outcome.status)){await this.recovery(claim,outcome?.provider_reference);throw new QuoteError('EXECUTION_RECONCILIATION_REQUIRED',503);}
   return this.finalize(claim,outcome);
  }
