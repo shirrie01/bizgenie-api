@@ -23,6 +23,7 @@ const FORBIDDEN_CUSTOMER_DTO_FIELDS = [
   "command_id",
   "auth_user_id",
   "private_positioning",
+  "destination_key",
 ];
 const IDS = Array.from(
   { length: 120 },

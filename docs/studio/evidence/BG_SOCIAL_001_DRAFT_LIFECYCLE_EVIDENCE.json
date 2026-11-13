@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-31",
+  "base_sha": "d8528012a2b437891fdfa139a23909c69527a526",
+  "branch": "bg-social-001-tiktok",
+  "existing_pr": 224,
+  "status": "Draft lifecycle implemented locally; TikTok wire adapter remains BLOCKED on unavailable canonical checkpoint contract details",
+  "node": "22.23.3",
+  "postgres": "17.11",
+  "full": {
+    "pass": 1028,
+    "fail": 0,
+    "skip": 0,
+    "cancelled": 0
+  },
+  "focused": {
+    "pass": 6
+  },
+  "separate_postgres": {
+    "pass": 57
+  },
+  "restore": "PASS; uploaded draft survives restore and is not publication evidence",
+  "migration_proposal": "20261031190000_add_social_draft_upload_lifecycle.sql",
+  "shared_migrations_applied": false,
+  "live_calls": false,
+  "direct_post_enabled": false,
+  "hosted_ci": "UNKNOWN; GitHub GraphQL Forbidden",
+  "logs": {
+    "continuation-final-full.log": "92d91a65082983baca76f9aa9270fe905f73978a95a8c2f5bf38eff3d105e47c",
+    "continuation-focused-final.log": "d462947f1f6db4cf61f89d7148ae6eb5ab61188b0eb76d7c8c6287eab59178dd",
+    "continuation-postgres.log": "8a9e65a136e48ec4f085302ad75d7b59907852567a080300b90df402510da2ce",
+    "continuation-final-restore.log": "e500daa45a14f02b348bb28c983a51bed04232bd565c30e3de1db98e08f6497a"
+  }
+}

@@ -28,6 +28,7 @@ async function createPremiumComposition({
   env = process.env, logger = console, now = () => new Date(),
   toolchainCheck = require("../media/toolchainSelfTest").runToolchainSelfTest, // test seam only; not reachable from the environment
   mediaInspector = null, connectors = null, workflowStageHandlerFactory = null,
+  socialKeyProvider = null, socialFetch = undefined,
   providerSpend = null, providerSpendOperations = null, // Server-owned only; never loaded from customer input or enabled by a daily budget.
 } = {}) {
   let unscannedAccepted = false;
@@ -146,11 +147,38 @@ async function createPremiumComposition({
     const wanted = String(env.SOCIAL_PLATFORMS || "").split(",").map((s) => s.trim()).filter(Boolean);
     need(wanted.length > 0, "SOCIAL_PUBLISHING_ENABLED requires SOCIAL_PLATFORMS (for example tiktok,linkedin)");
     const registry = connectors || require("../social-connectors").registry;
+    // Credential persistence is shared; TikTok's media/upload prerequisites are not OAuth prerequisites for LinkedIn.
+    let runtime = null, videoRuntime = null;
+    const connectorRuntime = async (name) => {
+      if (!runtime) {
+        let keyProvider = socialKeyProvider;
+        if (!keyProvider) { try { keyProvider = require("../social-connectors/envKeyProvider").createEnvKeyProvider({ env }); } catch (error) { need(false, `Social token vault key: ${error.message}`); } }
+        need(typeof keyProvider?.getKey === "function" && typeof keyProvider.keyId === "string" && keyProvider.keyId, "The social token key provider must expose keyId and getKey");
+        const { PostgresSocialRuntime } = require("../social-connectors/postgresRuntime");
+        const { SocialTokenVault } = require("../social-connectors/tokenVault");
+        const operations = new PostgresSocialRuntime({ billingRepository, keyProvider, keyId: keyProvider.keyId, now });
+        runtime = { vault: new SocialTokenVault({ driver: operations, now }), operations };
+      }
+      if (name !== "tiktok") return runtime;
+      if (videoRuntime) return videoRuntime;
+      need(media?.videoEnabled && typeof media.videoAssetStore?.videoInspector === "function" && typeof media.mediaPreviewStorage?.statPreview === "function",
+        "A TikTok draft upload needs validated video generation (VIDEO_GENERATION_ENABLED with durable media storage and a working video inspector)");
+      const origins = String(env.TIKTOK_UPLOAD_ORIGINS || "").split(",").map((o) => o.trim()).filter(Boolean);
+      need(env.TIKTOK_UPLOAD_REVIEW_REF && origins.length, "TikTok draft upload needs TIKTOK_UPLOAD_REVIEW_REF and TIKTOK_UPLOAD_ORIGINS (the reviewed HTTPS upload origins)");
+      const chunkBytes = positiveInt(env, "TIKTOK_UPLOAD_CHUNK_BYTES"); need(chunkBytes <= 33554432, "TIKTOK_UPLOAD_CHUNK_BYTES must not exceed 33554432");
+      const { createApprovedVideoSource } = require("../social-connectors/approvedVideoSource");
+      videoRuntime = { ...runtime,
+        mediaSource: createApprovedVideoSource({ pool, storage: media.mediaPreviewStorage, videoInspector: media.videoAssetStore.videoInspector, now }),
+        uploadPolicy: { reviewRef: env.TIKTOK_UPLOAD_REVIEW_REF, chunkBytes, uploadOrigins: origins } };
+      return videoRuntime;
+    };
+    const NEEDS_RUNTIME = new Set(["tiktok", "linkedin"]);
     const platforms = {};
     for (const name of wanted) {
       const factory = registry[name];
       need(typeof factory === "function", `No connector is registered for ${name}; it cannot be enabled`);
-      platforms[name] = await factory({ env, pool, logger, now }); // a factory throws unless its reviewed configuration and credentials are present
+      const extra = NEEDS_RUNTIME.has(name) && !connectors ? { ...(await connectorRuntime(name)), fetchImpl: socialFetch } : {};
+      platforms[name] = await factory({ env, pool, logger, now, ...extra }); // a factory throws unless its reviewed configuration and credentials are present
     }
     const { DurableSocialPublishing } = require("../social-publishing/service");
     socialPublishingService = new DurableSocialPublishing({ billingRepository, platforms, enabled: true, now });

@@ -1,0 +1,56 @@
+{
+  "work_order": "BG-SOCIAL-003",
+  "date": "2026-11-01",
+  "branch": "bg-social-002-linkedin",
+  "pr": 227,
+  "base_head": "4d197ce237893eca4b96301436869dca320eb1f9",
+  "node": "22.23.3",
+  "postgres": "17.11 disposable local",
+  "environment": {
+    "PATH_prefix": "/workspace/.onboarding/tools/node_modules/.bin",
+    "TEST_DATABASE_URL": "postgresql://postgres@127.0.0.1:5433/postgres"
+  },
+  "live_provider_calls": false,
+  "shared_migrations": false,
+  "ci_status": "UNKNOWN: GitHub API Forbidden; local results only",
+  "overlapping_test_runs": true,
+  "results": [
+    {
+      "name": "LinkedIn focused",
+      "passed": 12,
+      "exit_code": 0,
+      "command": "node --test --test-name-pattern='LinkedIn' test/generation-quotes.integration.test.js test/linkedin-connector.test.js",
+      "log": "/workspace/recovery/bg-social-003-focused.log",
+      "sha256": "61d7650ea6465d17f04320a2001dcd9eef5dd85c4a6b404dd2441799b00ef224"
+    },
+    {
+      "name": "Full API",
+      "passed": 1054,
+      "exit_code": 0,
+      "command": "npm test",
+      "log": "/workspace/recovery/bg-social-003-full.log",
+      "sha256": "b142b40192d2a98b188e538ce2873ae1e747f48c2eb3dcd41dced793576246ca"
+    },
+    {
+      "name": "TikTok and PostgreSQL billing/campaign/onboarding",
+      "passed": 97,
+      "exit_code": 0,
+      "command": "node --test test/tiktok-connector.test.js test/social-token-vault.test.js test/social-oauth-configuration.test.js test/postgres-billing.integration.test.js test/postgres-campaign.integration.test.js test/workspace-onboarding.integration.test.js",
+      "log": "/workspace/recovery/bg-social-003-regressions.log",
+      "sha256": "8c6f483bd9479993f850cc09b79091014e2f2fd234099b97631ef0b13f0b95a8"
+    },
+    {
+      "name": "Syntax",
+      "passed": null,
+      "exit_code": 0,
+      "command": "node --check index.js; find src test -type f -name '*.js' -print0 | xargs -0 -n1 node --check",
+      "log": "/workspace/recovery/bg-social-003-syntax.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "source_hashes": {
+    "src/social-connectors/linkedin.js": "4431d168b898ea90c54427e04d1052dc92c78d9057850f16272a6d4731d395c7",
+    "test/linkedin-connector.test.js": "4799e6a89ccfcbc4ff49363a8f28e3af4cf1001061f66324a74b5dd91ab3bcd1",
+    "test/generation-quotes.integration.test.js": "984da3e5d5aa4047ae3065203b4e23d0c719c85aaee4cb4f1900369b3dded5a8"
+  }
+}
