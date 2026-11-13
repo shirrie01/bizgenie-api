@@ -42,16 +42,15 @@ test("every SQL seed hash (historical and launch migrations) matches memory; the
   const registry = new InMemoryPreviewRegistry();
   assert.equal(rows.length, registry.profiles.size);
   for (const [, id, digest] of rows) assert.equal(registry.profiles.get(`${id}:1`).profile_hash, digest);
-  // BG-LAUNCH-002 provisions instagram.feed.video under the generic renderer; the proposal's dedicated renderer/hash is still not registered anywhere.
-  assert.equal(registry.activeProfile(proposal.registry_identity).renderer_version, "bizgenie-preview-renderer.v1");
-  assert.notEqual(registry.activeProfile(proposal.registry_identity).profile_hash, "858e82f419c2efba01d40052076895e6e86c1fa1e82c05a18c5046769492babb");
+  // Canonical gate: neither generic nor proposed Instagram video renderer is provisioned.
+  assert.equal(registry.activeProfile(proposal.registry_identity), undefined);
   assert.ok(![...registry.profiles.values()].some((p) => p.renderer_version === proposal.registry_identity.renderer_version));
 });
 
 test("an unknown placement stays fail-closed: no profile is borrowed for instagram/shorts video", () => {
   const registry = new InMemoryPreviewRegistry();
   assert.equal(registry.activeProfile({ platform: "instagram", placement: "shorts", format: "video" }), undefined);
-  assert.ok(registry.activeProfile({ platform: "instagram", placement: "feed", format: "video" }));
+  assert.equal(registry.activeProfile({ platform: "instagram", placement: "feed", format: "video" }),undefined);
 });
 
 test("candidate receipt binds exact revision and identity; explicit same-actor approval leaves publishing untouched", async () => {
