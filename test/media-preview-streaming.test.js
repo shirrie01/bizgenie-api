@@ -119,3 +119,12 @@ test('disconnect while metadata is pending prevents any object read even after l
     assert.equal(signal.aborted,true);assert.equal(opened,0);
   } finally {await new Promise(resolve=>server.close(resolve));}
 });
+
+test('immutable intake upload preserves generation precondition and cannot hang on discarded body cancellation',async()=>{
+ let url,cancelled=false;
+ const storage=new GoogleCloudMediaStorage({bucket:'private-test',accessTokenProvider:async()=> 'synthetic-token',fetchImpl:async(input)=>{
+  url=input;return new Response(new ReadableStream({cancel(){cancelled=true;return new Promise(()=>{});}}),{status:201});
+ }});
+ await Promise.race([storage.putImmutableObject({key:'scoped-test-key',data:Buffer.from('fixture'),mimeType:'image/png'}),new Promise((_,reject)=>setTimeout(()=>reject(Error('cancellation stalled')),100))]);
+ assert.equal(new URL(url).searchParams.get('ifGenerationMatch'),'0');assert.equal(cancelled,true);
+});
