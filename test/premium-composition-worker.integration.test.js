@@ -577,13 +577,21 @@ const ENV = { BIZGENIE_ENVIRONMENT: "staging", QUOTED_GENERATION_ENABLED: "true"
       });
     });
     describe("failure recovery", () => {
+      beforeEach(async () => {
+        // Each journey has its own fake provider and encryption key, but shares this
+        // disposable DB. Retire earlier fixtures through the real cancellation
+        // service: invalid old queue heads must not consume this test's bounded batch.
+        const leftovers = await pool.query("select dispatch_id from social_dispatches where tenant_id=$1 and project_id=$2 and brand_id=$3 and created_by=$4 and state in ('queued','claimed')", [scope.tenant_id, scope.project_id, scope.brand_id, actor.auth_user_id]);
+        const cleanup = await build(tiktokEnv(), { socialFetch: fakeTikTok().fetch });
+        for (const row of leftovers.rows) await cleanup.socialPublishingService.cancel(actor, row.dispatch_id, scope);
+      });
       const initCalls = (tt) => tt.calls.filter((c) => c.path === "/v2/post/publish/inbox/video/init/").length;
       const putCalls = (tt) => tt.calls.filter((c) => c.method === "PUT").length;
       const due = (j) => { clock = new Date(Math.max(clock.getTime(), j.due.getTime()) + 1000); };
 
       it("TikTok reporting FAILED is a definitive failure: not uploaded, not published, no second attempt", async () => {
         const j = await journey(); j.tt.status = "FAILED"; due(j); const l = workLoop(j.svc);
-        // earlier journeys leave queued dispatches behind and each tick takes a bounded batch, so allow enough ticks for this one to be reached
+        // Process the isolated fixture through the real bounded worker, including reconciliation.
         for (let i = 0; i < 15 && !["failed", "uploaded"].includes((await dispatchRow(j.dispatch.dispatch_id)).state); i += 1) { await l.tick(); clock = new Date(clock.getTime() + 61000); }
         const row = await dispatchRow(j.dispatch.dispatch_id);
         assert.equal(row.state, "failed"); assert.deepEqual([row.publication_id, row.publication_url, row.uploaded_at], [null, null, null]);

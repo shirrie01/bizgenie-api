@@ -1,0 +1,33 @@
+{
+  "project": "bizgenie-backend",
+  "region": "europe-west1",
+  "service": "bizgenie-studio-bridge-staging",
+  "sourceSha": "UNRESOLVED_EXACT_REVIEWED_BRIDGE_COMMIT",
+  "image": "UNRESOLVED_BUILT_IMAGE_AT_SHA256_DIGEST",
+  "serviceAccount": "bizgenie-staging-runtime@bizgenie-backend.iam.gserviceaccount.com",
+  "identitySuitabilityEvidence": "UNRESOLVED_IAM_REVIEW",
+  "publicInvokerApproval": "UNRESOLVED_FOUNDER_APPROVAL",
+  "upstreamTagEvidence": "UNRESOLVED_TAG_TO_REVISION_METADATA",
+  "environment": {
+    "BIZGENIE_ENVIRONMENT": "staging",
+    "SUPABASE_URL": "https://zrczojyxebwjgpymbmgu.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "UNRESOLVED_EXISTING_PUBLIC_STAGING_KEY",
+    "BG_BRIDGE_STUDIO_ORIGIN": "https://bizgenie-studio-staging.pages.dev",
+    "BG_BRIDGE_TARGET_URL": "UNRESOLVED_VERIFIED_PRIVATE_REVISION_TAG_URL",
+    "BG_BRIDGE_AUDIENCE": "UNRESOLVED_VERIFIED_PRIVATE_SERVICE_AUDIENCE",
+    "BG_BRIDGE_REVISION": "bizgenie-api-staging-00030-pob",
+    "BG_BRIDGE_SOURCE_SHA": "UNRESOLVED_DEPLOYED_UPSTREAM_SHA_NOT_BRIDGE_SHA",
+    "BG_BRIDGE_REVIEW_REF": "UNRESOLVED_RELEASE_APPROVAL",
+    "BG_BRIDGE_ALLOW_WRITES": "false",
+    "BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION": "false",
+    "BG_BRIDGE_ALLOW_SOCIAL_WRITES": "false",
+    "BG_BRIDGE_BIND": "0.0.0.0",
+    "PORT": "8080",
+    "BG_BRIDGE_ALLOW_STRIPE_CHECKOUT": "false",
+    "BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP": "true",
+    "BG_BRIDGE_ALLOW_DRAFT_WORKFLOW": "false"
+  },
+  "workspaceBootstrapApproval": "UNRESOLVED_EXACT_TARGET_SHA_WORKSPACE_ONLY_APPROVAL",
+  "upstreamDatabasePoolEvidence": "UNRESOLVED_CONFIGURED_STAGING_POOL_METADATA",
+  "upstreamAuthProvisionerEvidence": "UNRESOLVED_STAGING_AUTH_ADMIN_BINDING_METADATA"
+}

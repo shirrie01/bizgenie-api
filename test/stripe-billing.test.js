@@ -778,3 +778,45 @@ describe("Stripe webhook verification and financial idempotency", () => {
     );
   });
 });
+
+// Real bridge -> HTTP -> existing API router/resolver/billing service. Stripe and
+// verified Supabase claims are deterministic stand-ins; no external request.
+async function checkoutBridgeFixture({role='owner',allowStripeCheckout=true,maxRequests=60}={}) {
+ const {createStudioBridge}=require('../src/studio-bridge/service');const {once}=require('node:events');
+ const auth=checkoutAuthorization({role}),kit=setup(),scope={tenant_id:'tenant_a',project_id:'project_a',brand_id:'brand_a'},iamCalls=[];
+ const api=createApp({stripeSubscriptionService:kit.service,...auth,logger:{info(){},warn(){},error(){}}});
+ const server=api.listen(0,'127.0.0.1');await once(server,'listening');
+ const origin='https://bizgenie-studio-staging.pages.dev';
+ const bridge=createStudioBridge({target:{environment:'staging',revision:'bizgenie-api-staging-00030-pob',sourceSha:'a'.repeat(40),reviewRef:'synthetic_contract',upstream:'https://tag---bizgenie-api-staging-synthetic-ew.a.run.app',audience:'https://bizgenie-api-staging-synthetic-ew.a.run.app',origin,allowWrites:true,allowStripeCheckout,maxRequests},tokenVerifier:{verifyIdentityAccessToken:auth.customerTokenVerifier.verifyAccessToken,async verifyAccessToken(t){return {...await auth.customerTokenVerifier.verifyAccessToken(t),trusted_scope:scope};}},iamTokenProvider:async()=>{iamCalls.push(true);return 'synthetic_iam';},fetchImpl:(url,init)=>fetch('http://127.0.0.1:'+server.address().port+new URL(url).pathname,init)});
+ return {...kit,bridge,origin,iamCalls,close:()=>new Promise(r=>{server.close(r);server.closeAllConnections();})};
+}
+describe('secure bridge Stripe checkout contract',()=>{
+ const body={tenant_id:'tenant_a',plan_code:'standard',request_id:'bridge_checkout_001'};
+ const send=(k,b=body)=>request(k.bridge).post('/billing/stripe/checkout').set('origin',k.origin).set('authorization','Bearer signed-customer-token-a').send(b);
+ it('forwards owner checkout through real authority and preserves server mappings and idempotency',async()=>{
+  const k=await checkoutBridgeFixture();try{
+   for(let n=0;n<2;n++){const r=await send(k);assert.equal(r.status,201);assert.equal(r.body.checkout_session_id,'cs_test_launch_001');}
+   assert.equal(k.calls.sessions.length,2);assert.equal(k.calls.sessions[0][1].idempotencyKey,k.calls.sessions[1][1].idempotencyKey);
+   assert.equal(k.calls.sessions[0][0].line_items[0].price,'price_StandardTest');assert.equal(k.calls.sessions[0][0].success_url,k.config.successUrl);assert.equal(k.calls.sessions[0][0].cancel_url,k.config.cancelUrl);
+   assert.equal(k.calls.sessions[0][0].client_reference_id,'tenant_a');
+  }finally{await k.close();}
+ });
+ it('denies missing tokens, nonowners, foreign tenants, arbitrary prices/URLs and unmapped plans before Stripe',async()=>{
+  for(const role of ['owner','member']){const k=await checkoutBridgeFixture({role});try{
+   if(role==='member'){assert.equal((await send(k)).status,404);}else{
+    assert.equal((await request(k.bridge).post('/billing/stripe/checkout').set('origin',k.origin).send(body)).status,401);
+    assert.equal((await send(k,{...body,tenant_id:'tenant_b'})).status,404);
+    for(const extra of [{price_id:'price_arbitrary'},{success_url:'https://foreign.test'},{cancel_url:'https://foreign.test'},{user_id:'forged'}])assert.equal((await send(k,{...body,...extra})).status,400);
+    assert.equal(k.iamCalls.length,0);assert.equal((await send(k,{...body,plan_code:'pro'})).status,404);
+   }
+   assert.equal(k.calls.sessions.length,0);assert.equal(k.calls.customers.length,0);
+  }finally{await k.close();}}
+ });
+ it('separately gates checkout and rate limits it while preflight never invokes IAM',async()=>{
+  const k=await checkoutBridgeFixture({allowStripeCheckout:false});try{
+   const p=await request(k.bridge).options('/billing/stripe/checkout').set('origin',k.origin).set('access-control-request-method','POST').set('access-control-request-headers','authorization,content-type');assert.equal(p.status,204);
+   const r=await send(k);assert.equal(r.status,403);assert.equal(r.body.error.code,'STRIPE_CHECKOUT_DISABLED');assert.equal(k.iamCalls.length,0);assert.equal(k.calls.sessions.length,0);
+  }finally{await k.close();}
+  const limited=await checkoutBridgeFixture({maxRequests:1});try{assert.equal((await send(limited)).status,201);assert.equal((await send(limited)).status,429);assert.equal(limited.calls.sessions.length,1);}finally{await limited.close();}
+ });
+});

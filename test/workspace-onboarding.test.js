@@ -495,3 +495,22 @@ describe("DEC-023 professional-services HTTP contract", () => {
     assert.equal(resumed.body.onboarding.sector.source, "customer");
   });
 });
+
+describe('R2 onboarding GET scope contract', () => {
+  it('caller query parameters cannot redirect a token-scoped read to another tenant', async () => {
+    const { client } = fixture();
+    assert.equal((await save(client, base({ sector_key: 'leasing', industry_text: 'Tenant A synthetic description' }))).status, 200);
+    assert.equal((await save(client, base({ sector_key: 'perfume', industry_text: 'Tenant B private fixture' }), 'token-b')).status, 200);
+    const own = await as(client.get(URL).query(SCOPE_B));
+    assert.equal(own.status, 200); // Own data, not a cross-tenant denial result.
+    for (const key of ['tenant_id', 'project_id', 'brand_id']) assert.equal(own.body.onboarding[key], SCOPE_A[key]);
+    assert.equal(own.body.onboarding.sector.key, 'leasing');
+    assert.ok(!JSON.stringify(own.body).includes('Tenant B private fixture'));
+    const second = await as(client.get(URL), 'token-b');
+    assert.equal(second.status, 200);
+    assert.equal(second.body.onboarding.tenant_id, SCOPE_B.tenant_id);
+    assert.equal(second.body.onboarding.sector.key, 'perfume');
+    assert.equal(own.headers['cache-control'], 'private, no-store');
+    assert.match(own.headers.vary, /Authorization/);
+  });
+});

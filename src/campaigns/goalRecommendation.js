@@ -43,6 +43,18 @@ function parseRecommendationRequest(value) {
   return parsed.data;
 }
 
+// Conversion-intent vocabulary. A goal is classified by what the customer wants people to DO, not by one generic keyword list:
+// an enquiry, quote, booking, viewing, valuation, appointment or similar action is a lead goal whatever the industry.
+const TRADE_WORDS = /\b(retailer|retailers|wholesaler|wholesalers|distributor|distributors|trade|stocking|stockists|distribution|trade enquiries)\b/;
+const LAUNCH_WORDS = /\b(event|opening|launch|grand opening|new product|product launch)\b/;
+const OFFER_WORDS = /\b(offer|sale|discount|deal|promo)\b/;
+const LEAD_WORDS = new RegExp("\\b(?:" + [
+  "book(?:s|ed|ing|ings)?", "appointments?", "enquir(?:y|ies)", "inquir(?:y|ies)", "leads?", "quotes?", "quotations?", "consultations?",
+  "viewings?", "valuations?", "test drives?", "demos?", "callbacks?", "call backs?", "reservations?", "sign[- ]?ups?",
+  "landlords?", "tenants?", "lettings?", "vacan(?:t|cy|cies)",
+  "fill (?:our |my |the |all )?(?:\\w+ ){0,2}(?:tables|slots|diary|calendar|rooms|seats)",
+].join("|") + ")\\b");
+
 function goalKind(goal, brandBrain = {}) {
   const value = [
     goal,
@@ -53,15 +65,48 @@ function goalKind(goal, brandBrain = {}) {
     brandBrain.commercial?.primary_cta,
   ].filter(Boolean).join(" ").toLowerCase();
 
-  if (/\b(retailer|retailers|wholesaler|wholesalers|distributor|distributors|trade|stocking|stockists|distribution|trade enquiries|businesses)\b/.test(value)) return "lead";
-  if (/\b(event|opening|launch|grand opening|new product|product launch)\b/.test(value)) return "launch";
-  if (/\b(offer|sale|discount|deal|promo)\b/.test(value)) return "offer";
-  if (/\b(book|appointment|enquiry|enquiries|lead|leads|quote)\b/.test(value)) return "lead";
+  if (TRADE_WORDS.test(value)) return "lead";
+  if (LAUNCH_WORDS.test(value)) return "launch";
+  if (OFFER_WORDS.test(value)) return "offer";
+  if (LEAD_WORDS.test(value)) return "lead";
   return "awareness";
 }
 
-function titleCase(value) {
-  return value.split(/\s+/).filter(Boolean).slice(0, 5).map((word) => word[0].toUpperCase() + word.slice(1).toLowerCase()).join(" ");
+// Campaign name from the customer's own goal: the whole phrase when it fits, otherwise cut at a word boundary and never left
+// ending on a connecting word ("...Requests From Campaign"). Always at most CAMPAIGN_TITLE_MAX characters.
+const CAMPAIGN_TITLE_MAX = 60;
+const CAMPAIGN_SUFFIX = " Campaign";
+const SMALL_WORDS = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "of", "on", "or", "per", "the", "to", "via", "with"]);
+const DANGLING = new Set([...SMALL_WORDS, "my", "our", "your", "their", "its", "this", "that", "these", "those", "some", "any", "all", "more", "most", "new", "other", "local"]);
+
+function titleWord(word, index, shout) {
+  const bare = word.toLowerCase();
+  if (index > 0 && SMALL_WORDS.has(bare)) return bare;
+  if (!shout && (/[0-9£$€@#&]/.test(word) || /[A-Z]/.test(word.slice(1)))) return word;
+  return bare.replace(/(^|-)(\p{L})/gu, (m, lead, ch) => lead + ch.toUpperCase());
+}
+
+function campaignTitle(goal) {
+  const text = String(goal ?? "").normalize("NFC").replace(/\s+/g, " ").trim().replace(/^["'“”‘’]+|["'“”‘’.!?,;:]+$/g, "").trim();
+  if (!text) return "Your Campaign";
+  const shout = text === text.toUpperCase() && /[A-Z]/.test(text);
+  const hasSuffix = /\bcampaign\b/i.test(text);
+  const room = CAMPAIGN_TITLE_MAX - (hasSuffix ? 0 : CAMPAIGN_SUFFIX.length);
+  let words = text.split(" ").map((word, index) => titleWord(word, index, shout));
+  const joined = () => words.join(" ");
+  if (joined().length > room) {
+    const kept = [];
+    let length = 0;
+    for (const word of words) {
+      const next = length + (kept.length ? 1 : 0) + [...word].length;
+      if (next > room) break;
+      kept.push(word); length = next;
+    }
+    if (!kept.length) kept.push([...words[0]].slice(0, room).join(""));
+    while (kept.length > 1 && DANGLING.has(kept[kept.length - 1].toLowerCase())) kept.pop();
+    words = kept;
+  }
+  return joined() + (hasSuffix ? "" : CAMPAIGN_SUFFIX);
 }
 
 function itemSet(kind, { goal = "", brandBrain = {} } = {}) {
@@ -137,7 +182,7 @@ function buildRecommendation({ context, request, now, idFactory, evidence = [] }
   const kind = goalKind(request.goal, context.brand_brain);
   const generatedAt = iso(now());
   const strategy = planRecommendation(request.goal, context.brand_brain);
-  const campaignName = strategy ? strategy.title : `${titleCase(request.goal)} Campaign`;
+  const campaignName = strategy ? strategy.title : campaignTitle(request.goal);
   const suggestedItems = itemSet(kind, {
     goal: request.goal,
     brandBrain: context.brand_brain,
@@ -360,6 +405,9 @@ function createPostgresGoalRecommendationRegistryFromEnv({ env = process.env, ..
 
 module.exports = {
   FORBIDDEN_RECOMMENDATION_FIELDS,
+  buildRecommendation,
+  campaignTitle,
+  goalKind,
   InMemoryGoalRecommendationRegistry,
   PostgresGoalRecommendationRegistry,
   createDefaultGoalRecommendationRegistry,

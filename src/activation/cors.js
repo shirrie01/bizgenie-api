@@ -38,7 +38,7 @@ function loadCorsConfig({ env = process.env } = {}) {
     throw new ActivationConfigurationError("CORS_ALLOWED_ORIGINS is invalid");
   }
   const allowedOrigins = [...new Set(values.map(parseOrigin))];
-  return Object.freeze({ enabled: true, allowedOrigins: Object.freeze(allowedOrigins) });
+  return Object.freeze({ enabled: true, allowedOrigins: Object.freeze(allowedOrigins), allowUploadDelete: env.BIZGENIE_ENVIRONMENT === "staging" });
 }
 
 function createCorsMiddleware({ config }) {
@@ -56,7 +56,8 @@ function createCorsMiddleware({ config }) {
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean);
     const mediaDelivery = /^\/customer\/campaigns\/[a-f0-9-]{36}\/variants\/[a-f0-9-]{36}\/revisions\/[a-f0-9-]{36}\/assets\/[a-f0-9-]{36}\/preview$/.test(req.path);
-    const methods = mediaDelivery ? new Set(["GET", "HEAD", "OPTIONS"]) : allowedMethods;
+    const uploadDelete = config.allowUploadDelete === true && /^\/customer\/assets\/[a-f0-9-]{36}$/.test(req.path) && (requestedMethod || req.method) === "DELETE";
+    const methods = uploadDelete ? new Set(["DELETE", "OPTIONS"]) : mediaDelivery ? new Set(["GET", "HEAD", "OPTIONS"]) : allowedMethods;
     const headers = mediaDelivery ? new Set([...allowedHeaders, "range"]) : allowedHeaders;
     if (
       !methods.has(requestedMethod || req.method) ||
@@ -65,7 +66,7 @@ function createCorsMiddleware({ config }) {
       return res.status(403).json({ error: "Forbidden" });
     }
     res.set("Access-Control-Allow-Origin", origin);
-    res.set("Access-Control-Allow-Methods", mediaDelivery ? "GET,HEAD,OPTIONS" : ALLOWED_METHODS);
+    res.set("Access-Control-Allow-Methods", uploadDelete ? "DELETE,OPTIONS" : mediaDelivery ? "GET,HEAD,OPTIONS" : ALLOWED_METHODS);
     res.set("Access-Control-Allow-Headers", mediaDelivery ? ALLOWED_HEADERS + ",range" : ALLOWED_HEADERS);
     if (mediaDelivery) res.set("Access-Control-Expose-Headers", "Content-Length,Content-Range,Accept-Ranges");
     res.set("Access-Control-Max-Age", "600");
