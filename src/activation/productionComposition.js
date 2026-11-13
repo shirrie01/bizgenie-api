@@ -18,6 +18,8 @@ const {
   MediaConfigurationError,
 } = require("../media");
 const { activationFlag, requireActivationEnvironment } = require("./config");
+const { createVideoInspector, createHardenedVideoInspector } = require("../media/videoInspection");
+const { runToolchainSelfTest } = require("../media/toolchainSelfTest");
 
 function googleProject(env) {
   return env.GOOGLE_CLOUD_PROJECT || env.GCLOUD_PROJECT || env.GCP_PROJECT;
@@ -39,6 +41,7 @@ async function createMediaProductionComposition({
   fetchImpl = globalThis.fetch,
   vertexFactory,
   accessTokenProvider,
+  toolchainCheck = runToolchainSelfTest, // test seam only: not reachable from environment variables, so production cannot bypass it
   now = () => new Date(),
 } = {}) {
   const mediaEnabled = activationFlag(env, "MEDIA_STORAGE_ENABLED");
@@ -82,10 +85,20 @@ async function createMediaProductionComposition({
     storage,
     delivery: "gcs",
   });
+  // Fail closed: video is enabled only if the inspection toolchain demonstrably works in the isolation this deployment is configured for. Production must use hardened
+  // (bubblewrap) isolation; process-local isolation is for disposable isolated staging only.
+  if (videoEnabled) {
+    const isolation = env.VIDEO_INSPECTION_ISOLATION === "local" ? "local" : "bubblewrap";
+    if (isolation === "local" && env.BIZGENIE_ENVIRONMENT !== "staging") throw new MediaConfigurationError("VIDEO_INSPECTION_ISOLATION=local is only allowed in disposable isolated staging");
+    const ready = await toolchainCheck({ isolation });
+    if (!ready?.ok) throw new MediaConfigurationError(`Video generation is enabled but media inspection is not ready (${isolation}): ${ready?.failure || "UNKNOWN"}`);
+  }
+
   const imageAssetStore = new DurableMediaAssetStore({
     mediaKind: "image",
     repository: mediaAssetRepository,
     storage,
+    requireImageValidation: imageEnabled,
     now,
   });
   const videoAssetStore = new DurableMediaAssetStore({
@@ -93,6 +106,10 @@ async function createMediaProductionComposition({
     repository: mediaAssetRepository,
     storage,
     videoSourcePrefix: env.VIDEO_PROVIDER_OUTPUT_STORAGE_URI,
+    // Provider video is measured from its real bytes before an asset can exist (BG-LAUNCH-002). Isolation defaults to bubblewrap; "local" must be chosen explicitly
+    // (e.g. a container that cannot run bwrap). If the tool is unavailable the job stays recoverable and is never approved.
+    videoInspector: videoEnabled ? (env.VIDEO_INSPECTION_ISOLATION === "local" ? createVideoInspector({ isolation: "local" }) : createHardenedVideoInspector()) : null,
+    requireVideoValidation: videoEnabled,
     now,
   });
 

@@ -31,6 +31,7 @@ class CampaignTransitionError extends CampaignError {
       CONTENT_INCOMPLETE: "Complete the content before submitting for review",
       SCHEDULE_INVALID: "Choose a valid future schedule with an explicit timezone",
       PUBLICATION_EVIDENCE_INVALID: "Confirm the actual publication details before continuing",
+      MEDIA_NOT_SUITABLE: "The attached media does not meet this platform's requirements. Replace or regenerate it before review",
       CAMPAIGN_LIMIT_REACHED: "This campaign has reached its content limit",
     };
     super(code, messages[code] || messages.INVALID_TRANSITION);

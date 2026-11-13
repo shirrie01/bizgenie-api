@@ -423,7 +423,9 @@ class OpenAIImageProvider extends ImageGenerationProvider {
           model: this.model,
         },
       });
-    } catch (_error) {
+    } catch (error) {
+      // The bytes were fetched but are not a whole image of the requested type and size: final, unlike a storage outage.
+      if (error?.code === "MEDIA_OUTPUT_INVALID") throw new ImageProviderResponseError();
       throw new ImageProviderUnavailableError();
     }
 
