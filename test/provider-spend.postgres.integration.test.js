@@ -21,7 +21,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
  beforeEach(async()=>{
   await owner.query('truncate provider_spend_reservations,provider_spend_customers,provider_spend_policy');
   await owner.query("insert into provider_spend_customers values('tenant_a',1,true),('tenant_b',2,true)");
-  const estimates={image:{version:'estimate.v1',source_ref:'operator.approved.estimate',currency:'GBP',upper_bound_minor:6000,valid_until:new Date(Date.now()+86400000).toISOString()}};
+  const estimates={image:{version:'estimate.v1',source_ref:'operator.approved.estimate',currency:'GBP',upper_bound_minor:6000,authority:{native_currency:'GBP',native_bound_minor:6000,fees_gbp_minor:0,fx:null},valid_until:new Date(Date.now()+86400000).toISOString()}};
   await owner.query("insert into provider_spend_policy values(true,'policy.v1','issue.234',true,'GBP',10000,10,clock_timestamp()-interval '1 hour',clock_timestamp()+interval '1 day',$1)",[estimates]);
  });
  it('two tenants/independent pools cannot reserve beyond one aggregate10000p cap',async()=>{
@@ -104,7 +104,7 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
   assert.equal((await owner.query("select state from provider_spend_reservations where id='lost'")).rows[0].state,'dispatching');
  });
  it('exact aggregate ceiling is permitted and exhausted requests cannot create another reservation',async()=>{
-  await owner.query("update provider_spend_policy set estimates=jsonb_set(estimates,'{image,upper_bound_minor}','5000')");
+  await owner.query("update provider_spend_policy set estimates=jsonb_set(jsonb_set(estimates,'{image,upper_bound_minor}','5000'),'{image,authority,native_bound_minor}','5000')");
   const outcomes=await Promise.allSettled([s.reserve(input('one')),s.reserve(input('two','tenant_b'))]);for(const result of outcomes)assert.equal(result.status,'fulfilled',result.reason?.message);
   await assert.rejects(s.reserve(input('three')),{code:'PROVIDER_SPEND_CAP_EXHAUSTED'});
   assert.equal((await owner.query('select sum(bound_minor)::int n from provider_spend_reservations')).rows[0].n,10000);
@@ -149,6 +149,26 @@ suite('aggregate monthly provider ledger — real disposable PostgreSQL',()=>{
    await assert.rejects(admitProviderDispatch('image',()=>{calls++;throw Error('ambiguous');}),/ambiguous/);
    await assert.rejects(admitProviderDispatch('image',()=>calls++),{code:'PROVIDER_SPEND_DISPATCH_HELD'});
   });assert.equal(calls,1);
+ });
+ it('missing FX/fee authority never reserves or dispatches, and stale FX after reservation holds the permit',async()=>{
+  const price={...(await owner.query('select estimates from provider_spend_policy')).rows[0].estimates.image};
+  delete price.authority;
+  await owner.query('update provider_spend_policy set estimates=$1',[{image:price}]);
+  await assert.rejects(s.reserve(input('missing')),{code:'PROVIDER_SPEND_ESTIMATE_UNAVAILABLE'});
+  assert.equal((await owner.query('select count(*)::int n from provider_spend_reservations')).rows[0].n,0);
+  price.authority={native_currency:'USD',native_bound_minor:4000,fees_gbp_minor:1,fx:{from:'USD',to:'GBP',numerator:1,denominator:1,version:'synthetic.fx.v1',source_ref:'synthetic.test.only',valid_until:new Date(Date.now()+86400000).toISOString()}};
+  await owner.query('update provider_spend_policy set estimates=$1',[{image:price}]);await s.reserve(input('fx'));
+  await owner.query("update provider_spend_policy set estimates=jsonb_set(estimates,'{image,authority,fx,valid_until}',to_jsonb((clock_timestamp()-interval '1 second')::text))");
+  await assert.rejects(s.start(input('fx')),{code:'PROVIDER_SPEND_DISPATCH_HELD'});
+  assert.equal((await owner.query("select state from provider_spend_reservations where id='fx'")).rows[0].state,'reserved');
+ });
+ it('FX expiry between reservation and dispatch fails even with unchanged policy hash',async()=>{
+  const estimate=(await owner.query('select estimates from provider_spend_policy')).rows[0].estimates.image;
+  estimate.authority={native_currency:'USD',native_bound_minor:4000,fees_gbp_minor:0,fx:{from:'USD',to:'GBP',numerator:1,denominator:1,source_ref:'synthetic.only',version:'fx.v1',valid_until:new Date(Date.now()+3600000).toISOString()}};
+  await owner.query('update provider_spend_policy set estimates=$1',[{image:estimate}]);await s.reserve(input('expires'));
+  const advanced={async connect(){const c=await runtime.connect();return {release:()=>c.release(),async query(sql,args){const result=await c.query(sql,args);if(typeof sql==='string'&&sql.includes('clock_timestamp() as db_now'))for(const row of result.rows)row.db_now=new Date(row.db_now.getTime()+7200000);return result;}};}};
+  await assert.rejects(new MonthlyProviderSpend({pool:advanced,enabled:true}).start(input('expires')),{code:'PROVIDER_SPEND_DISPATCH_HELD'});
+  assert.equal((await owner.query("select state from provider_spend_reservations where id='expires'")).rows[0].state,'reserved');
  });
  it('runtime cannot edit policy/cohort/delete ledger, unsafe superuser pool denied',async()=>{
   await assert.rejects(runtime.query('update provider_spend_policy set enabled=true'),{code:'42501'});await assert.rejects(runtime.query('delete from provider_spend_reservations'),{code:'42501'});
