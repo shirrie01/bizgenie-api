@@ -31,9 +31,15 @@ function isDraftWorkflowWrite(method,path){
 }
 const IDENTITY=/^\/customer\/workspace(?:\/(?:bootstrap|select|brands))?$/;
 const PRIVATE_HEADERS=['x-serverless-authorization','x-admin-key','x-api-key','proxy-authorization'];
+const FOUNDER_ID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+function validFounderId(value){return typeof value==='string'&&value.length===36&&FOUNDER_ID.test(value);}
+function founderWrite(method,url){return (method==='POST'&&url==='/customer/workspace/bootstrap')||(method==='PUT'&&['/customer/workspace/onboarding','/customer/workspace/brand-brain'].includes(url));}
 function config(input){
  const c={maxRequests:60,maxIdentities:10000,maxConcurrent:8,timeoutMs:30000,...input};
  if(c.environment!=='staging'||!/^bizgenie-api-staging-[0-9]{5}-[a-z0-9]{3}$/.test(c.revision||'')||!c.reviewRef||!/^[a-f0-9]{40}$/.test(c.sourceSha||''))throw Error('Reviewed staging target required');
+ if(c.allowFounderOnboarding!==undefined&&typeof c.allowFounderOnboarding!=='boolean')throw Error('Explicit founder permission required');
+ if(c.founderAuthUserId!==undefined&&!validFounderId(c.founderAuthUserId))throw Error('Valid founder configuration required');
+ if(c.allowFounderOnboarding===true&&(!validFounderId(c.founderAuthUserId)||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false)))throw Error('Isolated founder permission required');
  const u=new URL(c.upstream),a=new URL(c.audience);
  if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
  for(const [key,lo,hi] of [['maxRequests',1,600],['maxIdentities',1,10000],['maxConcurrent',1,32],['timeoutMs',100,30000]])if(!Number.isInteger(c[key])||c[key]<lo||c[key]>hi)throw Error('Bounded bridge limits required');
@@ -58,7 +64,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(requested.some(x=>!['authorization','content-type','range'].includes(x)))return failure(res,403,'HEADERS_FORBIDDEN');
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
-  if(!['GET','HEAD'].includes(req.method)&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(!['GET','HEAD'].includes(req.method)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
   if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true)return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
   if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true)return failure(res,403,'SOCIAL_WRITES_DISABLED');
@@ -68,7 +74,9 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
  app.use(async(req,res,next)=>{
   try{const match=/^Bearer ([^\s]+)$/.exec(req.header('authorization')||'');if(!match)throw new AuthenticationRequiredError();
    const actor=await bounded(IDENTITY.test(req.path)?tokenVerifier.verifyIdentityAccessToken(match[1]):tokenVerifier.verifyAccessToken(match[1]),res.locals.controller.signal);
-   if(actor?.kind!=='customer'||!actor.auth_user_id)throw new AuthenticationRequiredError();res.locals.actor=actor;res.locals.customerToken=match[1];
+   if(actor?.kind!=='customer'||!actor.auth_user_id)throw new AuthenticationRequiredError();
+   if(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl)&&actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
+   res.locals.actor=actor;res.locals.customerToken=match[1];
    const at=now();for(const [id,w]of windows)if(at>=w.until)windows.delete(id);let w=windows.get(actor.auth_user_id);
    if(!w){if(windows.size>=c.maxIdentities)return failure(res,429,'BRIDGE_RATE_LIMITED');w={until:at+60000,used:0};windows.set(actor.auth_user_id,w);}
    if(++w.used>c.maxRequests)return failure(res,429,'BRIDGE_RATE_LIMITED');
