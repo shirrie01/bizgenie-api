@@ -75,11 +75,11 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
   try{const match=/^Bearer ([^\s]+)$/.exec(req.header('authorization')||'');if(!match)throw new AuthenticationRequiredError();
    const actor=await bounded(IDENTITY.test(req.path)?tokenVerifier.verifyIdentityAccessToken(match[1]):tokenVerifier.verifyAccessToken(match[1]),res.locals.controller.signal);
    if(actor?.kind!=='customer'||!actor.auth_user_id)throw new AuthenticationRequiredError();
-   if(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl)&&actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
    res.locals.actor=actor;res.locals.customerToken=match[1];
    const at=now();for(const [id,w]of windows)if(at>=w.until)windows.delete(id);let w=windows.get(actor.auth_user_id);
    if(!w){if(windows.size>=c.maxIdentities)return failure(res,429,'BRIDGE_RATE_LIMITED');w={until:at+60000,used:0};windows.set(actor.auth_user_id,w);}
    if(++w.used>c.maxRequests)return failure(res,429,'BRIDGE_RATE_LIMITED');
+   if(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl)&&actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });

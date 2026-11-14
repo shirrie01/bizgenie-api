@@ -47,3 +47,23 @@ test('server entrypoint wires explicit environment permission; default remains c
  assert.throws(()=>fromEnv({...env,BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING:'true'}));
  assert.throws(()=>fromEnv({...env,BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING:'true',BG_BRIDGE_FOUNDER_AUTH_USER_ID:founder,BG_BRIDGE_ALLOW_WRITES:'true'}));
 });
+for(const [method,path] of writes)test(`verified non-founder ${method} ${path} consumes the identity rate allowance before denial`,async()=>{
+ const k=kit({maxRequests:1});
+ const first=await call(k,method,path,'other');assert.equal(first.status,403);assert.equal(first.body.error.code,'STAGING_WRITES_DISABLED');
+ const excess=await call(k,method,path,'other');assert.equal(excess.status,429);assert.equal(excess.body.error.code,'BRIDGE_RATE_LIMITED');
+ assert.equal((await call(k,'GET','/customer/workspace','other')).status,429,'writes and reads share the same identity budget');
+ assert.equal(k.iam.length,0);assert.equal(k.calls.length,0);
+ // Denied identity cannot exhaust the founder identity's independent allowance.
+ assert.equal((await call(k,method,path,'founder')).status,200);
+ const founderExcess=await call(k,method,path,'founder');assert.equal(founderExcess.status,429);assert.equal(founderExcess.body.error.code,'BRIDGE_RATE_LIMITED');
+ assert.equal(k.iam.length,1);assert.equal(k.calls.length,1);
+});
+test('unauthenticated and unrelated denied writes do not acquire or exhaust a verified identity budget',async()=>{
+ const k=kit({maxRequests:1});
+ for(const [method,path]of writes)for(const token of [null,'expired'])assert.equal((await call(k,method,path,token)).status,401);
+ for(let i=0;i<2;i++){const denied=await call(k,'POST','/customer/workspace/select','founder');assert.equal(denied.status,403);assert.equal(denied.body.error.code,'STAGING_WRITES_DISABLED');}
+ assert.equal(k.iam.length,0);assert.equal(k.calls.length,0);
+ assert.equal((await call(k,...writes[0],'founder')).status,200);
+ assert.equal((await call(k,...writes[0],'founder')).status,429);
+ assert.equal(k.iam.length,1);assert.equal(k.calls.length,1);
+});
