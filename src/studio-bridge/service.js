@@ -40,13 +40,14 @@ function config(input){
  if(c.allowFounderOnboarding!==undefined&&typeof c.allowFounderOnboarding!=='boolean')throw Error('Explicit founder permission required');
  if(c.founderAuthUserId!==undefined&&!validFounderId(c.founderAuthUserId))throw Error('Valid founder configuration required');
  if(c.allowFounderOnboarding===true&&(!validFounderId(c.founderAuthUserId)||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false)))throw Error('Isolated founder permission required');
- if(c.founderVideo!==undefined){c.founderVideo=require('../provider-spend/founderVideo').binding(c.founderVideo);if(c.allowFounderOnboarding===true&&c.founderAuthUserId!==c.founderVideo.auth_user_id||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]===true))throw Error('Isolated founder video permission required');}
+ if(c.founderVideo!==undefined){c.founderVideo=require('../provider-spend/founderVideo').binding(c.founderVideo);if(c.allowFounderOnboarding===true&&c.founderAuthUserId!==c.founderVideo.auth_user_id||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false))throw Error('Isolated founder video permission required');}
  const u=new URL(c.upstream),a=new URL(c.audience);
  if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
  for(const [key,lo,hi] of [['maxRequests',1,600],['maxIdentities',1,10000],['maxConcurrent',1,32],['timeoutMs',100,30000]])if(!Number.isInteger(c[key])||c[key]<lo||c[key]>hi)throw Error('Bounded bridge limits required');
  return {...c,upstream:u.origin,audience:a.origin};
 }
-function videoConfirmation(c,method,url){return !!c.founderVideo&&method==='POST'&&url===`/customer/generation-quotes/${c.founderVideo.quote_id}/confirm`;}
+function videoConfirmation(c,method,url){return !!c.founderVideo&&method==='POST'&&new RegExp('^/customer/generation-quotes/'+UUID+'/confirm$').test(url);}
+function videoWrite(c,method,url){return videoConfirmation(c,method,url)||!!c.founderVideo&&method==='POST'&&url==='/customer/generation-quotes';}
 function route(method,path){return routes.some(r=>r.methods.has(method)&&r.path.test(path));}
 function bounded(promise,signal){return new Promise((resolve,reject)=>{const abort=()=>reject(Error('Request aborted'));if(signal.aborted)return abort();signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));});}
 function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=globalThis.fetch,now=()=>Date.now()}){
@@ -66,7 +67,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(requested.some(x=>!['authorization','content-type','range'].includes(x)))return failure(res,403,'HEADERS_FORBIDDEN');
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
-  if(!['GET','HEAD'].includes(req.method)&&!videoConfirmation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(!['GET','HEAD'].includes(req.method)&&!videoWrite(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
   if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true&&!videoConfirmation(c,req.method,req.originalUrl))return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
   if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true)return failure(res,403,'SOCIAL_WRITES_DISABLED');
@@ -82,7 +83,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(!w){if(windows.size>=c.maxIdentities)return failure(res,429,'BRIDGE_RATE_LIMITED');w={until:at+60000,used:0};windows.set(actor.auth_user_id,w);}
    if(++w.used>c.maxRequests)return failure(res,429,'BRIDGE_RATE_LIMITED');
    if(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl)&&actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
-   if(videoConfirmation(c,req.method,req.originalUrl)&&(!require('../provider-spend/founderVideo').matches(c.founderVideo,{...actor.trusted_scope,auth_user_id:actor.auth_user_id,quote_id:c.founderVideo.quote_id})))return failure(res,403,'STAGING_WRITES_DISABLED');
+   if(videoWrite(c,req.method,req.originalUrl)&&(!require('../provider-spend/founderVideo').identityMatches(c.founderVideo,{...actor.trusted_scope,auth_user_id:actor.auth_user_id})))return failure(res,403,'STAGING_WRITES_DISABLED');
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });
@@ -94,6 +95,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    let body=req.body;const isBytes=/\/assets\/uploads\//.test(req.path)&&req.method==='PUT';
    if(!isBytes&&body?.length){if(body.length>(req.path.startsWith('/customer/generation-quotes')?16384:102400))return failure(res,413,'BRIDGE_REQUEST_TOO_LARGE');if(!/^application\/json(?:;|$)/i.test(req.header('content-type')||''))return failure(res,415,'JSON_REQUIRED');try{body=JSON.parse(body.toString('utf8'));}catch{return failure(res,400,'VALIDATION_ERROR');}if(!body||typeof body!=='object'||Array.isArray(body))return failure(res,400,'VALIDATION_ERROR');}
    if(req.path==='/billing/stripe/checkout'&&!CheckoutBridgeSchema.safeParse(body).success)return failure(res,400,'STRIPE_BILLING_VALIDATION_ERROR');
+   if(c.founderVideo&&req.method==='POST'&&req.originalUrl==='/customer/generation-quotes'&&(body?.campaign_id!==c.founderVideo.campaign_id||body?.variant_id!==c.founderVideo.variant_id||body?.execution_class!=='video.normal'||body?.execution_mode!==undefined&&body.execution_mode!=='ai'||body?.supplied_assets?.length))return failure(res,403,'STAGING_WRITES_DISABLED');
    const scope=res.locals.actor.trusted_scope;
    if(!IDENTITY.test(req.path))for(const key of ['tenant_id','project_id','brand_id']){
     const values=[req.query[key],isBytes?undefined:body?.[key]].filter(v=>v!==undefined);
