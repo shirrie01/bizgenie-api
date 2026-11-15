@@ -45,7 +45,9 @@ Existing bridge entrypoint: Dockerfile.studio-bridge, non-root, node scripts/sta
 ```sh
 # FUTURE APPROVED ARTIFACT OPERATION ONLY. Verify these supplied values first.
 git archive "$REVIEWED_ACCEPTED_SOURCE_SHA" | docker build -f Dockerfile.studio-bridge -t "$APPROVED_STAGING_IMAGE_TAG" -
-# Run existing CI/container security smoke contract, then ONLY with publication approval:
+# Run the existing reviewed synthetic container contract (no host port/IAM/provider calls):
+git show "$REVIEWED_ACCEPTED_SOURCE_SHA:scripts/staging/smoke-studio-bridge.sh" | bash -s -- "$APPROVED_STAGING_IMAGE_TAG"
+# Then ONLY with publication approval:
 docker push "$APPROVED_STAGING_IMAGE_TAG"
 docker image inspect "$APPROVED_STAGING_IMAGE_TAG" --format '{{json .RepoDigests}}'
 ```
