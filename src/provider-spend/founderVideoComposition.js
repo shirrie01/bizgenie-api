@@ -2,9 +2,9 @@
 const {FounderVideoSpend,binding,matches}=require('./founderVideo');
 const {createFencedWorkerScope}=require('./fencedWorkerScope');
 const {SpendError}=require('./index');
-function createFounderVideoAcceptance({environment,founder,pool,enabled=false}={}){
+function createFounderVideoAcceptance({environment,founder,pool,enabled=false,policyVersion}={}){
  if(environment!=='staging')throw new SpendError('FOUNDER_VIDEO_STAGING_REQUIRED');
- const approved=binding(founder),spend=new FounderVideoSpend({founder:approved,pool,enabled});
+ const approved=binding(founder),spend=new FounderVideoSpend({founder:approved,pool,enabled,policyVersion});
  return Object.freeze({
   quoteOptions:Object.freeze({founderVideo:approved}),
   bridgeOptions:Object.freeze({founderVideo:approved}),

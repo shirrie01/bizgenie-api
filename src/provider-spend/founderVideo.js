@@ -25,7 +25,8 @@ function assertQuote(b,actor,q){
 function scopePrefix(b){return PREFIX+hash([b.auth_user_id,b.tenant_id])+':';}
 function operationId(b,input){return scopePrefix(b)+input.job.quote_id+':'+hash([input.operation,input.operation===SUBMIT?'submit':input.job.observation_id]);}
 class FounderVideoSpend extends MonthlyProviderSpend{
- constructor({founder,...options}={}){super(options);this.founder=binding(founder);}
+ constructor({founder,policyVersion,...options}={}){super(options);this.founder=binding(founder);this.policyVersion=policyVersion;}
+ async policy(client){const p=await super.policy(client);if(this.policyVersion!==undefined&&p.version!==this.policyVersion)throw new SpendError('PROVIDER_SPEND_POLICY_UNAVAILABLE');return p;}
  validateInput(input){
   const j=input?.job,b=this.founder;
   if(!matches(b,j)||!uuid(j.quote_id)||j.job_id!==`quoted:${j.quote_id}`||!video(j)||![SUBMIT,RECONCILE].includes(input.operation)||input.tenantId!==b.tenant_id||input.operation===RECONCILE&&(!uuid(j.claim_token)||!Number.isSafeInteger(j.fence)||j.fence<1||typeof j.observation_id!=='string'||!Number.isFinite(Date.parse(j.observation_id))))throw new SpendError('FOUNDER_VIDEO_FORBIDDEN');

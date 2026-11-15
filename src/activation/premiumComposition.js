@@ -29,8 +29,10 @@ async function createPremiumComposition({
   toolchainCheck = require("../media/toolchainSelfTest").runToolchainSelfTest, // test seam only; not reachable from the environment
   mediaInspector = null, connectors = null, workflowStageHandlerFactory = null,
   socialKeyProvider = null, socialFetch = undefined,
+  founderVideoSpendPool = null,
   providerSpend = null, providerSpendOperations = null, // Server-owned only; never loaded from customer input or enabled by a daily budget.
 } = {}) {
+  const founderConfig=require('../provider-spend/founderVideoConfig').apiVideoConfig(env);
   let unscannedAccepted = false;
   const flags = Object.fromEntries(FLAGS.map((name) => [name, activationFlag(env, name)]));
   const enabled = Object.values(flags).some(Boolean);
@@ -38,10 +40,13 @@ async function createPremiumComposition({
     enabled: false, flags, capabilities: Object.freeze({}), generationQuoteService: null, generationExecutionPolicy: null, mediaIntakeService: null,
     socialPublishingService: null, learningService: null, strategyWorkflowService: null, generationWorker: null, jobs: null, describe: () => ({ enabled: false, flags }),
   });
+  if(founderConfig)need(flags.QUOTED_GENERATION_ENABLED&&!providerSpend&&!providerSpendOperations,'Founder video requires isolated quoted composition');
   if (!enabled) return off;
   requireActivationEnvironment(env);
   need(pool && billing?.billingRepository && brandBrainRepository, "Premium composition requires the database pool, billing and Brand Brain");
   const billingRepository = billing.billingRepository;
+  if(founderConfig)need(media?.videoEnabled===true&&!media?.imageEnabled&&media?.mediaEnabled===true,'Founder video requires isolated durable video media');
+  const founderAcceptance=await require('../provider-spend/founderVideoRuntime').createFounderVideoRuntime({config:founderConfig,applicationPool:pool,spendPool:founderVideoSpendPool});
 
   const { GenerationExecutionPolicy } = require("../generation-quotes/executionPolicy");
   const { PostgresGenerationQuoteService } = require("../generation-quotes/service");
@@ -61,10 +66,10 @@ async function createPremiumComposition({
       const duration = positiveInt(env, "VIDEO_DURATION_SECONDS", 4); need([4, 6, 8].includes(duration), "VIDEO_DURATION_SECONDS must be 4, 6 or 8");
       const aspect = env.VIDEO_ASPECT_RATIO || "9:16"; need(["9:16", "16:9"].includes(aspect), "VIDEO_ASPECT_RATIO must be 9:16 or 16:9");
       profiles["video.normal"] = { id: "veo.normal", version: 1, provider_model: modelForQuality("normal"), aspect_ratio: aspect, duration_seconds: duration };
-      profiles["video.premium"] = { id: "veo.premium", version: 1, provider_model: modelForQuality("premium"), aspect_ratio: aspect, duration_seconds: duration };
+      if(!founderAcceptance)profiles["video.premium"] = { id: "veo.premium", version: 1, provider_model: modelForQuality("premium"), aspect_ratio: aspect, duration_seconds: duration };
     }
     need(Object.keys(profiles).length > 0, "QUOTED_GENERATION_ENABLED needs at least one generation capability (TEXT_GENERATION_MODEL, IMAGE_GENERATION_ENABLED or VIDEO_GENERATION_ENABLED)");
-    generationQuoteService = new PostgresGenerationQuoteService({ billingRepository, profiles, now });
+    generationQuoteService = new PostgresGenerationQuoteService({ billingRepository, profiles, now, ...(founderAcceptance?.quoteOptions||{}) });
     generationExecutionPolicy = new GenerationExecutionPolicy({ mode: "quoted_v1", quoteService: generationQuoteService });
 
     const { ExistingTextGenerationAdapter } = require("../generation-quotes/textAdapter");
@@ -97,7 +102,8 @@ async function createPremiumComposition({
     }
     const router = new QuotedExecutionRouter({ jobs, executionPolicy: generationExecutionPolicy, text, creative });
     generationWorker = new FencedGenerationWorker({ quoteService: generationQuoteService, provider: router, executionPolicy: generationExecutionPolicy });
-    if (providerSpend || providerSpendOperations) {
+    if(founderAcceptance)generationWorker.providerScope=founderAcceptance.providerScopeFor(generationWorker,founderAcceptance.operationsForRow);
+    else if (providerSpend || providerSpendOperations) {
       need(providerSpend && typeof providerSpendOperations === 'function', 'Monthly provider spend requires both approved durable ledger and operation authority');
       generationWorker.providerScope = require('../provider-spend/fencedWorkerScope').createFencedWorkerScope({worker:generationWorker,spend:providerSpend,operationsForRow:providerSpendOperations});
     }
