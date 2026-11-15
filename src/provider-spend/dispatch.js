@@ -19,7 +19,7 @@ async function admitProviderDispatch(operation, dispatch) {
   try { current=await s.resolveJob(s.job,operation); } catch { throw new SpendError('PROVIDER_EXECUTION_AUTHORITY_UNAVAILABLE'); }
   if (!current || !states.includes(current.state) || required.some(k=>current[k]!==s.job[k]) || current.cancelled || current.revoked) throw new SpendError('PROVIDER_EXECUTION_AUTHORITY_STALE');
   // Different requests cannot use random retry IDs: the operator-owned operation ID is stable per job/stage.
-  return s.spend.executePaid({id:'dispatch:'+createHash('sha256').update(JSON.stringify([s.job.job_id,operation])).digest('hex'),tenantId:s.job.tenant_id,operation,estimateVersion:approved.estimateVersion,currency:'GBP'},async()=>{
+  return s.spend.executePaid({id:'dispatch:'+createHash('sha256').update(JSON.stringify([s.job.job_id,operation])).digest('hex'),tenantId:s.job.tenant_id,operation,estimateVersion:approved.estimateVersion,currency:'GBP',job:s.job},async()=>{
     let latest;
     try { latest=await s.resolveJob(s.job,operation); } catch { throw new SpendError('PROVIDER_EXECUTION_AUTHORITY_UNAVAILABLE'); }
     if (!latest || !states.includes(latest.state) || required.some(k=>latest[k]!==s.job[k]) || latest.cancelled || latest.revoked) throw new SpendError('PROVIDER_EXECUTION_AUTHORITY_STALE');

@@ -20,7 +20,7 @@ function createFencedWorkerScope({ worker, spend, operationsForRow }) {
     }
     const row=await load();
     const identity=r=>({job_id:r.job_id,tenant_id:r.tenant_id,project_id:r.project_id,brand_id:r.brand_id,
-      claim_token:r.claim_token,fence:Number(r.fence),state:r.state});
+      claim_token:r.claim_token,fence:Number(r.fence),state:r.state,auth_user_id:r.auth_user_id,quote_id:r.quote_id,execution_class:r.request.execution_class,profile:r.profile,request:r.request});
     return withProviderJob({spend,job:identity(row),operations:await operationsForRow(row),resolveJob:async()=>identity(await load())},dispatch);
   };
 }
