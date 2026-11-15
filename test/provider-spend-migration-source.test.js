@@ -1,0 +1,4 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
+test('migration source is empty-by-default, additive and runtime least-privilege; never executed by this test',()=>{
+ const s=fs.readFileSync('supabase/migrations/20261115120000_create_provider_spend_ledger.sql','utf8');assert.equal((s.match(/create table public\.provider_spend_/g)||[]).length,3);assert.match(s,/begin;/);assert.match(s,/commit;/);assert.match(s,/cap_minor=10000/);assert.match(s,/customer_slot between 1 and 10/);assert.equal((s.match(/force row level security/g)||[]).length,3);assert.match(s,/nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls/);assert.match(s,/already exists: reconcile/);assert.doesNotMatch(s,/\b(insert into|update public|delete from|drop table|truncate table)\b/i);assert.doesNotMatch(s,/grant .*delete.* to bizgenie_provider_spend_runtime/i);assert.match(s,/\['anon','authenticated','service_role'\]/);
+});
