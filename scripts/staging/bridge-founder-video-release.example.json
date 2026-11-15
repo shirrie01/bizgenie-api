@@ -88,7 +88,7 @@
     "cap_minor": 10000,
     "customer_limit": 10,
     "acceptance_cap_minor": 500,
-    "max_status_observations": 4,
+    "max_status_observations": 10,
     "submit": "UNRESOLVED_VERIFIED_SUBMIT_ESTIMATE",
     "status": "UNRESOLVED_VERIFIED_STATUS_ESTIMATE"
   }

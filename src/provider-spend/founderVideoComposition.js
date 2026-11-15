@@ -2,14 +2,15 @@
 const {FounderVideoSpend,binding,matches}=require('./founderVideo');
 const {createFencedWorkerScope}=require('./fencedWorkerScope');
 const {SpendError}=require('./index');
-function createFounderVideoAcceptance({environment,founder,pool,enabled=false,policyVersion}={}){
+function createFounderVideoAcceptance({environment,founder,pool,enabled=false,policyVersion,minStatusIntervalMs}={}){
  if(environment!=='staging')throw new SpendError('FOUNDER_VIDEO_STAGING_REQUIRED');
- const approved=binding(founder),spend=new FounderVideoSpend({founder:approved,pool,enabled,policyVersion});
+ const approved=binding(founder),spend=new FounderVideoSpend({founder:approved,pool,enabled,policyVersion,minStatusIntervalMs});
  return Object.freeze({
   quoteOptions:Object.freeze({founderVideo:approved}),
   bridgeOptions:Object.freeze({founderVideo:approved}),
   providerScopeFor(worker,operationsForRow){
    if(!matches(approved,worker?.quotes?.founderVideo))throw new SpendError('FOUNDER_VIDEO_BINDING_REQUIRED');
+   worker.statusPollMinIntervalMs=spend.minStatusIntervalMs;
    return createFencedWorkerScope({worker,spend,operationsForRow});
   },
  });

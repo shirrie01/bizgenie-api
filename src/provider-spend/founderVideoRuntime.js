@@ -24,11 +24,11 @@ async function createFounderVideoRuntime({config,applicationPool,spendPool}={}){
  if(!applicationPool||!spendPool)throw new SpendError('FOUNDER_VIDEO_SPEND_POOL_REQUIRED');
  try{
  // Same binding and pinned policy feed quote service, bridge review and worker transport scope.
- const acceptance=createFounderVideoAcceptance({environment:'staging',founder:config.founder,pool:spendPool,enabled:true,policyVersion:config.policyVersion});
+ const acceptance=createFounderVideoAcceptance({environment:'staging',founder:config.founder,pool:spendPool,enabled:true,policyVersion:config.policyVersion,minStatusIntervalMs:config.minStatusIntervalMs});
  const database=(await applicationPool.query('select current_database() as database_name')).rows[0]?.database_name;
  // Use the actual monthly ledger's schema/privilege checks and aggregate lock; no writes.
  const {FounderVideoSpend}=require('./founderVideo');
- const spend=new FounderVideoSpend({founder:config.founder,pool:spendPool,enabled:true,policyVersion:config.policyVersion});
+ const spend=new FounderVideoSpend({founder:config.founder,pool:spendPool,enabled:true,policyVersion:config.policyVersion,minStatusIntervalMs:config.minStatusIntervalMs});
  await spend.transaction(async client=>{
   const role=(await client.query("select current_database() as database_name,current_user as role,r.rolsuper,r.rolbypassrls,r.rolcreaterole,r.rolcreatedb,exists(select 1 from pg_auth_members m where m.member=r.oid) as has_memberships from pg_roles r where r.rolname=current_user")).rows[0];
   if(!database||role?.database_name!==database||role.role!=='bizgenie_provider_spend_runtime'||role.rolsuper!==false||role.rolbypassrls!==false||role.rolcreaterole!==false||role.rolcreatedb!==false||role.has_memberships!==false)throw new SpendError('FOUNDER_VIDEO_RUNTIME_ROLE_UNSAFE');

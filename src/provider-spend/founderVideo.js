@@ -6,7 +6,8 @@ const MODEL='veo-3.1-fast-generate-001';
 const SUBMIT=`vertex.video.${MODEL}.submit.4.720p.false`;
 const RECONCILE=`vertex.video.${MODEL}.reconcile.status.status.false`;
 const PREFIX='founder-video-acceptance-01:';
-const MAX_STATUS_OBSERVATIONS=4;
+const MAX_STATUS_OBSERVATIONS=10;
+const MIN_STATUS_INTERVAL_MS=25000;
 const identityKeys=['auth_user_id','tenant_id','project_id','brand_id'];
 const keys=[...identityKeys,'campaign_id','variant_id'];
 const valid=v=>typeof v==='string'&&/^[A-Za-z0-9_.:-]{1,100}$/.test(v);
@@ -25,7 +26,7 @@ function assertQuote(b,actor,q){
 function scopePrefix(b){return PREFIX+hash([b.auth_user_id,b.tenant_id])+':';}
 function operationId(b,input){return scopePrefix(b)+input.job.quote_id+':'+hash([input.operation,input.operation===SUBMIT?'submit':input.job.observation_id]);}
 class FounderVideoSpend extends MonthlyProviderSpend{
- constructor({founder,policyVersion,...options}={}){super(options);this.founder=binding(founder);this.policyVersion=policyVersion;}
+ constructor({founder,policyVersion,minStatusIntervalMs=MIN_STATUS_INTERVAL_MS,...options}={}){super(options);if(!Number.isSafeInteger(minStatusIntervalMs)||minStatusIntervalMs<MIN_STATUS_INTERVAL_MS||minStatusIntervalMs>300000)throw new SpendError('FOUNDER_VIDEO_POLL_INTERVAL_INVALID');this.founder=binding(founder);this.policyVersion=policyVersion;this.minStatusIntervalMs=minStatusIntervalMs;}
  async policy(client){const p=await super.policy(client);if(this.policyVersion!==undefined&&p.version!==this.policyVersion)throw new SpendError('PROVIDER_SPEND_POLICY_UNAVAILABLE');return p;}
  validateInput(input){
   const j=input?.job,b=this.founder;
@@ -47,11 +48,16 @@ class FounderVideoSpend extends MonthlyProviderSpend{
   this.validateInput(input);
   const b=this.founder,j=input.job;
   if(input.id!==operationId(b,input))throw new SpendError('FOUNDER_VIDEO_FORBIDDEN');
-  const e=p.estimates[input.operation],a=e?.authority;
-  if(!e||e.version!==input.estimateVersion||!approvedEstimate(e,p.db_now)||!valid(a?.pricing_source_ref)||!valid(a?.pricing_version)||a?.pricing_unit!==(input.operation===SUBMIT?'second':'request')||!Number.isFinite(Date.parse(a?.pricing_valid_until))||Date.parse(a.pricing_valid_until)<=p.db_now.getTime())throw new SpendError('FOUNDER_VIDEO_PRICE_UNVERIFIED');
+  const e=p.estimates[input.operation];
+  for(const operation of [SUBMIT,RECONCILE]){
+   const estimate=p.estimates[operation],a=estimate?.authority;
+   if(!estimate||!valid(estimate.version)||!valid(estimate.source_ref)||!approvedEstimate(estimate,p.db_now)||!(Date.parse(estimate.valid_until)>p.db_now.getTime())||!valid(a?.pricing_source_ref)||!valid(a?.pricing_version)||a?.pricing_unit!==(operation===SUBMIT?'second':'request')||!(Date.parse(a?.pricing_valid_until)>p.db_now.getTime()))throw new SpendError('FOUNDER_VIDEO_PRICE_UNVERIFIED');
+  }
+  if(e.version!==input.estimateVersion)throw new SpendError('FOUNDER_VIDEO_PRICE_UNVERIFIED');
+  if(p.estimates[SUBMIT].upper_bound_minor+MAX_STATUS_OBSERVATIONS*p.estimates[RECONCILE].upper_bound_minor>500)throw new SpendError('FOUNDER_VIDEO_CAP_EXHAUSTED');
   // Same global transaction lock as the unchanged £100 monthly cap. Never release lifetime exposure.
   const prefix=scopePrefix(b);
-  const rows=(await client.query('select id,tenant_id,operation,bound_minor,state,evidence_ref from public.provider_spend_reservations where left(id,$1)=$2',[prefix.length,prefix])).rows;
+  const rows=(await client.query('select id,tenant_id,operation,bound_minor,state,evidence_ref,updated_at from public.provider_spend_reservations where left(id,$1)=$2',[prefix.length,prefix])).rows;
   if(rows.some(r=>!r.id.startsWith(prefix+j.quote_id+':')||r.tenant_id!==b.tenant_id))throw new SpendError('FOUNDER_VIDEO_ALREADY_BOUND');
   const prior=rows.find(r=>r.id===input.id),statuses=rows.filter(r=>r.operation===RECONCILE);
   // A fresh status observation requires a prior submit and all previous observations to have
@@ -62,8 +68,15 @@ class FounderVideoSpend extends MonthlyProviderSpend{
    if(!prior&&submit.evidence_ref!=='founder.video.http_response')throw new SpendError('FOUNDER_VIDEO_OBSERVATION_HELD');
    if(!prior&&statuses.some(r=>r.state==='dispatching'||r.evidence_ref!=='founder.video.http_response'))throw new SpendError('FOUNDER_VIDEO_OBSERVATION_HELD');
    if(!prior&&statuses.length>=MAX_STATUS_OBSERVATIONS)throw new SpendError('FOUNDER_VIDEO_POLL_LIMIT');
+   if(!prior){
+    const timestamps=[submit,...statuses].map(r=>new Date(r.updated_at).getTime());
+    const dbNow=p.db_now instanceof Date?p.db_now.getTime():NaN;
+    if(!Number.isFinite(dbNow)||timestamps.some(t=>!Number.isFinite(t)))throw new SpendError('FOUNDER_VIDEO_OBSERVATION_HELD');
+    const remaining=Math.max(...timestamps)+this.minStatusIntervalMs-dbNow;
+    if(remaining>0){const error=new SpendError('FOUNDER_VIDEO_POLL_NOT_DUE');error.retryAfterMs=remaining;throw error;}
+   }
   }
   if(rows.reduce((sum,r)=>sum+BigInt(r.bound_minor),0n)+(prior?0n:BigInt(e.upper_bound_minor))>500n)throw new SpendError('FOUNDER_VIDEO_CAP_EXHAUSTED');
  }
 }
-module.exports={FounderVideoSpend,binding,matches,identityMatches,assertQuote,scopePrefix,SUBMIT,RECONCILE,MODEL,MAX_STATUS_OBSERVATIONS};
+module.exports={FounderVideoSpend,binding,matches,identityMatches,assertQuote,scopePrefix,SUBMIT,RECONCILE,MODEL,MAX_STATUS_OBSERVATIONS,MIN_STATUS_INTERVAL_MS};

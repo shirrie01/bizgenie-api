@@ -32,7 +32,7 @@ test('runtime validates actual effective role and policy/cohort using read-only 
 test('premium API composition connects founder quote guard to fenced worker transport and refuses missing dependencies',async()=>{
  const env=apiEnv(),pools=mockPools();
  const args={env,pool:pools.applicationPool,founderVideoSpendPool:pools.spendPool,billing:{billingRepository:{pool:pools.applicationPool}},brandBrainRepository:{},videoGenerationRepository:{},media:{videoEnabled:true,imageEnabled:false,mediaEnabled:true,videoProvider:{},videoAssetStore:{},videoReferenceAssetLoader:{},mediaAssetRepository:{}},logger:{log(){}}};
- const premium=await createPremiumComposition(args);assert.deepEqual(premium.generationQuoteService.founderVideo,binding);assert.equal(premium.generationWorker.quotes,premium.generationQuoteService);assert.equal(typeof premium.generationWorker.providerScope,'function');assert.deepEqual(Object.keys(premium.generationQuoteService.profiles),['video.normal']);
+ const premium=await createPremiumComposition(args);assert.deepEqual(premium.generationQuoteService.founderVideo,binding);assert.equal(premium.generationWorker.quotes,premium.generationQuoteService);assert.equal(typeof premium.generationWorker.providerScope,'function');assert.equal(premium.generationWorker.statusPollMinIntervalMs,25000);assert.deepEqual(Object.keys(premium.generationQuoteService.profiles),['video.normal']);
  for(const change of [{founderVideoSpendPool:null},{providerSpend:{}},{env:{...env,FOUNDER_VIDEO_TENANT_ID:undefined}},{media:{...args.media,imageEnabled:true}}])await assert.rejects(createPremiumComposition({...args,...change}));
 });
 test('API startup rejects incomplete founder opt-in before database creation or secret lookup',async()=>{
