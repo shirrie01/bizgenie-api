@@ -56,10 +56,13 @@ class MonthlyProviderSpend {
     if ((await client.query('select 1 from public.provider_spend_reservations where month>$1 limit 1',[p.month])).rowCount) deny('PROVIDER_SPEND_CLOCK_UNSAFE');
     return p;
   }
-  async reserve({ id, tenantId, operation, estimateVersion, currency = 'GBP' } = {}) {
+  async validateReservation() {} // Optional additional admission; same aggregate transaction lock.
+  async reserve(input = {}) {
+    const { id, tenantId, operation, estimateVersion, currency = 'GBP' } = input;
     if (![id,tenantId,operation,estimateVersion].every(text) || currency !== 'GBP') deny('PROVIDER_SPEND_INVALID_REQUEST');
     return this.transaction(async client => {
       const p = await this.policy(client);
+      await this.validateReservation(client, input, p);
       const cohort = await client.query(`select tenant_id from public.provider_spend_customers where active=true`);
       if (cohort.rows.length > 10 || !cohort.rows.some(r => r.tenant_id === tenantId)) deny('PROVIDER_SPEND_CUSTOMER_HOLD');
       const prior = (await client.query('select * from public.provider_spend_reservations where id=$1 for update',[id])).rows[0];
@@ -80,10 +83,12 @@ class MonthlyProviderSpend {
       return { id, state: 'reserved', month: p.month, reservedMinor: estimate.upper_bound_minor, replay: false };
     });
   }
-  async start({ id, tenantId } = {}) {
+  async start(input = {}) {
+    const { id, tenantId } = input;
     if (![id,tenantId].every(text)) deny('PROVIDER_SPEND_INVALID_REQUEST');
     return this.transaction(async client => {
       const p = await this.policy(client);
+      await this.validateReservation(client, input, p);
       const row = (await client.query('select * from public.provider_spend_reservations where id=$1 and tenant_id=$2 for update',[id,tenantId])).rows[0];
       if (!row || row.state !== 'reserved') deny('PROVIDER_SPEND_DISPATCH_HELD');
       // Recheck current operator cohort and pricing, including at a month rollover.

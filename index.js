@@ -733,6 +733,7 @@ function createApp({
 const port = process.env.PORT || 8080;
 
 async function createProductionApp({ env = process.env, logger = console } = {}) {
+  require('./src/provider-spend/founderVideoConfig').apiVideoConfig(env); // Fail before opening any pool if the opt-in is incomplete.
   const brandBrainRepository = createPostgresBrandBrainRepositoryFromEnv({
     env,
   });
@@ -786,17 +787,20 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     pool: brandBrainRepository.pool,
     env,
   });
-  const premium = await createPremiumComposition({
+  const founderVideoSpendPool=require('./src/provider-spend/founderVideoRuntime').createFounderSpendPool({env});
+  let premium;try{premium = await createPremiumComposition({
     pool: brandBrainRepository.pool,
     billing,
     media,
     brandBrainRepository,
     videoGenerationRepository,
+    founderVideoSpendPool,
     scriptGenerator: generateScriptWithVertex,
     branding: brandingConfig,
     env,
     logger,
   });
+  }catch(error){await founderVideoSpendPool?.end();throw error;}
   const stripe = createStripeProductionComposition({
     billingRepository: billing.billingRepository,
     billingService: billing.billingService,

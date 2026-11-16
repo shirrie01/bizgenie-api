@@ -1,14 +1,17 @@
 // Background loops for the premium composition (BG-LAUNCH-001). They CALL the existing services and add no business rule: credits, idempotency, fences, tenancy
 // (the owner's membership is re-checked inside claim), rights and authority all stay in FencedGenerationWorker and DurableSocialPublishing. A loop only decides WHICH
 // durable record to hand to which service method, in a bounded batch, and treats the services' own "not now" answers as normal.
-const EXPECTED = new Set(["EXECUTION_RECONCILIATION_REQUIRED", "EXECUTION_BUSY", "EXECUTION_FENCE_STALE", "RESOURCE_NOT_AVAILABLE", "WORKFLOW_CANCELLED", "SCHEDULE_NOT_DUE", "PUBLICATION_RECONCILIATION_REQUIRED", "DISPATCH_FENCE_STALE", "CONNECTION_UNAVAILABLE", "PUBLICATION_AUTHORITY_STALE"]);
+const EXPECTED = new Set(["FOUNDER_VIDEO_POLL_NOT_DUE", "EXECUTION_RECONCILIATION_REQUIRED", "EXECUTION_BUSY", "EXECUTION_FENCE_STALE", "RESOURCE_NOT_AVAILABLE", "WORKFLOW_CANCELLED", "SCHEDULE_NOT_DUE", "PUBLICATION_RECONCILIATION_REQUIRED", "DISPATCH_FENCE_STALE", "CONNECTION_UNAVAILABLE", "PUBLICATION_AUTHORITY_STALE"]);
 const codeOf = (error) => String(error?.code || error?.name || "UNKNOWN");
 
 class GenerationLoop {
   // staleClaimMs: a job still "claimed" (the provider boundary was never crossed) for this long belonged to a worker that died; it is re-claimed with a NEW fence, so the dead
   // worker can never complete it. reconcile polling backs off per job (minBackoffMs .. maxBackoffMs); a job in recovery longer than stuckAfterMs is reported, never auto-failed.
   constructor({ quoteService, worker, limit = 5, staleClaimMs = 120000, minBackoffMs = 5000, maxBackoffMs = 60000, stuckAfterMs = 6 * 3600000, now = () => new Date(), logger = console }) {
-    Object.assign(this, { quotes: quoteService, worker, limit, staleClaimMs, minBackoffMs, maxBackoffMs, stuckAfterMs, now, logger });
+    const pollInterval=worker?.statusPollMinIntervalMs;
+    if(pollInterval!==undefined&&(!Number.isSafeInteger(pollInterval)||pollInterval<25000||pollInterval>300000))throw new TypeError('Invalid founder status polling interval');
+    minBackoffMs=Math.max(minBackoffMs,pollInterval||0);maxBackoffMs=Math.max(maxBackoffMs,minBackoffMs);
+    Object.assign(this, { quotes: quoteService, worker, limit, staleClaimMs, minBackoffMs, maxBackoffMs, stuckAfterMs, now, logger, pollInterval });
     this.backoff = new Map(); this.name = "generation";
   }
   async rows(sql, params) { return (await this.quotes.billing.pool.query(sql, params)).rows; }
@@ -26,7 +29,8 @@ class GenerationLoop {
     const t = this.now().getTime();
     for (const r of await this.rows("select job_id from public.generation_execution_claims where state='queued' order by updated_at, job_id limit $1", [this.limit])) await this.execute(r.job_id, result);
     for (const r of await this.rows("select job_id from public.generation_execution_claims where state='claimed' and updated_at < $1 order by updated_at, job_id limit $2", [new Date(t - this.staleClaimMs), this.limit])) await this.execute(r.job_id, result, { resume: true });
-    const waiting = await this.rows("select job_id, updated_at from public.generation_execution_claims where state in ('calling','recovery_required') order by updated_at, job_id limit $1", [this.limit * 4]);
+    // Founder polling uses database time even on the first tick or after worker restart.
+    const waiting = await this.rows("select job_id, updated_at from public.generation_execution_claims where state in ('calling','recovery_required')"+(this.pollInterval?" and updated_at <= clock_timestamp()-($2::integer * interval '1 millisecond')":'')+" order by updated_at, job_id limit $1", this.pollInterval?[this.limit * 4,this.pollInterval]:[this.limit * 4]);
     const live = new Set(waiting.map((r) => r.job_id)); for (const id of this.backoff.keys()) if (!live.has(id)) this.backoff.delete(id);
     let polled = 0;
     for (const r of waiting) {
@@ -37,7 +41,8 @@ class GenerationLoop {
         const claim = await this.worker.reconciliationClaim(r.job_id); const outcome = await this.worker.reconcile(claim);
         result.reconciled += 1; this.backoff.delete(r.job_id); void outcome;
       } catch (error) {
-        if (codeOf(error) === "EXECUTION_RECONCILIATION_REQUIRED") { result.stillPending += 1; this.backoff.set(r.job_id, { next: t + state.wait, wait: Math.min(this.maxBackoffMs, Math.round(state.wait * 1.6)) }); } else this.note(result, error);
+        if(codeOf(error)==="FOUNDER_VIDEO_POLL_NOT_DUE"){result.skipped+=1;this.backoff.set(r.job_id,{next:t+Math.max(this.minBackoffMs,Number.isSafeInteger(error.retryAfterMs)?error.retryAfterMs:0),wait:state.wait});}
+        else if (codeOf(error) === "EXECUTION_RECONCILIATION_REQUIRED") { result.stillPending += 1; this.backoff.set(r.job_id, { next: t + state.wait, wait: Math.min(this.maxBackoffMs, Math.round(state.wait * 1.6)) }); } else this.note(result, error);
       }
     }
     if (result.stuck) this.logger.warn?.("generation jobs in recovery beyond the alert age", result.stuck);
