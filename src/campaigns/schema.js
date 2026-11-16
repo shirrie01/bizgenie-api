@@ -54,7 +54,7 @@ const payloads = Object.fromEntries(Object.entries({
   update_campaign_details:{name,display_timezone:zone},rename_content_item:{content_item_id:uuid,name},
   archive_content_item:{content_item_id:uuid,reason},restore_content_item:{content_item_id:uuid,reason},
   archive_campaign:{reason},restore_campaign:{reason},
-  save_revision:{variant_id:uuid,content,change_reason:reason,brand_snapshot_id:uuid.optional(),capture_current_brand:z.boolean().optional()},
+  save_revision:{variant_id:uuid,content,change_reason:reason,expected_revision_id:uuid.optional(),brand_snapshot_id:uuid.optional(),capture_current_brand:z.boolean().optional()},
   submit_review:revision,acknowledge_preview:{...revision,render_receipt_id:uuid,acknowledged:z.literal(true)},
   approve:{...revision,preview_id:uuid,approved:z.literal(true)},request_changes:{...revision,reason},
   revoke_approval:{variant_id:uuid,approval_id:uuid,reason},schedule,reschedule:schedule,

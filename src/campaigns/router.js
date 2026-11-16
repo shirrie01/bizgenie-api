@@ -12,7 +12,7 @@ const {
   CampaignValidationError,
   CampaignVersionError,
 } = require("./errors");
-const { identifier, uuid } = require("./schema");
+const { identifier, uuid, content: contentSchema } = require("./schema");
 const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
 const { CampaignStrategyValidationError, CampaignVariantGenerationService } = require("./generation");
 const { safeMeasurement } = require("./measurementRegistry");
@@ -74,6 +74,7 @@ const archiveBody = bodyScope.extend({
   expected_campaign_version: expectedVersion,
   reason: z.string(),
 }).strict();
+const copyRevisionBody=bodyScope.extend({expected_campaign_version:expectedVersion,revision_id:uuid,content:contentSchema.omit({asset_refs:true})}).strict();
 const reviewBody = bodyScope.extend({
   expected_campaign_version: expectedVersion,
   revision_id: uuid,
@@ -478,6 +479,18 @@ function createCustomerCampaignRouter({
     } catch (error) {
       return sendCampaignError(error, res, logger);
     }
+  });
+
+  // Customer text corrections reuse immutable revisions; media bindings are retained server-side.
+  router.post('/:campaignId/variants/:variantId/revisions',async(req,res)=>{
+    try{
+      const body=parse(copyRevisionBody,req.body),campaignId=parse(uuid,req.params.campaignId),variantId=parse(uuid,req.params.variantId);
+      const context=await authorize({req,tokenVerifier,authorizationService,tenantId:body.tenant_id,projectId:body.project_id,action:'project:write'});
+      const current=await repository.getCampaign(context,campaignId),variant=campaignVariant(current,variantId),basis=variant.revisions.get(body.revision_id);
+      if(!basis)throw new CampaignResourceError();
+      const result=await repository.executeCommand(context,command({body,campaignId,commandType:'save_revision',expectedVersion:body.expected_campaign_version,payload:{variant_id:variantId,expected_revision_id:body.revision_id,content:{...body.content,asset_refs:basis.content.asset_refs},change_reason:'Customer copy and call-to-action correction'}}));
+      return res.json({result:safeResult(result),campaign:safeCampaign(await repository.getCampaign(context,campaignId),{detail:true})});
+    }catch(error){return sendCampaignError(error,res,logger);}
   });
 
   router.post("/:campaignId/variants/:variantId/review", async (req, res) => {
