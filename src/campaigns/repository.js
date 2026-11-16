@@ -328,10 +328,12 @@ class CampaignTransaction {
     return { revision_id: revisionId, tenant_id: campaign.tenant_id, project_id: campaign.project_id, brand_id: campaign.brand_id, campaign_id: campaign.campaign_id, content_item_id: itemId, variant_id: variantId, revision_number: number, parent_revision_id: parentId, content, brand_snapshot_id: snapshotId, source: "manual", generation_links: links, content_hash: hashIntent({ content, brand_snapshot_id: snapshotId,...binding,generation_links:links }), change_reason: changeReason, created_at: this.now, created_by: clone(this.context.actor) };
   }
   async saveRevision(campaign) {
-    requireFields(this.command.payload, ["variant_id","content","change_reason","brand_snapshot_id","capture_current_brand"], ["variant_id","content","change_reason"]);
+    requireFields(this.command.payload, ["variant_id","content","change_reason","brand_snapshot_id","capture_current_brand","expected_revision_id"], ["variant_id","content","change_reason"]);
     const [item, variant] = this.variant(campaign, this.command.payload.variant_id); this.ensureWritable(campaign, item, variant);
     if(variant.workflow==='published')throw new CampaignTransitionError();
-    const previous = variant.revisions.get(variant.current_revision_id), revisionId = this.id("revision_ids");
+    const previous = variant.revisions.get(variant.current_revision_id);
+    if(this.command.payload.expected_revision_id&&this.command.payload.expected_revision_id!==previous.revision_id)throw new CampaignVersionError();
+    const revisionId = this.id("revision_ids");
     if (variant.active_schedule_id) { this.event("schedule.cancelled", { variant_id: variant.variant_id, schedule_id: variant.active_schedule_id, reason_code: "revision_changed", reason: "Revision changed" }); variant.active_schedule_id = null; }
     if (variant.active_approval_id) { const approvalId = this.id("approval_ids"); const revocation = { approval_id: approvalId, variant_id: variant.variant_id, revision_id: previous.revision_id, decision: "revoked", preview_id: null, supersedes_approval_id: variant.active_approval_id, reason: "Revision changed", created_at: this.now, created_by: clone(this.context.actor) }; campaign.approvals.set(approvalId, revocation); this.event("approval.revoked", { record: revocation }); variant.active_approval_id = null; }
     if (this.command.payload.brand_snapshot_id && this.command.payload.capture_current_brand) throw new CampaignValidationError();

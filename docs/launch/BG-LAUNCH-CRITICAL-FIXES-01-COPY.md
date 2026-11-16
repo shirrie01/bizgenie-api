@@ -1,0 +1,15 @@
+# Customer copy/CTA correction — source only
+
+Confirmed on merged API main5cdf0f4 / WEB main582eb3e: campaign revisions and `save_revision` already exist, but customer routes expose generation/review rather than a bounded text correction. This PR adds no migration, provider, billing, bridge or runtime configuration change. R1 manifests/artifacts remain untouched.
+
+POST `/customer/campaigns/:campaignId/variants/:variantId/revisions` uses the normal customer bearer JWT/project-write authority. Strict body: tenant_id, project_id, idempotency_key, expected_campaign_version, revision_id and content `{title,body,caption,alt_text}`. Field limits are existing content limits200/32000/8000/2000; null removes optional copy. No asset_refs, approval, provider, Brand Brain or snapshot input accepted. CTA remains customer-visible text in existing body/caption, not a new creative schema.
+
+Server obtains media bindings from the referenced immutable revision, never the client. `save_revision` gains optional expected_revision_id; it checks within the existing transaction before revoking approval or changing history. Ordinary callers without that optional field are backward compatible. Existing campaign CAS and idempotency receipts are unchanged: identical lost-response replay succeeds once, new intent on a stale revision/version conflicts. Old revision/history/approval records remain; a saved correction creates a new draft, revokes active approval and removes its planned time through the already-existing command. Published/locked targets and revoked media stay denied. Responses use existing customer-safe campaign projection and error envelope.
+
+WEB dependent source supplies four bounded plain-text fields and explicit save/cancel, preserves typed corrections on failed/ambiguous saves and refuses edits against a changed campaign/revision. No full creative editor or regeneration. Saving requires fresh review/approval; it never publishes.
+
+Deployment is NOT authorised. Current R1 bridge does not allow `/revisions` and is not modified here. The WEB control requires VITE_COPY_EDIT_API plus a genuinely verified `copyRevisions` capability and stays OFF in bridge-v1. No compatibility evidence is invented. Integrating a route into a future bridge/revision and hosted customer acceptance are separate reviewed release decisions, not reasons to widen R1 flags. Do not merge this into the active R1 artifact preparation implicitly.
+
+Local regression evidence is supplied in the handoff; no PostgreSQL execution or hosted persistence claim is implied by in-memory tests. Independent review should cover optional expected_revision_id transaction enforcement, immutable asset retention, idempotent replay and approval invalidation.
+
+Local verification: focused customer revision/campaign/review probes 24/24 PASS; complete backend suite 1119 PASS / 1 SKIP / 0 FAIL (1120 total), TEST_DATABASE_URL unset. Existing paid-beta capture/migration regression tests separately 14/14 PASS. Syntax and diff checks PASS. No real database, provider or billing call occurred; PostgreSQL-backed copy persistence and hosted CI are not claimed.
