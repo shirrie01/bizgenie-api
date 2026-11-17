@@ -82,6 +82,19 @@ jobs:
       - name: Run real PostgreSQL onboarding security tests
         run: npm run test:onboarding:postgres
 
+      - name: Golden Journey v1 (disposable PostgreSQL and curated contracts)
+        env:
+          GOLDEN_JOURNEY_DISPOSABLE: 'true'
+        run: npm run test:golden-journey
+
+      - name: Upload Golden Journey v1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-journey-v1
+          path: artifacts/golden-journey/report.*
+          if-no-files-found: warn
+
       - name: Check JavaScript syntax
         shell: bash
         run: |

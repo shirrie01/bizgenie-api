@@ -14,13 +14,14 @@
     "test:campaign:postgres": "node --test test/postgres-campaign.integration.test.js",
     "test:brand-brain:integration": "node --test scripts/brand-brain-postgres-integration.js",
     "test:onboarding:postgres": "node --test test/workspace-onboarding.integration.test.js",
-"staging:preflight": "node scripts/staging/preflight.js",
+    "staging:preflight": "node scripts/staging/preflight.js",
     "staging:selftest": "node scripts/staging/toolchain-selftest.js",
     "migrations:rehearse": "node scripts/rehearse-migrations.js",
     "test:customer-contracts": "node --test --test-name-pattern=\"versioned customer contract\" test/generation-quotes.integration.test.js",
     "staging:acceptance": "node scripts/staging/acceptance.js",
     "start:studio-bridge": "node scripts/staging/studio-bridge.js",
-    "test:studio-connectivity": "node --test test/studio-bridge.test.js test/staging-acceptance.test.js test/customer-campaign-cors.test.js"
+    "test:studio-connectivity": "node --test test/studio-bridge.test.js test/staging-acceptance.test.js test/customer-campaign-cors.test.js",
+    "test:golden-journey": "node scripts/golden-journey/run.js"
   },
   "dependencies": {
     "@google-cloud/vertexai": "^1.0.0",
