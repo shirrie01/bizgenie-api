@@ -1,0 +1,55 @@
+# BG-R1-STEP7 release preflight — plan only
+
+17 November2026. Parent API PR255 exact head b4776dba3d1ad0c735a5111fb00755ec716ca4d0 is unchanged. Founder supplied hosted CI run478 SUCCESS and Claude approval/no P0/P1: accepted as supplied canonical evidence, not a new independent Actions/review read. Steps1–6 PASS preserved. Step7 remains BLOCKED until separately approved release and real browser acceptance.
+
+## Gate/evidence reconciliation
+
+| Gate | Status | Evidence / precise missing input |
+|---|---|---|
+| Parent implementation/source review/CI | PASS, supplied | PR255 b4776dba…; run478 and Claude review per current founder work order. No rerun of accepted runtime suite. |
+| Serving bridge identity | Supplied, readback BLOCKED | bizgenie-studio-bridge-staging-00002-dgz; recorded image sha256:efcd881ec72bd35c544f57265c98ce06fa0ea7d5af6379dae5c66a7a90ef0c25. No authenticated GCP command available here. |
+| Historical immutable image build/source | PASS retained | Prior locked Cloud Build47dd4e14-7a44-4698-ac24-4fb27041dd9f, source5cdf0f4241eebee2fc83c6a572e08a01b150933f, same efcd881e…0c25 digest. Registry/smoke/independent review already passed; do not rebuild/retest this old image. |
+| Current revision -> image -> build/source | BLOCKED independent reconciliation | Need the existing operator's revision00002-dgz imageDigest/container-image metadata and digest-linked build provenance reference tying it to the recorded build/source. Historical accepted image proof is preserved; not claimed to be a new current serving read. |
+| Current private upstream pins | BLOCKED independent reconciliation | Expected existing target https://f1fc2f51---bizgenie-api-staging-g3z4wwvftq-ew.a.run.app; audience https://bizgenie-api-staging-g3z4wwvftq-ew.a.run.app; revision bizgenie-api-staging-00030-pob; source f1fc2f51502793d9fb03617f30fd72b5a61c1e2e. Need current00002 metadata/reference for these four fields only. No startup, HTTP preflight or API traffic test requested. |
+| New offline profile source | LOCAL PASS | Separate validator delegates to unchanged original founder-onboarding validator and then actual runtime configuration rules. Synthetic focused tests30/30 PASS. Actual Step7 release manifest NOT RUN/not approved. |
+| New merged source/artifact/profile approval | BLOCKED, intentionally | No merge/build/image publication/config/deployment authorised by this work order. No new image digest exists from this work. |
+| Browser Step7 | BLOCKED | Old serving image lacks new exception; founder must receive successful scoped recommendation after separately approved deployment. No browser/customer request performed. |
+
+GitHub PR255/Issue191 read attempt returned Forbidden; no gcloud executable/connected authenticated GCP tool. Do not infer absence of resources or revoke supplied PASS. Operator can supply existing metadata/provenance records rather than repeat checks. For only missing revision/image evidence, the metadata-only command is:
+
+```bash
+gcloud run revisions describe bizgenie-studio-bridge-staging-00002-dgz --project=bizgenie-backend --region=europe-west1 --format='json(metadata.name,status.imageDigest,spec.containers[0].image)'
+```
+
+Supply only the four non-secret upstream pins and gate states separately; never dump all env, founder UUID or publishable/secret values into public evidence. Existing exact-source build result/provenance and independent registry readback may be reused. Do not treat an image tag or source on current main as immutable deployed proof.
+
+## Separate profile: source-only change
+
+New files: validate-founder-recommendations-release.js and bridge-founder-recommendations-release.example.json. No old validator/source/runtime/private R1 manifest change. Example has founder recommendation flag false and unresolved evidence, so cannot be used to activate anything. Create a SEPARATE private Step7 candidate only after final source/artifact evidence exists. Do not edit founder-onboarding.candidate.json or its accepted validator result.
+
+The new profile preserves exact base schema/pins/private subject, known staging project/origin, service identity, upstream audience/tag consistency, all existing approval/pool/provisioner fields and all unrelated gates OFF. Enabling recommendations requires founder onboarding true, exact true string, valid same founder UUID, and separate founderRecommendationsApproval, bridgeImageProvenanceEvidence and rollbackEvidence. Unknown fields/routes/environment keys, mutable image tags, malformed flags/identity, production pins, missing evidence and broad/paid write flags fail closed. OFF/absent recommendations delegates to the original profile; old validators continue rejecting the new setting. No fake approval or private identity is inserted into the example.
+
+Evidence references are offline metadata assertions, not cryptographic image verification, live IAM/provisioner proof or deployment authority. Auth evidence still means credential acceptance only. The independent reviewer must check referenced actual source/image/operator evidence. CLI prints only status/source/service or generic failure, never UUID/key. Synthetic CLI tests are not validation of a real release.
+
+## Exact dependency and operational sequence — DO NOT EXECUTE NOW
+
+1. Independently review this profile delta and obtain its exact-head hosted CI. PR255 approved head must remain unchanged. Under separately confirmed source-merge authority, merge PR255 first, then integrate this dependent profile commit; retarget and obtain exact-head checks on any changed head. Record actual resulting main SHA. Do not assume a squash merge has the PR head SHA. No source merge performed here.
+2. Obtain separately scoped build/publication approval for that final accepted main SHA, existing builder/registry only. Use clean exact-source context from that SHA, existing Dockerfile.studio-bridge at repository root and existing approved Cloud Build recipe. Existing registry path: europe-west1-docker.pkg.dev/bizgenie-backend/cloud-run-source-deploy/bizgenie-studio-bridge. Preserve Dockerfile startup `node scripts/staging/studio-bridge.js`, pinned Node22 base, non-root user and .dockerignore secret exclusions. Do not upload recovery/private manifests/attachments. Record actual buildID/location, final source and digest-linked provenance. The prior buildID is historical, never the new build result. Build submission configuration/location must be recovered from the existing approved recipe; unavailable here, so no fabricated executable build command is offered.
+3. Obtain actual new `IMAGE_AT_DIGEST` from that successful approved build, never reuse efcd881e…0c25 for the new code. Independently read it in the existing registry (`gcloud artifacts docker images describe "$IMAGE_AT_DIGEST" --project=bizgenie-backend --format=json`) and record returned digest/provenance. IMAGE_AT_DIGEST must be the real URI@sha256 from the build, not an invented placeholder/tag. Check image source and bridge entrypoint using existing artifact acceptance. Do not repeat old-image tests.
+4. Prepare separate private Step7 profile with actual final sourceSha/new image, current unchanged upstream four pins, approved private founder UUID/key and new exact-target approval/provenance/rollback references. Keep original R1 manifest immutable. Keep BG_BRIDGE_ALLOW_WRITES/WORKSPACE_BOOTSTRAP/DRAFT_WORKFLOW/GENERATION_CONFIRMATION/SOCIAL_WRITES/STRIPE_CHECKOUT false; set only founder onboarding and founder recommendations true. No founder-video policy/runtime enablement. Run `node scripts/staging/validate-founder-recommendations-release.js` on that separate private candidate ONCE when complete; require OFFLINE_FOUNDER_RECOMMENDATIONS_VALIDATED_NOT_DEPLOYMENT_APPROVAL and Claude independent acceptance. This work does not create/validate a real Step7 candidate.
+5. Request founder approval naming exact final source+new digest, bridge service/project/region, founder-only flag/binding, preserved00030 upstream, named operator, no API traffic/IAM/SQL changes, rollback00002-dgz and abort conditions. Prior R1 approval is not approval of this new artifact/permission. Do not deploy on offline validator PASS alone.
+6. Only after approval, operator prepares a private service replacement from the serving bridge configuration, preserving identity, networking, secret refs, limits and all unrelated settings; changes only accepted image and recommendation flag for existing founder binding. Existing prepare-approved-r1.py hard-codes the OLD source/image and MUST NOT be bypassed/reused for this artifact. A corresponding reviewed exact-target deployment input is a remaining release dependency, not implemented or executed here. Approved future command shape: `gcloud run services replace "$HOME/bizgenie-r1/bridge-step7.service.json" --project=bizgenie-backend --region=europe-west1 --quiet`. This file does not yet exist from this work; do not improvise it or copy the old immutable image input. Read back new revision/readiness/digest/bridge traffic and unchanged upstream/gates. Preserve00002-dgz; no API traffic switch.
+7. Any wrong source/digest/pin/gate, unhealthy bridge, auth/scope/CORS regression or unexpected provider/billing execution aborts. Restore existing bridge traffic immediately with the separately approved rollback command below. Do not delete revisions, data or change flags on an immutable rollback revision.
+8. After accepted deployment/readback, founder runs existing Step7 from refreshed scoped session: exact POST /customer/campaign-recommendations, all three scope fields matching verified account; expect201 and customer-safe recommendation, no campaign/provider/billing execution. Record redacted request/status/recommendation evidence and tenant ownership. No new account or repeated Steps1–6. Other tenant, mismatched scope and all unrelated write/paid routes stay denied under existing tests; any actual staging negative test needs existing controlled fixtures/authorisation. Stop at the next blocked action; do not enable campaign creation or additional routes automatically.
+
+## Rollback target
+
+Recorded rollback is NOW bizgenie-studio-bridge-staging-00002-dgz with image efcd881e…0c25, founder onboarding retained and recommendations OFF/absent. Before deployment, operator confirms its immutable identity/config from existing evidence; retain old00001 as historical fallback, do not target it for this Step7 rollback by default.
+
+```bash
+gcloud run services update-traffic bizgenie-studio-bridge-staging --project=bizgenie-backend --region=europe-west1 --to-revisions=bizgenie-studio-bridge-staging-00002-dgz=100 --quiet
+```
+
+NOT EXECUTED. Restoring traffic to this recorded revision disables the new exception without removing already accepted onboarding or changing upstream traffic. Real rollback/readiness/flags must be read back by the authorised operator if invoked.
+
+Overall: source profile LOCAL PASS; release/browser Step7 BLOCKED; public launch NO-GO. GitHub posting and Mission Control sync require actual successful writes; none implied. Preserve Steps1–6 and all prior locked PASS.
