@@ -46,6 +46,18 @@ postgresDescribe("PostgresCampaignRepository real PostgreSQL 17 proof", { concur
     await pool.query(`insert into public.brand_brains(brand_id,project_id,name,version,status,created_at,updated_at) values('brand_a','project_a','A',1,'approved',now(),now()),('brand_b','project_b','B',1,'approved',now(),now())`);
   });
   after(async()=>{await pool?.end();if(adminPool&&database){for(let i=0;i<20;i++){try{await adminPool.query(`drop database if exists ${database}`);break;}catch{await new Promise((resolve)=>setTimeout(resolve,25));}}}await adminPool?.end();});
+  it('fixed founder root key survives lost commit response and concurrent cross-instance replay once',async()=>{
+    const {KEY}=require('../src/studio-bridge/founderCampaign');
+    const input=command('create_campaign',0,{brand_id:'brand_a',name:'Synthetic founder root',goal:'Local enquiries',display_timezone:'Europe/London'},undefined,KEY);
+    let lose=true;const first=new PostgresCampaignRepository({pool,fault:async name=>{if(name==='postgres_after_commit'&&lose){lose=false;throw Error('synthetic lost commit response');}}});
+    await assert.rejects(()=>first.executeCommand(context,input));
+    const another=new PostgresCampaignRepository({pool});
+    const results=await Promise.all(Array.from({length:5},()=>another.executeCommand(context,input)));
+    assert.ok(results.every(r=>r.campaign_id===results[0].campaign_id));
+    const receipts=await pool.query('select count(*)::int n from campaign_command_receipts where tenant_id=$1 and project_id=$2 and auth_user_id=$3 and idempotency_key=$4',[context.tenant_id,context.project_id,AUTH_A,KEY]);assert.equal(receipts.rows[0].n,1);
+    const root=await another.getCampaign(context,results[0].campaign_id);assert.equal(root.items.size,0);assert.equal(root.version,1);
+    await assert.rejects(()=>another.executeCommand(context,{...input,payload:{...input.payload,name:'Changed intent'}}),CampaignIdempotencyError);
+  });
   it("keeps durable seeded profile hashes in parity and the proposed dedicated Instagram video renderer unregistered", async () => {
     const { InMemoryPreviewRegistry, PostgresPreviewRegistry } = require("../src/campaigns");
     const candidate = require("../docs/media/contracts/instagram-feed-video-preview.v1.proposed.json");
