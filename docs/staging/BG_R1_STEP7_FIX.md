@@ -1,0 +1,27 @@
+# BG-R1-STEP7-FIX — founder recommendation bridge exception
+
+17 November 2026. Source/test only. API main baseline c773e06af005b07f246ebdf31cd0f8980e0d21a4. No existing /workspace/bizgenie-bridge-release checkout or same-named remote branch was found; this isolated worktree is created from fetched API origin/main on branch bg-r1-step7-fix. Original worktrees, private manifest, locked PASS and release configuration remain untouched.
+
+## Confirmed source defect and correction
+
+POST /customer/campaign-recommendations is already in the bridge allowlist and API router. With general writes false and only founder onboarding enabled, the bridge returns 403 STAGING_WRITES_DISABLED before token verification. The existing draft-workflow flag would open additional writes and is not an appropriate workaround.
+
+Add separate `BG_BRIDGE_ALLOW_FOUNDER_RECOMMENDATIONS`, strict true/false, absent defaults false. Reuse private `BG_BRIDGE_FOUNDER_AUTH_USER_ID`; do not hard-code or commit a real account. Permission is staging-only and rejects coexistence with broad writes, draft workflow, workspace bootstrap, generation confirmation, social writes or Stripe checkout. It may coexist with the already-approved founder onboarding flag; it does not widen that flag. No route is added to the allowlist.
+
+Only exact POST /customer/campaign-recommendations (no query/suffix/alternate verb) can defer the general write denial. This preliminary candidate check is not authorisation. Actual admission occurs after verified customer JWT identity, per-user rate accounting and body/scope checks, before requesting IAM credentials or forwarding. All three body scope fields must be present and exactly equal a valid server-verified trusted_scope tenant/project/brand. A body/header user ID never establishes identity. The existing verifier takes trusted scope from verified Supabase app_metadata, not user_metadata. Absent/malformed scope fails closed. Exact founder identity is required; other verified users consume their rate budget but cannot reach IAM/upstream. Body cap is16KiB, JSON only, existing time/concurrency/CORS/header/response caps retained.
+
+The bridge forwards the original customer JWT separately from IAM. Actual API authorisation still resolves current membership, project and brand; it is not replaced by token scope equality. Recommendations use the existing project:read action and deterministic persisted registry/idempotency contract. No campaign, credit reservation, generation, Stripe session or dispatch is created. Revoked membership is concealed by the existing API404 RESOURCE_NOT_AVAILABLE contract. Existing strict API validation remains authoritative. This flag does not permit campaign creation or any subsequent POST; do not automatically widen access after Step7.
+
+## Image/source provenance and release boundary
+
+Recorded and previously accepted R1 pair: source5cdf0f4241eebee2fc83c6a572e08a01b150933f, Cloud Build47dd4e14-7a44-4698-ac24-4fb27041dd9f, immutable bridge digest sha256:efcd881ec72bd35c544f57265c98ce06fa0ea7d5af6379dae5c66a7a90ef0c25. That source has the rejection described above and no recommendation-specific founder permission. This is source inspection of the recorded image/source pair, NOT a fresh read of the currently serving revision. The locked pass is retained.
+
+CURRENT DEPLOYED IMAGE PROVENANCE: UNKNOWN in this executor. GitHub Issue191 API reads Forbidden; no gcloud command/authenticated GCP connection available. The reported browser error alone cannot establish the serving revision/digest. No image rebuild, registry pull, credential recovery or infrastructure inspection loop is attempted. Before any release proposal, authorised operator must provide the actual bridge serving revision+immutable image digest/build-source evidence and confirm private upstream pin. Do not present current main as evidence about a deployed image.
+
+No release is proposed or authorised by this PR. Existing offline R1 validator intentionally rejects unknown environment keys; do not bypass it or insert this new permission into the locked manifest. A separately reviewed release profile, new accepted artifact and exact founder deployment/configuration approval would be needed after independent source review and deployed provenance confirmation. Do not merely add a flag to the old image, enable broad draft writes, or change private API traffic. Existing rollback/source artifacts remain intact. Paid/social/Stripe/general generation gates remain OFF; spend0.
+
+## Verification
+
+New tests exercise exact founder admission, default-OFF/config conflicts, verified non-founder and missing auth, forged identities, missing/mismatched/malformed scope, query/path/method variants, all other write gates,16KiB cap, invalid JSON, rate accounting, GET/OPTIONS/onboarding behaviour, unchanged upstream denials and actual API membership revocation/idempotency/validation. Existing customer authentication tests validate trusted scope provenance. No real account/token/DB/provider is used.
+
+Focused:61/61 PASS on Node22.23.3. Full suite:1127 PASS,1 SKIP,0 FAIL (1128 total); TEST_DATABASE_URL unset. Syntax and git diff checks PASS. First full run could not resolve local node_modules paths in three tests; linked existing installed dependencies (no install, no source/test changes) and reran. PostgreSQL integration suites require disposable TEST_DATABASE_URL and remain NOT RUN without one; no shared SQL or migration executed. Hosted CI and independent review are distinct gates, never inferred from local results.

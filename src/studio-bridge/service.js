@@ -3,6 +3,7 @@
 const express=require('express');
 const {pipeline}=require('node:stream/promises');const {Readable,Transform}=require('node:stream');
 const {AuthenticationRequiredError}=require('../authorization');
+const {CustomerTrustedScopeSchema}=require('../authorization/schema');
 const CheckoutBridgeSchema=require('../billing/stripe/service').CheckoutRequestSchema.extend({tenant_id:require('../billing/schema').identifier}).strict();
 const UUID='[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}';
 const routes=[
@@ -34,12 +35,15 @@ const PRIVATE_HEADERS=['x-serverless-authorization','x-admin-key','x-api-key','p
 const FOUNDER_ID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 function validFounderId(value){return typeof value==='string'&&value.length===36&&FOUNDER_ID.test(value);}
 function founderWrite(method,url){return (method==='POST'&&url==='/customer/workspace/bootstrap')||(method==='PUT'&&['/customer/workspace/onboarding','/customer/workspace/brand-brain'].includes(url));}
+function founderRecommendation(c,method,url){return c.allowFounderRecommendations===true&&method==='POST'&&url==='/customer/campaign-recommendations';}
 function config(input){
  const c={maxRequests:60,maxIdentities:10000,maxConcurrent:8,timeoutMs:30000,...input};
  if(c.environment!=='staging'||!/^bizgenie-api-staging-[0-9]{5}-[a-z0-9]{3}$/.test(c.revision||'')||!c.reviewRef||!/^[a-f0-9]{40}$/.test(c.sourceSha||''))throw Error('Reviewed staging target required');
  if(c.allowFounderOnboarding!==undefined&&typeof c.allowFounderOnboarding!=='boolean')throw Error('Explicit founder permission required');
  if(c.founderAuthUserId!==undefined&&!validFounderId(c.founderAuthUserId))throw Error('Valid founder configuration required');
  if(c.allowFounderOnboarding===true&&(!validFounderId(c.founderAuthUserId)||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false)))throw Error('Isolated founder permission required');
+ if(c.allowFounderRecommendations!==undefined&&typeof c.allowFounderRecommendations!=='boolean')throw Error('Explicit founder recommendation permission required');
+ if(c.allowFounderRecommendations===true&&(!validFounderId(c.founderAuthUserId)||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false)))throw Error('Isolated founder recommendation permission required');
  if(c.founderVideo!==undefined){c.founderVideo=require('../provider-spend/founderVideo').binding(c.founderVideo);if(c.allowFounderOnboarding===true&&c.founderAuthUserId!==c.founderVideo.auth_user_id||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false))throw Error('Isolated founder video permission required');}
  const u=new URL(c.upstream),a=new URL(c.audience);
  if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
@@ -67,7 +71,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(requested.some(x=>!['authorization','content-type','range'].includes(x)))return failure(res,403,'HEADERS_FORBIDDEN');
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
-  if(!['GET','HEAD'].includes(req.method)&&!videoWrite(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(!['GET','HEAD'].includes(req.method)&&!videoWrite(c,req.method,req.originalUrl)&&!founderRecommendation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
   if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true&&!videoConfirmation(c,req.method,req.originalUrl))return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
   if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true)return failure(res,403,'SOCIAL_WRITES_DISABLED');
@@ -87,7 +91,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });
- const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
+ const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:founderRecommendation(c,req.method,req.originalUrl)?draftBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
  app.use(async(req,res)=>{
   const controller=res.locals.controller;let upstream;
   const cancel=()=>controller.abort();req.once('aborted',cancel);res.once('close',cancel);
@@ -100,6 +104,12 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(!IDENTITY.test(req.path))for(const key of ['tenant_id','project_id','brand_id']){
     const values=[req.query[key],isBytes?undefined:body?.[key]].filter(v=>v!==undefined);
     if(values.some(v=>typeof v!=='string'||!scope||v!==scope[key]))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+   }
+   // Candidate routing above defers the general gate only. Admission is decided here,
+   // after verified identity, rate accounting and trusted request-scope checks, before IAM.
+   if(founderRecommendation(c,req.method,req.originalUrl)){
+    if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
+    if(!CustomerTrustedScopeSchema.safeParse(scope).success||['tenant_id','project_id','brand_id'].some(key=>typeof body?.[key]!=='string'||body[key]!==scope[key]))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
    }
    const credential=await bounded(iamTokenProvider({audience:c.audience}),controller.signal);
    if(typeof credential!=='string'||!credential||/[\r\n]/.test(credential))throw Error();
