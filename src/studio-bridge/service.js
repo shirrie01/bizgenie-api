@@ -37,6 +37,13 @@ function validFounderId(value){return typeof value==='string'&&value.length===36
 function founderWrite(method,url){return (method==='POST'&&url==='/customer/workspace/bootstrap')||(method==='PUT'&&['/customer/workspace/onboarding','/customer/workspace/brand-brain'].includes(url));}
 function founderRecommendation(c,method,url){return c.allowFounderRecommendations===true&&method==='POST'&&url==='/customer/campaign-recommendations';}
 function founderCampaignWrite(c,method,url){return c.allowFounderCampaignRoot===true&&method==='POST'&&url==='/customer/campaigns';}
+// Reuse the existing deterministic draft classification, excluding workspace/root writes.
+// This is candidate routing only; verified founder/scope/campaign admission is below.
+function founderDraftCampaign(c,method,url){
+ if(c.allowFounderDraftWorkflow!==true||method!=='POST'||!isDraftWorkflowWrite(method,url))return null;
+ const match=new RegExp('^/customer/campaigns/('+UUID+')/(?:content-items|variants/'+UUID+'/[^/]+)$').exec(url);
+ return match?match[1]:null;
+}
 function config(input){
  const c={maxRequests:60,maxIdentities:10000,maxConcurrent:8,timeoutMs:30000,...input};
  if(c.environment!=='staging'||!/^bizgenie-api-staging-[0-9]{5}-[a-z0-9]{3}$/.test(c.revision||'')||!c.reviewRef||!/^[a-f0-9]{40}$/.test(c.sourceSha||''))throw Error('Reviewed staging target required');
@@ -48,6 +55,15 @@ function config(input){
  if(c.allowFounderCampaignRoot!==undefined&&typeof c.allowFounderCampaignRoot!=='boolean')throw Error('Explicit founder campaign permission required');
  if(c.allowFounderCampaignRoot===true){if(c.founderVideo!==undefined)throw Error('Isolated founder campaign permission required');if(!validFounderId(c.founderAuthUserId)||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false))throw Error('Isolated founder campaign permission required');c.founderCampaign=require('./founderCampaign').binding(c.founderCampaign);}
  else if(c.founderCampaign!==undefined)throw Error('Explicit founder campaign permission required');
+ if(c.allowFounderDraftWorkflow!==undefined&&typeof c.allowFounderDraftWorkflow!=='boolean')throw Error('Explicit founder draft permission required');
+ if(c.allowFounderDraftWorkflow===true){
+  if(!validFounderId(c.founderAuthUserId)||c.founderVideo!==undefined||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false))throw Error('Isolated founder draft permission required');
+  const schema=CustomerTrustedScopeSchema.extend({campaign_id:require('zod').z.string().regex(new RegExp('^'+UUID+'$'))});
+  const parsed=schema.safeParse(c.founderDraftScope);
+  if(!parsed.success||Object.keys(parsed.data).some(k=>parsed.data[k]!==c.founderDraftScope[k]))throw Error('Verified founder draft scope required');
+  c.founderDraftScope=parsed.data;
+  if(c.allowFounderCampaignRoot===true&&['tenant_id','project_id','brand_id'].some(k=>c.founderCampaign[k]!==c.founderDraftScope[k]))throw Error('Consistent founder campaign scope required');
+ }else if(c.founderDraftScope!==undefined)throw Error('Explicit founder draft permission required');
  if(c.founderVideo!==undefined){c.founderVideo=require('../provider-spend/founderVideo').binding(c.founderVideo);if(c.allowFounderOnboarding===true&&c.founderAuthUserId!==c.founderVideo.auth_user_id||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false))throw Error('Isolated founder video permission required');}
  const u=new URL(c.upstream),a=new URL(c.audience);
  if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
@@ -75,7 +91,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(requested.some(x=>!['authorization','content-type','range'].includes(x)))return failure(res,403,'HEADERS_FORBIDDEN');
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
-  if(!['GET','HEAD'].includes(req.method)&&!founderCampaignWrite(c,req.method,req.originalUrl)&&!videoWrite(c,req.method,req.originalUrl)&&!founderRecommendation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(!['GET','HEAD'].includes(req.method)&&!founderDraftCampaign(c,req.method,req.originalUrl)&&!founderCampaignWrite(c,req.method,req.originalUrl)&&!videoWrite(c,req.method,req.originalUrl)&&!founderRecommendation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
   if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true&&!videoConfirmation(c,req.method,req.originalUrl))return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
   if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true)return failure(res,403,'SOCIAL_WRITES_DISABLED');
@@ -95,7 +111,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });
- const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:(founderRecommendation(c,req.method,req.originalUrl)||founderCampaignWrite(c,req.method,req.originalUrl))?draftBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
+ const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:(founderRecommendation(c,req.method,req.originalUrl)||founderCampaignWrite(c,req.method,req.originalUrl)||founderDraftCampaign(c,req.method,req.originalUrl))?draftBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
  app.use(async(req,res)=>{
   const controller=res.locals.controller;let upstream;
   const cancel=()=>controller.abort();req.once('aborted',cancel);res.once('close',cancel);
@@ -121,6 +137,13 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
     const pin=require('./founderCampaign');
     if(!pin.bodySchema.safeParse(body).success)return failure(res,400,'VALIDATION_ERROR');
     if(pin.bodyHash(body)!==c.founderCampaign.body_sha256)return failure(res,403,'STAGING_WRITES_DISABLED');
+   }
+   const draftCampaign=founderDraftCampaign(c,req.method,req.originalUrl);
+   if(draftCampaign){
+    if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
+    if(!CustomerTrustedScopeSchema.safeParse(scope).success||['tenant_id','project_id','brand_id'].some(key=>scope[key]!==c.founderDraftScope[key])||draftCampaign!==c.founderDraftScope.campaign_id)return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+    // Existing strict API bodies contain tenant/project, not a client brand override.
+    if(['tenant_id','project_id'].some(key=>typeof body?.[key]!=='string'||body[key]!==scope[key]))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
    }
    const credential=await bounded(iamTokenProvider({audience:c.audience}),controller.signal);
    if(typeof credential!=='string'||!credential||/[\r\n]/.test(credential))throw Error();
