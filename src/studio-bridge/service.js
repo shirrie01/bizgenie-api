@@ -41,7 +41,7 @@ function founderCampaignWrite(c,method,url){return c.allowFounderCampaignRoot===
 // This is candidate routing only; verified founder/scope/campaign admission is below.
 function founderDraftCampaign(c,method,url){
  if(c.allowFounderDraftWorkflow!==true||method!=='POST'||!isDraftWorkflowWrite(method,url))return null;
- const match=new RegExp('^/customer/campaigns/('+UUID+')/(?:content-items|variants/'+UUID+'/[^/]+)$').exec(url);
+ const match=new RegExp('^/customer/campaigns/('+UUID+')/(?:content-items|variants/'+UUID+'/(?:review|preview-renders|preview-acknowledgements|approval|schedule|reschedule|unschedule))$').exec(url);
  return match?match[1]:null;
 }
 function config(input){
