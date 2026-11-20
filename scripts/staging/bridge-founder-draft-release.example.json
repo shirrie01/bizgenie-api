@@ -1,0 +1,69 @@
+{
+  "project": "bizgenie-backend",
+  "region": "europe-west1",
+  "service": "bizgenie-studio-bridge-staging",
+  "sourceSha": "UNRESOLVED_EXACT_REVIEWED_BRIDGE_COMMIT",
+  "image": "UNRESOLVED_BUILT_IMAGE_AT_SHA256_DIGEST",
+  "serviceAccount": "bizgenie-staging-runtime@bizgenie-backend.iam.gserviceaccount.com",
+  "identitySuitabilityEvidence": "UNRESOLVED_IAM_REVIEW",
+  "publicInvokerApproval": "UNRESOLVED_FOUNDER_APPROVAL",
+  "upstreamTagEvidence": "UNRESOLVED_TAG_TO_REVISION_METADATA",
+  "environment": {
+    "BIZGENIE_ENVIRONMENT": "staging",
+    "SUPABASE_URL": "https://zrczojyxebwjgpymbmgu.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "UNRESOLVED_EXISTING_PUBLIC_STAGING_KEY",
+    "BG_BRIDGE_STUDIO_ORIGIN": "https://bizgenie-studio-staging.pages.dev",
+    "BG_BRIDGE_TARGET_URL": "UNRESOLVED_VERIFIED_PRIVATE_REVISION_TAG_URL",
+    "BG_BRIDGE_AUDIENCE": "UNRESOLVED_VERIFIED_PRIVATE_SERVICE_AUDIENCE",
+    "BG_BRIDGE_REVISION": "bizgenie-api-staging-00030-pob",
+    "BG_BRIDGE_SOURCE_SHA": "UNRESOLVED_DEPLOYED_UPSTREAM_SHA_NOT_BRIDGE_SHA",
+    "BG_BRIDGE_REVIEW_REF": "UNRESOLVED_RELEASE_APPROVAL",
+    "BG_BRIDGE_ALLOW_WRITES": "false",
+    "BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION": "false",
+    "BG_BRIDGE_ALLOW_SOCIAL_WRITES": "false",
+    "BG_BRIDGE_BIND": "0.0.0.0",
+    "PORT": "8080",
+    "BG_BRIDGE_ALLOW_STRIPE_CHECKOUT": "false",
+    "BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP": "false",
+    "BG_BRIDGE_ALLOW_DRAFT_WORKFLOW": "false",
+    "BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING": "false",
+    "BG_BRIDGE_ALLOW_FOUNDER_RECOMMENDATIONS": "false",
+    "BG_BRIDGE_ALLOW_FOUNDER_CAMPAIGN_ROOT": "false",
+    "BG_BRIDGE_ALLOW_FOUNDER_DRAFT_WORKFLOW": "false",
+    "BG_BRIDGE_FOUNDER_DRAFT_TENANT_ID": "UNRESOLVED_PRIVATE_APPROVED_TENANT_ID",
+    "BG_BRIDGE_FOUNDER_DRAFT_PROJECT_ID": "UNRESOLVED_PRIVATE_APPROVED_PROJECT_ID",
+    "BG_BRIDGE_FOUNDER_DRAFT_BRAND_ID": "UNRESOLVED_PRIVATE_APPROVED_BRAND_ID",
+    "BG_BRIDGE_FOUNDER_DRAFT_CAMPAIGN_ID": "UNRESOLVED_PRIVATE_APPROVED_CAMPAIGN_ID"
+  },
+  "founderOnboardingApproval": "UNRESOLVED_EXACT_FOUNDER_ONLY_APPROVAL",
+  "founderIdentityBindingEvidence": "UNRESOLVED_PRIVATE_VERIFIED_SUBJECT_BINDING",
+  "upstreamDatabasePoolEvidence": "UNRESOLVED_STAGING_POOL_ACCEPTANCE",
+  "upstreamAuthProvisionerEvidence": "UNRESOLVED_STAGING_AUTH_ADMIN_BINDING",
+  "founderRecommendationsApproval": "UNRESOLVED_SEPARATE_STEP7_FOUNDER_APPROVAL",
+  "bridgeImageProvenanceEvidence": "UNRESOLVED_EXACT_NEW_IMAGE_BUILD_SOURCE_AND_REGISTRY_READBACK",
+  "rollbackEvidence": "UNRESOLVED_VERIFIED_00002_DGZ_WITH_RECOMMENDATIONS_OFF",
+  "founderCampaignApproval": "UNRESOLVED_SEPARATE_R2_founderCampaignApproval",
+  "campaignAcceptanceBindingEvidence": "UNRESOLVED_SEPARATE_R2_campaignAcceptanceBindingEvidence",
+  "campaignRepositoryAcceptanceEvidence": "UNRESOLVED_SEPARATE_R2_campaignRepositoryAcceptanceEvidence",
+  "founderDraftCampaignBinding": {
+    "auth_user_id": "UNRESOLVED_PRIVATE_VERIFIED_auth_user_id",
+    "tenant_id": "UNRESOLVED_PRIVATE_VERIFIED_tenant_id",
+    "project_id": "UNRESOLVED_PRIVATE_VERIFIED_project_id",
+    "brand_id": "UNRESOLVED_PRIVATE_VERIFIED_brand_id",
+    "campaign_id": "UNRESOLVED_PRIVATE_VERIFIED_campaign_id"
+  },
+  "founderDraftWorkflowApproval": "UNRESOLVED_SEPARATE_founderDraftWorkflowApproval",
+  "founderDraftCampaignBindingEvidence": "UNRESOLVED_SEPARATE_founderDraftCampaignBindingEvidence",
+  "draftWorkflowDatabasePoolEvidence": "UNRESOLVED_SEPARATE_draftWorkflowDatabasePoolEvidence",
+  "founderDraftRollbackEvidence": "UNRESOLVED_SEPARATE_founderDraftRollbackEvidence",
+  "founderDraftRollback": {
+    "acceptedR2": {
+      "revision": "UNRESOLVED_CURRENT_ACCEPTED_R2_REVISION",
+      "image": "europe-west1-docker.pkg.dev/bizgenie-backend/cloud-run-source-deploy/bizgenie-studio-bridge@sha256:5f4519afba18377726460273d668cad1b3f961222a357cf16c1fe9e5b33e8c9c"
+    },
+    "step7": {
+      "revision": "bizgenie-studio-bridge-staging-step7-c023184c",
+      "image": "europe-west1-docker.pkg.dev/bizgenie-backend/cloud-run-source-deploy/bizgenie-studio-bridge@sha256:312be533f275ad578e52973ec6fb00eff266a07d1af53de6982ab423bf96ce18"
+    }
+  }
+}
