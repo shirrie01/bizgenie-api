@@ -11,19 +11,19 @@ function fixture(options={}){
  const b=binding(); options.binding?.(b);
  const env={BIZGENIE_ENVIRONMENT:'staging',SUPABASE_URL:'https://zrczojyxebwjgpymbmgu.supabase.co',BG_STAGING_RUNTIME_DATABASE_EVIDENCE_ENABLED:'true',BG_STAGING_RUNTIME_DATABASE_EVIDENCE_BINDING:JSON.stringify(b),BG_BRIDGE_ALLOW_WRITES:'false',...options.env};
  let clock=now,released=[],calls=[],connects=0,verifications=0;
- const client={async query(q){calls.push(q);if(options.fail?.(q))throw Error('private:'+founder+' postgres://secret');
+ const client={async query(q){calls.push(q);if(q.text==='ROLLBACK')await options.rollback?.();if(options.fail?.(q))throw Error('private:'+founder+' postgres://secret');
   if(q.text===SQL.authority)return {rows:[{authorized:options.authorized!==false}]};
   if(q.text===SQL.ownership)return {rows:[{ownership:options.ownership||'MATCH'}]};
   if(q.text===SQL.role)return {rows:[{effective_role:options.foreignRole?'other':b.approvedRole,rolsuper:false,rolbypassrls:true,no_role_switch:true}]};
   if(q.text===SQL.tables)return {rows:TABLES.map(name=>({name,present:!(options.missing&&name==='campaign_preview_profiles'),real_table:true,rls_enabled:true,rls_forced:false,owner_privileges:true,schema_usage:true,can_select:true,can_insert:name==='campaign_preview_profiles'?null:true,can_update:name==='campaign_preview_profiles'?null:true,rls_effective:false,extra:founder})).map(row=>row.present?row:Object.fromEntries(Object.keys(row).map(k=>[k,k==='name'?row.name:k==='present'?false:null])))};
   if(q.text===SQL.preview)return {rows:[{active:options.active!==false}]};
-  return {rows:[]};},release(error){released.push(error);}};
+  return {rows:[]};},release(error){released.push(error);if(options.releaseError)throw Error('private release failure');},async end(){await options.end?.();}};
  const pool={connect:async()=>{connects++;return client;}};
  const tokenVerifier=options.tokenVerifier||{async verifyAccessToken(t){verifications++;if(t!=='synthetic-founder'||options.badCustomer)throw Error(founder);return {kind:'customer',auth_user_id:options.foreign?campaign:founder,trusted_scope:options.scope||{tenant_id:b.tenantId,project_id:b.projectId,brand_id:b.brandId}};}};
  const app=express();const initial=JSON.stringify(env);
  const enabled=register(app,{env,pool,tokenVerifier,now:()=>clock});
  app.get('/existing',(_,res)=>res.json({ok:true}));app.use((_,res)=>res.status(404).end());
- return {app,env,enabled,b,calls,released,get connects(){return connects;},get verifications(){return verifications;},initial,expire(){clock+=60001;},get(method='get',path=PATH){return request(app)[method](path).set('Authorization','Bearer synthetic-founder').set('X-Serverless-Authorization','Bearer synthetic-iam');}};
+ return {app,env,enabled,b,calls,released,pool,tokenVerifier,get connects(){return connects;},get verifications(){return verifications;},initial,expire(){clock+=60001;},get(method='get',path=PATH){return request(app)[method](path).set('Authorization','Bearer synthetic-founder').set('X-Serverless-Authorization','Bearer synthetic-iam');}};
 }
 test('default OFF leaves diagnostic absent and unrelated routes/flags unchanged',async()=>{
  for(const flag of [undefined,'false']){const f=fixture({env:{BG_STAGING_RUNTIME_DATABASE_EVIDENCE_ENABLED:flag}});assert.equal(f.enabled,false);assert.equal((await f.get()).status,404);assert.equal((await request(f.app).get('/existing')).status,200);assert.equal(JSON.stringify(f.env),f.initial);assert.equal(f.connects,0);}
@@ -44,7 +44,7 @@ test('expiry and unexpected methods/queries/paths/body rejected before authentic
 });
 test('successful evidence uses injected client, fixed parameterized reads and rollback; output redacted',async()=>{
  const f=fixture();const r=await f.get();assert.equal(r.status,200);assert.equal(r.body.ownership,'MATCH');assert.equal(r.body.intendedPreview,'MATCH');assert.equal(r.body.role.classification,'APPROVED_ROLE');assert.equal(r.body.catalogOnly,true);
- assert.equal(f.connects,1);assert.deepEqual(f.released,[undefined]);assert.match(f.calls[0].text,/BEGIN.*READ ONLY/);assert.equal(f.calls.at(-1).text,'ROLLBACK');
+ assert.equal(f.connects,1);assert.deepEqual(f.released,[false]);assert.match(f.calls[0].text,/BEGIN.*READ ONLY/);assert.equal(f.calls.at(-1).text,'ROLLBACK');
  assert.deepEqual(f.calls.find(q=>q.text===SQL.ownership).values,[campaign,f.b.tenantId,f.b.projectId,f.b.brandId]);
  assert.deepEqual(f.calls.find(q=>q.text===SQL.preview).values,['linkedin','feed','text']);
  for(const q of f.calls){assert.equal(q.query_timeout,1500);assert.ok(Object.values(SQL).includes(q.text)||q.text==='ROLLBACK'||q.text.startsWith('BEGIN ')||q.text.startsWith('SET LOCAL '));}
@@ -136,8 +136,34 @@ test('disposable PostgreSQL: migrated schema, read-only state, role evidence, ti
   register(app,{env,pool,tokenVerifier,now:()=>now});
   const res=await request(app).get(PATH).set('Authorization','Bearer synthetic-founder');assert.equal(res.status,200);assert.equal(res.body.ownership,'MATCH');assert.equal(res.body.intendedPreview,'MATCH');assert.equal(res.body.role.classification,'APPROVED_ROLE');assert.ok(res.body.tables.every(r=>r.present&&r.rls_enabled&&r.can_select));assert.equal(pool.waitingCount,0);assert.equal(pool.idleCount,pool.totalCount);assert.deepEqual(await snapshot(),before);
   const c=await pool.connect();try{await c.query('BEGIN READ ONLY');await assert.rejects(c.query("insert into campaigns select * from campaigns where false"),{code:'25006'});await c.query('ROLLBACK');await c.query('BEGIN READ ONLY');await c.query("SET LOCAL statement_timeout='10ms'");await assert.rejects(c.query('select pg_sleep(1)'),{code:'57014'});await c.query('ROLLBACK');}finally{c.release();}
+  // Denial must also finish rollback before the HTTP response, with no membership mutation.
+  const deniedPool={connect:async()=>{const client=await pool.connect();return {query:q=>client.query(q.text===SQL.authority?{...q,text:'select false as authorized',values:[]}:q),release:e=>client.release(e)};}};
+  const deniedApp=express();register(deniedApp,{env,pool:deniedPool,tokenVerifier,now:()=>now});assert.equal((await request(deniedApp).get(PATH).set('Authorization','Bearer synthetic-founder')).status,403);assert.equal(pool.waitingCount,0);assert.equal(pool.idleCount,pool.totalCount);assert.deepEqual(await snapshot(),before);
   // Force a real database timeout through the handler; it must roll back and return the sole pool client.
   const timedPool={connect:async()=>{const client=await pool.connect();return {query:q=>client.query(q.text===SQL.ownership?{...q,text:'select pg_sleep(2)',values:[]}:q),release:e=>client.release(e)};}};
   const timedApp=express();register(timedApp,{env,pool:timedPool,tokenVerifier,now:()=>now});assert.equal((await request(timedApp).get(PATH).set('Authorization','Bearer synthetic-founder')).status,503);assert.equal(pool.waitingCount,0);assert.equal(pool.idleCount,pool.totalCount);assert.deepEqual(await snapshot(),before);
  }finally{await pool?.end();try{if(db)await admin.query(`drop database "${db}"`);}finally{await admin.end();}}
+});
+
+test('HTTP response waits for rollback and release on success, owner denial and query failure',async()=>{
+ for(const options of [{},{authorized:false},{fail:q=>q.text===SQL.ownership}]){
+  let allowRollback,rollbackEntered;const gate=new Promise(resolve=>allowRollback=resolve),entered=new Promise(resolve=>rollbackEntered=resolve);
+  const f=fixture({...options,rollback:async()=>{rollbackEntered();await gate;}});let handler,responded=false,status=200;
+  register({use:(_,fn)=>handler=fn},{env:f.env,pool:f.pool,tokenVerifier:f.tokenVerifier,now:()=>now});
+  const req={method:'GET',originalUrl:PATH,headers:{},get:name=>name==='Authorization'?'Bearer synthetic-founder':undefined};
+  const res={set(){},vary(){},status(s){status=s;return this;},json(){responded=true;assert.equal(f.released.length,1,'client must be released before response');return this;}};
+  const run=handler(req,res);
+  try{await entered;assert.equal(responded,false,'no response while rollback is pending');}
+  finally{allowRollback();await run;}
+  assert.equal(responded,true);assert.equal(status,options.authorized===false?403:options.fail?503:200);
+ }
+});
+
+test('failed client release finishes connection destruction before returning safe 503',async()=>{
+ let closeEntered,allowClose;const entered=new Promise(r=>closeEntered=r),gate=new Promise(r=>allowClose=r);
+ const f=fixture({releaseError:true,end:async()=>{closeEntered();await gate;}});let handler,responded=false,status;
+ register({use:(_,fn)=>handler=fn},{env:f.env,pool:f.pool,tokenVerifier:f.tokenVerifier,now:()=>now});
+ const req={method:'GET',originalUrl:PATH,headers:{},get:n=>n==='Authorization'?'Bearer synthetic-founder':undefined};
+ const res={set(){},vary(){},status(s){status=s;return this;},json(b){responded=true;assert.deepEqual(b,{error:{code:'DIAGNOSTIC_UNAVAILABLE'}});return this;}};
+ const run=handler(req,res);try{await entered;assert.equal(responded,false);}finally{allowClose();await run;}assert.equal(status,503);assert.equal(responded,true);
 });

@@ -48,11 +48,13 @@ function registerRuntimeDatabaseEvidence(app,{env={},pool,tokenVerifier,now=Date
   // Never infer IAM/privacy from request headers, K_SERVICE or this staging flag.
   if(typeof tokenVerifier?.verifyAccessToken!=='function'||typeof pool?.connect!=='function')return deny(503,'DIAGNOSTIC_UNAVAILABLE');
   if(busy||attempts>=3)return deny(429,'DIAGNOSTIC_LIMIT_REACHED');
-  busy=true; let client, destroy=false;
+  busy=true; let client, reply;
+  const errorReply=(status,code)=>({status,body:{error:{code}}});
   try {
+   reply=await(async()=>{
    const actor=await bounded(tokenVerifier.verifyAccessToken(extractBearerToken(req.get('Authorization'))),1500);
-   if(actor?.kind!=='customer'||actor.auth_user_id!==b.founderId||!actor.trusted_scope||actor.trusted_scope.tenant_id!==b.tenantId||actor.trusted_scope.project_id!==b.projectId||actor.trusted_scope.brand_id!==b.brandId)return deny(403,'DIAGNOSTIC_ACCESS_DENIED');
-   if(now()>=Date.parse(b.expiresAt))return deny(403,'DIAGNOSTIC_AUTHORIZATION_EXPIRED');
+   if(actor?.kind!=='customer'||actor.auth_user_id!==b.founderId||!actor.trusted_scope||actor.trusted_scope.tenant_id!==b.tenantId||actor.trusted_scope.project_id!==b.projectId||actor.trusted_scope.brand_id!==b.brandId)return errorReply(403,'DIAGNOSTIC_ACCESS_DENIED');
+   if(now()>=Date.parse(b.expiresAt))return errorReply(403,'DIAGNOSTIC_AUTHORIZATION_EXPIRED');
    attempts++;
    client=await bounded(pool.connect(),1500,c=>c.release(true));
    const query=(text,values=[])=>client.query({text,values,query_timeout:1500});
@@ -61,7 +63,7 @@ function registerRuntimeDatabaseEvidence(app,{env={},pool,tokenVerifier,now=Date
    await query("SET LOCAL lock_timeout = '500ms'");
    await query("SET LOCAL idle_in_transaction_session_timeout = '2000ms'");
    const authority=await query(SQL.authority,[b.founderId,b.tenantId,b.projectId,b.brandId]);
-   if(authority.rows[0]?.authorized!==true)return deny(403,'DIAGNOSTIC_ACCESS_DENIED');
+   if(authority.rows[0]?.authorized!==true)return errorReply(403,'DIAGNOSTIC_ACCESS_DENIED');
    const d2=(await query(SQL.ownership,[b.campaignId,b.tenantId,b.projectId,b.brandId])).rows[0]?.ownership;
    const role=(await query(SQL.role)).rows[0];
    const tables=(await query(SQL.tables,[TABLES])).rows;
@@ -71,13 +73,25 @@ function registerRuntimeDatabaseEvidence(app,{env={},pool,tokenVerifier,now=Date
    const bool=v=>typeof v==='boolean'?v:null;
    const output={poolOrigin:'injected_application_pool',provenanceBasis:'source_wiring_not_dynamic_attestation',ownership:['MATCH','MISMATCH','NOT VERIFIED'].includes(d2)?d2:'NOT VERIFIED',role:{classification:role.effective_role===b.approvedRole?'APPROVED_ROLE':'UNAPPROVED_ROLE',superuser:bool(role.rolsuper),bypassRls:bool(role.rolbypassrls),noRoleSwitch:bool(role.no_role_switch)},tables:tables.map(r=>Object.fromEntries(['name','present','real_table','rls_enabled','rls_forced','owner_privileges','schema_usage','can_select','can_insert','can_update','rls_effective'].map(k=>[k,k==='name'?r[k]:bool(r[k])]))),intendedPreview:preview,catalogOnly:true};
    if(now()>=Date.parse(b.expiresAt))throw Error();
-   await query('ROLLBACK'); client.release(); client=null;
-   return res.json(output);
-  } catch(error) { return error instanceof AuthenticationRequiredError ? deny(401,'DIAGNOSTIC_AUTHENTICATION_REQUIRED') : deny(503,'DIAGNOSTIC_UNAVAILABLE'); }
-  finally {
-   if(client){try{await client.query({text:'ROLLBACK',query_timeout:1500});}catch{destroy=true;}finally{client.release(destroy);}}
+   return {status:200,body:output};
+   })();
+  } catch(error) {
+   reply=error instanceof AuthenticationRequiredError ? errorReply(401,'DIAGNOSTIC_AUTHENTICATION_REQUIRED') : errorReply(503,'DIAGNOSTIC_UNAVAILABLE');
+  } finally {
+   if(client){
+    let destroy=false;
+    try{await client.query({text:'ROLLBACK',query_timeout:1500});}
+    catch{destroy=true;reply=errorReply(503,'DIAGNOSTIC_UNAVAILABLE');}
+    try{client.release(destroy);}
+    catch{
+     reply=errorReply(503,'DIAGNOSTIC_UNAVAILABLE');
+     // A failed release must not leave the connection available for reuse.
+     try{await bounded(client.end(),1500);}catch{}
+    }
+   }
    busy=false;
   }
+  return res.status(reply.status).json(reply.body);
  });
  return true;
 }
