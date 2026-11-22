@@ -288,7 +288,6 @@ function createApp({
   customerScopeProvisioner,
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
   runtimeDatabaseEvidencePool = null,
-  runtimeDatabaseEvidenceIamVerifier = null,
   generationJobRepository = new InMemoryGenerationJobRepository(),
   mediaAssetRepository = null,
   mediaIntakeService = null,
@@ -367,7 +366,6 @@ function createApp({
   const app = express();
   require("./src/staging/runtimeDatabaseEvidence").registerRuntimeDatabaseEvidence(app, {
     env, pool: runtimeDatabaseEvidencePool, tokenVerifier: customerTokenVerifier,
-    iamVerifier: runtimeDatabaseEvidenceIamVerifier,
   });
   app.use("/customer", privateResponse);
   app.use("/billing/stripe/checkout", privateResponse);
@@ -828,7 +826,6 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       customerScopeProvisioner,
       customerTokenVerifier,
       runtimeDatabaseEvidencePool: brandBrainRepository.pool,
-      // IAM proof intentionally unavailable until an approved verifier exists.
       generationJobRepository,
       mediaAssetRepository: media.mediaAssetRepository,
       mediaPreviewStorage: media.mediaPreviewStorage,
