@@ -287,6 +287,7 @@ function createApp({
   workspaceOnboardingService,
   customerScopeProvisioner,
   customerTokenVerifier = new UnconfiguredCustomerTokenVerifier(),
+  runtimeDatabaseEvidencePool = null,
   generationJobRepository = new InMemoryGenerationJobRepository(),
   mediaAssetRepository = null,
   mediaIntakeService = null,
@@ -363,6 +364,9 @@ function createApp({
     brandBrainRepository,
   });
   const app = express();
+  require("./src/staging/runtimeDatabaseEvidence").registerRuntimeDatabaseEvidence(app, {
+    env, pool: runtimeDatabaseEvidencePool, tokenVerifier: customerTokenVerifier,
+  });
   app.use("/customer", privateResponse);
   app.use("/billing/stripe/checkout", privateResponse);
   app.use(createCorsMiddleware({ config: corsConfig }));
@@ -821,6 +825,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       workspaceOnboardingRepository,
       customerScopeProvisioner,
       customerTokenVerifier,
+      runtimeDatabaseEvidencePool: brandBrainRepository.pool,
       generationJobRepository,
       mediaAssetRepository: media.mediaAssetRepository,
       mediaPreviewStorage: media.mediaPreviewStorage,
