@@ -10,6 +10,8 @@ import json
 import os
 import re
 import sys
+import io
+import termios
 from pathlib import Path
 
 ISSUE='https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-'
@@ -25,6 +27,85 @@ BASE_OPERATOR=ROOT/'bg017c-s09b.py'
 PROFILE=ROOT/'bg017c-sprint10-profile.private.json'
 CANDIDATE=ROOT/'bg017c-sprint10-binding.private.json'
 EVIDENCE=ROOT/'bg017c-sprint10-evidence.private.json'
+PREVIOUS_SUPPLEMENT_SHA256='373e2c9f818454acc1fce32ef868c4ecf3929fcf3d86fc91929517863adfee61'
+MIGRATION_RECEIPT=ROOT/'bg017c-sprint10b-migration.private.json'
+_STAGE='local.start'
+
+def stage(value):
+    global _STAGE
+    _STAGE=value
+
+
+def terminal_prompt(prompt,hidden=False):
+    # /dev/tty is non-seekable: NEVER open r+ or use getpass fallback.
+    before=_STAGE
+    stage('terminal.open')
+    reader=writer=None
+    old=None
+    try:
+        reader=os.fdopen(os.open('/dev/tty',os.O_RDONLY|os.O_NOCTTY),'r',encoding='utf-8')
+        writer=os.fdopen(os.open('/dev/tty',os.O_WRONLY|os.O_NOCTTY),'w',encoding='utf-8')
+        need(reader.isatty() and writer.isatty(),'TERMINAL_NOT_AVAILABLE')
+        if hidden:
+            stage('terminal.echo_disable')
+            old=termios.tcgetattr(reader.fileno())
+            desired=copy.deepcopy(old)
+            desired[3] &= ~(termios.ECHO|termios.ECHONL)
+            termios.tcsetattr(reader.fileno(),termios.TCSAFLUSH,desired)
+            actual=termios.tcgetattr(reader.fileno())
+            need(not actual[3] & (termios.ECHO|termios.ECHONL),
+                 'TERMINAL_ECHO_SUPPRESSION_FAILED')
+        stage('terminal.hidden_read' if hidden else 'terminal.ordinary_read')
+        writer.write(prompt); writer.flush()
+        value=reader.readline(65537)
+        need(value.endswith('\n') and len(value)<=65536,'TERMINAL_INPUT_INCOMPLETE_OR_TOO_LONG')
+        value=value.strip()
+    finally:
+        try:
+            if old is not None and reader is not None:
+                # Discard any unread secret input before restoring echo.
+                try:
+                    try:
+                        termios.tcflush(reader.fileno(),termios.TCIFLUSH)
+                    finally:
+                        termios.tcsetattr(reader.fileno(),termios.TCSANOW,old)
+                    need(termios.tcgetattr(reader.fileno())==old,'TERMINAL_RESTORE_FAILED')
+                    if writer is not None:
+                        writer.write('\n'); writer.flush()
+                except BaseException:
+                    stage('terminal.restore'); raise
+        finally:
+            if reader is not None: reader.close()
+            if writer is not None: writer.close()
+    stage(before)
+    return value
+
+
+def safe_error_record(error):
+    # Only fixed codes appearing in reviewed need()/RuntimeError() literals may escape.
+    allowed=set()
+    for file in (Path(__file__),BASE_OPERATOR):
+        try:
+            for node in ast.walk(ast.parse(file.read_text())):
+                if isinstance(node,ast.Call) and isinstance(node.func,ast.Name):
+                    args=node.args
+                    arg=args[1] if node.func.id=='need' and len(args)>1 else (
+                        args[0] if node.func.id=='RuntimeError' and args else None)
+                    if isinstance(arg,ast.Constant) and isinstance(arg.value,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{1,100}',arg.value):
+                        allowed.add(arg.value)
+        except Exception:
+            pass
+    code=str(error) if type(error) is RuntimeError and str(error) in allowed else 'OPERATOR_OPERATION_FAILED'
+    if isinstance(error,KeyboardInterrupt): category='INTERRUPTED'
+    elif isinstance(error,io.UnsupportedOperation): category='UNSUPPORTED_STREAM_OPERATION'
+    elif isinstance(error,termios.error): category='TERMINAL_CONTROL_FAILED'
+    elif isinstance(error,OSError): category='LOCAL_OS_ERROR'
+    elif isinstance(error,ValueError): category='LOCAL_VALUE_ERROR'
+    elif isinstance(error,RuntimeError): category='SAFE_GUARD_REJECTION'
+    else: category='LOCAL_EXCEPTION'
+    return {'status':'HOLD','stage':_STAGE,'code':code,'category':category,
+            'automaticRetry':False,
+            'next':'Preserve private state. Do not retry activation automatically.'}
 
 
 def need(ok,code):
@@ -97,6 +178,7 @@ def response_contract(body):
 
 
 def load_operator():
+    stage('local.operator_load')
     source=BASE_OPERATOR.read_text()
     # Retain S09B activation implementation. Add only a pre-output provenance guard.
     if 'DIAGNOSTIC_PROVENANCE_CONTRACT_MISMATCH' not in source:
@@ -125,6 +207,7 @@ def load_operator():
         'campaign_command_receipts','campaign_preview_profiles','tenants','projects',
         'tenant_memberships','brand_brains','workspace_onboarding_profiles'},
         'BASE_OPERATOR_RESPONSE_ALLOWLIST_MISMATCH')
+    ns['tty']=terminal_prompt
     return ns
 
 
@@ -154,10 +237,19 @@ def prepare():
                       'bindingFile':str(CANDIDATE),'evidenceFile':str(EVIDENCE)}))
 
 
-def check_profile():
+def check_profile(*, migration_in_progress=False):
+    stage('local.integrity_profile')
     p=private(PROFILE)
     need(p['baseOperatorSha256']==sha(BASE_OPERATOR.read_bytes()),'BASE_OPERATOR_CHANGED_SINCE_PREPARATION')
     need(p['supplementSha256']==sha(Path(__file__).read_bytes()),'SUPPLEMENT_CHANGED_SINCE_PREPARATION')
+    if MIGRATION_RECEIPT.exists() or MIGRATION_RECEIPT.is_symlink():
+        receipt=private(MIGRATION_RECEIPT)
+        need(receipt.get('status')=='COMPLETE' or
+             migration_in_progress and receipt.get('status')=='INTENT',
+             'MIGRATION_INCOMPLETE_REQUIRES_READBACK')
+        need(receipt.get('correctedSupplementSha256')==p['supplementSha256'] and
+             receipt.get('baseOperatorSha256')==p['baseOperatorSha256'],
+             'MIGRATION_RECEIPT_HASH_MISMATCH')
 
 
 def bind_runtime_evidence(ns,binding):
@@ -223,6 +315,7 @@ def activate(ns):
             check_deployed_binding(ns)
         return original_event(action,status)
     ns['tty']=tty; ns['save']=save; ns['event']=event
+    stage('activation.operator')
     ns['activate']()
     evidence=private(EVIDENCE)
     captured=ns['W']/'evidence.redacted.json'
@@ -413,21 +506,81 @@ def cleanup(ns):
                       'restorationRevisionMayRemainAtZeroNormalTraffic':True}))
 
 
+def migrate_profile(previous):
+    """Local-only migration. Never loads S09B definitions or calls cloud commands."""
+    stage('migration.verify_previous')
+    old=private(PROFILE)
+    previous=Path(previous)
+    st=previous.lstat()
+    need(previous.is_file() and not previous.is_symlink() and st.st_uid==os.getuid()
+         and st.st_mode & 0o077 == 0,'PREVIOUS_SUPPLEMENT_FILE_PERMISSIONS')
+    need(old['supplementSha256']==PREVIOUS_SUPPLEMENT_SHA256 and
+         sha(previous.read_bytes())==PREVIOUS_SUPPLEMENT_SHA256,
+         'PREVIOUS_SUPPLEMENT_HASH_MISMATCH')
+    need(old['baseOperatorSha256']==sha(BASE_OPERATOR.read_bytes()),
+         'BASE_OPERATOR_CHANGED_SINCE_PREPARATION')
+    need(not (ROOT/'bg017c-s09b').exists() and not (ROOT/'bg017c-s09b').is_symlink(),
+         'ACTIVATION_STATE_EXISTS_MIGRATION_REFUSED')
+    original_candidate=CANDIDATE.read_bytes(); original_evidence=EVIDENCE.read_bytes()
+    private(CANDIDATE); e=private(EVIDENCE)
+    need(sha(original_candidate)==e['inputBindingSha256'],'PRIVATE_CANDIDATE_CHANGED')
+    need(e.get('finalActivationApprovalRef') is None,'ACTIVATION_EVIDENCE_EXISTS_MIGRATION_REFUSED')
+    backup=PROFILE.with_name(PROFILE.name+'.before-sprint10b')
+    need(not backup.exists() and not backup.is_symlink() and
+         not MIGRATION_RECEIPT.exists() and not MIGRATION_RECEIPT.is_symlink(),
+         'MIGRATION_ALREADY_STARTED_REQUIRES_READBACK')
+    updated=dict(old)
+    updated['supplementSha256']=sha(Path(__file__).read_bytes())
+    need(updated['supplementSha256']!=PREVIOUS_SUPPLEMENT_SHA256,'CORRECTED_SUPPLEMENT_REQUIRED')
+    stage('migration.preserve_evidence')
+    old_bytes=PROFILE.read_bytes()
+    write_new(backup,old_bytes)
+    receipt={'status':'INTENT','previousSupplementSha256':PREVIOUS_SUPPLEMENT_SHA256,
+             'correctedSupplementSha256':updated['supplementSha256'],
+             'baseOperatorSha256':old['baseOperatorSha256'],
+             'originalProfileBackup':str(backup),'originalProfileSha256':sha(old_bytes),
+             'candidateSha256':sha(original_candidate),'evidenceSha256':sha(original_evidence),
+             'cloudActions':False,'activationExecuted':False}
+    write_new(MIGRATION_RECEIPT,exact_json(receipt))
+    stage('migration.update_profile')
+    tmp=PROFILE.with_name(PROFILE.name+'.sprint10b-new')
+    write_new(tmp,exact_json(updated))
+    need(PROFILE.read_bytes()==old_bytes and
+         CANDIDATE.read_bytes()==original_candidate and EVIDENCE.read_bytes()==original_evidence,
+         'PRIVATE_PREPARATION_CHANGED_DURING_MIGRATION')
+    os.replace(tmp,PROFILE)
+    check_profile(migration_in_progress=True)
+    need(CANDIDATE.read_bytes()==original_candidate and EVIDENCE.read_bytes()==original_evidence,
+         'PRIVATE_PREPARATION_CHANGED_DURING_MIGRATION')
+    stage('migration.complete')
+    receipt['status']='COMPLETE'
+    replace_private(MIGRATION_RECEIPT,receipt)
+    check_profile()
+    print(json.dumps({'status':'LOCAL_INTEGRITY_MIGRATION_PASS',
+                      'previousHashesVerified':True,'originalProfilePreserved':True,
+                      'candidateAndEvidenceUnchanged':True,'sprint09bUnchanged':True,
+                      'activationExecuted':False,'freshExecutionAuthorisationRequired':True}))
+
+
 def main():
-    need(len(sys.argv)==2 and sys.argv[1] in ('prepare','activate','cleanup'),'MODE_REQUIRED')
+    need(len(sys.argv)>=2,'MODE_REQUIRED')
     mode=sys.argv[1]
+    if mode=='migrate-profile':
+        need(len(sys.argv)==3,'PREVIOUS_SUPPLEMENT_PATH_REQUIRED')
+        migrate_profile(sys.argv[2]); return
+    need(len(sys.argv)==2 and mode in ('prepare','activate','cleanup'),'MODE_REQUIRED')
     if mode=='prepare':
+        stage('local.prepare')
         prepare(); return
     check_profile()
     ns=load_operator()
+    stage('activation.preconditions' if mode=='activate' else 'cleanup.operator')
     activate(ns) if mode=='activate' else cleanup(ns)
 
 
 if __name__=='__main__':
     try:
         main()
-    except Exception as error:
-        code=str(error) if type(error) is RuntimeError and re.fullmatch(r'[A-Z][A-Z0-9_]{1,100}',str(error)) else 'OPERATOR_OPERATION_FAILED'
-        print(json.dumps({'status':'HOLD','code':code,'automaticRetry':False,
-                          'next':'Preserve private state. Do not repeat activation; use reviewed cleanup or scoped readback.'}))
+    except (Exception,KeyboardInterrupt) as error:
+        print(json.dumps(safe_error_record(error)))
         sys.exit(1)
