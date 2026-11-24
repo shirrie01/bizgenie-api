@@ -1,0 +1,24 @@
+{
+  "repoPath": null,
+  "bindingFile": null,
+  "bindingFormat": "diagnostic",
+  "bindingSha256": null,
+  "bindingEvidenceRef": null,
+  "acceptedCampaignId": null,
+  "operatorName": null,
+  "operatorGoogleAccount": null,
+  "approvedOperatorDbRole": null,
+  "runtimeEvidenceRef": null,
+  "runtime": {
+    "revision": "bizgenie-api-staging-00030-pob",
+    "imageDigest": null,
+    "serviceAccount": null,
+    "dbSecretVersion": "latest"
+  },
+  "planFile": null,
+  "resultFile": null,
+  "approvedPlanSha256": null,
+  "executionApprovalRef": null,
+  "rollbackApprovalRef": null,
+  "rollbackAuditId": null
+}
