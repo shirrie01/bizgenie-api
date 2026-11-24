@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),request=require('supertest');
-const {buildContentPlan,PREVIEW_TUPLES}=require('../src/campaigns/contentPlan');
+const {buildContentPlan,PREVIEW_TUPLES,isRealDate}=require('../src/campaigns/contentPlan');
 const fonzo=require('./fixtures/fonzo-acceptance');
 const campaign={campaign_id:'33333333-3333-4333-8333-333333333333',name:'Fonzo launch week',goal:fonzo.goal,display_timezone:'Europe/London'};
 const plan=(over={})=>buildContentPlan({campaign,brandBrain:fonzo.brandBrain,startDate:fonzo.startDate,...over});
@@ -40,8 +40,47 @@ test('plan states placeholders, assumptions and a measurement plan without inven
  assert.ok(p.items.filter(i=>i.is_post).every(i=>i.measurement.utm_campaign==='fonzo-launch-week-wk1'&&/^day\d-(image|video)$/.test(i.measurement.utm_content)));
  assert.ok(p.items.filter(i=>i.content_item.format==='video').every(i=>i.execution_mode_options.join()==='ai,hybrid'));
 });
+test('impossible calendar dates are rejected, never rolled forward; real dates incl. leap day are accepted',()=>{
+ for(const bad of ['2026-02-30','2026-02-29','2027-02-29','2026-04-31','2026-06-31','2026-13-01','2026-00-10','2026-12-32','2026-12-00','2026-1-5','26-12-07','2026-12-07T00:00:00Z','2026-12-07 ',' 2026-12-07',20261207,null,undefined]){assert.equal(isRealDate(bad),false,String(bad));assert.throws(()=>plan({startDate:bad}),/PLAN_START_DATE_INVALID/,String(bad));}
+ for(const good of ['2026-12-07','2028-02-29','2026-02-28','2027-03-01','2026-12-31'])assert.equal(isRealDate(good),true,good);
+ assert.equal(plan({startDate:'2028-02-29'}).items.find(i=>i.day===1).schedule.scheduled_for,'2028-02-29T09:00:00.000Z');
+ assert.equal(plan({startDate:'2028-02-29'}).items.find(i=>i.day===2).schedule.local_datetime,'2028-03-01T12:00:00.000');
+});
+test('approved sugar-free fact is compatible with the unapproved-claims fence (only UNAPPROVED sugar/nutrition/health claims are forbidden)',()=>{
+ const p=plan();
+ for(const i of p.items)for(const st of i.generation_steps){
+  assert.match(st.execution_brief,/Approved facts you may state: Fonzo is a sugar-free soft drink; Fonzo is sold in 330ml cans\./);
+  assert.match(st.execution_brief,/or any unapproved health, sugar-content, calorie or nutritional claim \(only the approved facts above may be stated\)/);
+  assert.doesNotMatch(st.execution_brief,/or any health, sugar-content/);
+ }
+ assert.ok(p.guardrails[0].includes('unapproved health, sugar-content'));assert.ok(!p.guardrails[0].includes('any health, sugar-content'));
+ for(const i of p.items)assert.match(i.initial_content.body,/Fonzo is a sugar-free soft drink/);
+ // Without an approved fact the brief still forbids stating any sugar/nutrition fact.
+ const neutral=buildContentPlan({campaign,brandBrain:{name:'Plain Co'},startDate:fonzo.startDate});
+ assert.match(neutral.items[0].generation_steps[0].execution_brief,/do not state any product, ingredient, taste, price, nutrition, health or sourcing fact/);
+ assert.doesNotMatch(neutral.items[0].initial_content.body,/sugar/i);
+ // A brand's own prohibited claims are still added to the fence.
+ const guarded=buildContentPlan({campaign,brandBrain:{...fonzo.brandBrain,commercial:{...fonzo.brandBrain.commercial,prohibited_claims:['No health or weight-loss claims']}},startDate:fonzo.startDate});
+ assert.match(guarded.items[0].generation_steps[0].execution_brief,/also avoid: No health or weight-loss claims/);
+});
+test('a different start date never collides with names or idempotency keys; the same week is exactly repeatable',()=>{
+ const a=plan({startDate:'2026-12-07'}),b=plan({startDate:'2026-12-14'}),a2=plan({startDate:'2026-12-07'});
+ assert.deepEqual(a,a2,'same week: identical names, keys and content');
+ assert.equal(a.plan_id,'launch-week-7d.v1:2026-12-07');assert.equal(b.plan_id,'launch-week-7d.v1:2026-12-14');
+ const names=(p)=>p.items.map(i=>i.content_item.name),keys=(p)=>p.items.map(i=>i.idempotency_key);
+ for(const p of [a,b]){assert.equal(new Set(names(p)).size,8);assert.equal(new Set(keys(p)).size,8);assert.ok(keys(p).every(k=>/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(k)&&k.length<=128));assert.ok(names(p).every(n=>n.length<=200));}
+ assert.equal(names(a).filter(n=>names(b).includes(n)).length,0,'no shared item names across weeks');
+ assert.equal(keys(a).filter(k=>keys(b).includes(k)).length,0,'no shared keys across weeks');
+ assert.ok(a.items.every(i=>i.content_item.name.startsWith('Week of 2026-12-07 · ')&&i.idempotency_key.includes(':2026-12-07:'+campaign.campaign_id+':'+i.plan_item)));
+ assert.ok(a.items.every(i=>i.content_item.name===`Week of 2026-12-07 · ${i.display_name}`));
+ // Another campaign with the same week also gets distinct keys.
+ const other=buildContentPlan({campaign:{...campaign,campaign_id:'44444444-4444-4444-8444-444444444444'},brandBrain:fonzo.brandBrain,startDate:'2026-12-07'});
+ assert.equal(keys(a).filter(k=>keys(other).includes(k)).length,0);
+ // Only week identity differs between weeks: strategy, assets and credit needs are the same shape.
+ assert.deepEqual(a.totals,b.totals);assert.deepEqual(a.credit_requirements,b.credit_requirements);
+});
 test('invalid inputs fail closed',()=>{
- for(const bad of [{campaign:null},{brandBrain:null},{brandBrain:{}},{startDate:'2026-13-45'},{startDate:'tomorrow'},{campaign:{...campaign,display_timezone:'Not/AZone'}}])assert.throws(()=>plan(bad));
+ for(const bad of [{campaign:null},{brandBrain:null},{brandBrain:{}},{startDate:'2026-13-45'},{startDate:'2026-02-30'},{startDate:'tomorrow'},{campaign:{...campaign,display_timezone:'Not/AZone'}}])assert.throws(()=>plan(bad));
 });
 
 // HTTP: the read-only route behind the real campaign router.
@@ -62,7 +101,7 @@ test('GET content-plan is authenticated, read-only, strict and returns the plan 
  const before=structuredClone(f.repo.state.campaigns.get(f.s.id));
  const r=await request(f.app).get(url).query(q).set('authorization','Bearer owner');assert.equal(r.status,200,JSON.stringify(r.body));assert.equal(r.body.plan.campaign_id,f.s.id);assert.equal(r.body.plan.totals.posts,7);assert.equal(f.reads,1);
  assert.deepEqual(f.repo.state.campaigns.get(f.s.id),before,'read-only: no campaign mutation');
- for(const bad of [{...q,start_date:'bad'},{...q,extra:'1'},{tenant_id:'tenant_a',project_id:'project_a'}])assert.equal((await request(f.app).get(url).query(bad).set('authorization','Bearer owner')).status,400);
+ for(const bad of [{...q,start_date:'bad'},{...q,start_date:'2026-02-30'},{...q,start_date:'2026-13-45'},{...q,extra:'1'},{tenant_id:'tenant_a',project_id:'project_a'}]){const r2=await request(f.app).get(url).query(bad).set('authorization','Bearer owner');assert.equal(r2.status,400,JSON.stringify(bad));}
  assert.equal((await request(f.app).get(url).query({...q,project_id:'foreign'}).set('authorization','Bearer owner')).status>=400,true);
  assert.equal((await request(f.app).post(url).set('authorization','Bearer owner').send({})).status,404);
  const missing=await request(f.app).get(`/customer/campaigns/${randomUUID()}/content-plan`).query(q).set('authorization','Bearer owner');assert.equal(missing.status,404);

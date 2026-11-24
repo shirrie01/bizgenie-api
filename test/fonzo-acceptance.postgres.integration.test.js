@@ -124,8 +124,8 @@ const profiles = {
     const { createApp } = require('../index');
     return createApp({ campaignRepository: campaigns, brandBrainRepository: brainRepo, customerTokenVerifier: { verifyAccessToken: async () => actor }, authorizationService: { authorizeProject: async () => context }, logger: { info() {}, warn() {}, error() {} } });
   }
-  async function fetchPlan(campaignId) {
-    const r = await request(app()).get(`/customer/campaigns/${campaignId}/content-plan`).query({ tenant_id: 'tenant_a', project_id: 'project_a', start_date: fonzo.startDate }).set('authorization', 'Bearer fixture');
+  async function fetchPlan(campaignId, startDate = fonzo.startDate) {
+    const r = await request(app()).get(`/customer/campaigns/${campaignId}/content-plan`).query({ tenant_id: 'tenant_a', project_id: 'project_a', start_date: startDate }).set('authorization', 'Bearer fixture');
     assert.equal(r.status, 200, JSON.stringify(r.body));
     return r.body.plan;
   }
@@ -160,7 +160,7 @@ const profiles = {
     const q = quotes(), p = providers(q), jobs = new CreativeJobService({ quoteService: q, campaignRepository: campaigns });
     const scheduled = [];
     for (const item of plan.items) {
-      const created = await cmd(campaignId, 'create_content_item', { ...item.content_item, initial_content: item.initial_content }, `fonzo-plan:${campaignId}:${item.plan_item}`);
+      const created = await cmd(campaignId, 'create_content_item', { ...item.content_item, initial_content: item.initial_content }, item.idempotency_key);
       const variantId = created.created_ids.variant_ids[0];
       let revisionId = created.created_ids.revision_ids[0];
       for (const step of item.generation_steps) {
@@ -194,7 +194,7 @@ const profiles = {
     assert.equal(calendar.body.entries.length, 7);
     assert.equal((await campaigns.verifyCampaignProjection(context, campaignId)).valid, true);
     // Replaying the whole plan creates nothing new (idempotent content-item keys).
-    const again = await cmd(campaignId, 'create_content_item', { ...plan.items[0].content_item, initial_content: plan.items[0].initial_content }, `fonzo-plan:${campaignId}:1`).catch((e) => e);
+    const again = await cmd(campaignId, 'create_content_item', { ...plan.items[0].content_item, initial_content: plan.items[0].initial_content }, plan.items[0].idempotency_key).catch((e) => e);
     assert.equal((await campaigns.getCampaign(context, campaignId)).items.size, 8, `replay or stale rejection must not add a ninth item: ${again?.code || 'replayed'}`);
     assert.equal(JSON.stringify(plan).includes('gs://'), false);
   });
@@ -242,6 +242,30 @@ const profiles = {
     await assert.rejects(q.confirm(actor, second.quote_id, { idempotency_key: randomUUID(), max_credits: 5, confirmed: true }), { code: 'INSUFFICIENT_AVAILABLE_CREDITS' });
     assert.ok((await balance()) >= 0);
     assert.equal(counters.video, 0, 'no provider is contacted by any of the above');
+  });
+
+  it('two launch weeks coexist in one campaign without name or key collisions; each week replays exactly and the impossible date is refused', async () => {
+    const campaignId = await createCampaign();
+    const week1 = await fetchPlan(campaignId, '2026-12-07'), week2 = await fetchPlan(campaignId, '2026-12-14');
+    const add = (item) => cmd(campaignId, 'create_content_item', { ...item.content_item, initial_content: item.initial_content }, item.idempotency_key);
+    const ids1 = []; for (const item of week1.items) ids1.push((await add(item)).created_ids.content_item_ids[0]);
+    const count = async () => (await campaigns.getCampaign(context, campaignId)).items.size;
+    assert.equal(await count(), 8);
+    const ids2 = []; for (const item of week2.items) ids2.push((await add(item)).created_ids.content_item_ids[0]);
+    assert.equal(await count(), 16, 'the next week adds eight new items; none is mistaken for week one');
+    assert.equal(new Set([...ids1, ...ids2]).size, 16);
+    const names = [...(await campaigns.getCampaign(context, campaignId)).items.values()].map((i) => i.name);
+    assert.equal(new Set(names).size, 16, 'all saved names are distinct across weeks');
+    // Exact same-week retry: replaying a week-one key (with a stale expected version) never adds a ninth-of-week or seventeenth item.
+    const replay = await add(week1.items[0]).catch((e) => e);
+    assert.equal(await count(), 16, `replay or stale refusal must not add an item: ${replay?.code || 'replayed'}`);
+    if (!(replay instanceof Error)) assert.deepEqual(replay.created_ids.content_item_ids, [ids1[0]], 'a successful replay returns the original item');
+    // Impossible dates are refused by the route (400), never rolled into March.
+    for (const bad of ['2026-02-30', '2026-13-45']) {
+      const r = await request(app()).get(`/customer/campaigns/${campaignId}/content-plan`).query({ tenant_id: 'tenant_a', project_id: 'project_a', start_date: bad }).set('authorization', 'Bearer fixture');
+      assert.equal(r.status, 400, bad);
+    }
+    assert.equal(counters.text + counters.image + counters.video, 0, 'planning and adding items never invokes a provider');
   });
 
   it('another tenant cannot read, plan, quote or confirm Fonzo work (application-level checks only; the runtime database role bypasses RLS)', async () => {

@@ -61,10 +61,19 @@ const list = (value) => (Array.isArray(value) ? value.map(clean).filter(Boolean)
 const clip = (value, max) => (value.length <= max ? value : `${value.slice(0, max - 1).trimEnd()}…`);
 const slug = (value) => clean(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "campaign";
 
+
+// Strict calendar date: the string must round-trip through a real UTC date, so 2026-02-30 or 2026-13-45 are rejected, never rolled forward.
+function isRealDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [y, m, d] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 function buildContentPlan({ campaign, brandBrain, startDate }) {
   if (!campaign || typeof campaign !== "object" || !campaign.campaign_id) throw new Error("PLAN_CAMPAIGN_REQUIRED");
   if (!brandBrain || typeof brandBrain !== "object" || !clean(brandBrain.name)) throw new Error("PLAN_BRAND_BRAIN_REQUIRED");
-  if (typeof startDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || Number.isNaN(Date.parse(`${startDate}T00:00:00Z`))) throw new Error("PLAN_START_DATE_INVALID");
+  if (!isRealDate(startDate)) throw new Error("PLAN_START_DATE_INVALID");
   const timeZone = clean(campaign.display_timezone) || "Europe/London";
   offsetMinutes(timeZone, Date.parse(`${startDate}T12:00:00Z`));
 
@@ -87,7 +96,7 @@ function buildContentPlan({ campaign, brandBrain, startDate }) {
   assumptions.push("Trade terms, delivery area, minimum order and pricing are not stated in any item.");
 
   const factsLine = approvedClaims.length ? `Approved facts you may state: ${approvedClaims.join("; ")}.` : "No approved product facts are supplied: do not state any product, ingredient, taste, price, nutrition, health or sourcing fact.";
-  const fence = `Never state or imply: testimonials, ratings, certifications, retailer or distributor partnerships, awards, or any health, sugar-content, calorie or nutritional claim${prohibited.length ? `; also avoid: ${prohibited.join("; ")}` : ""}.`;
+  const fence = `Never state or imply: testimonials, ratings, certifications, retailer or distributor partnerships, awards, or any unapproved health, sugar-content, calorie or nutritional claim (only the approved facts above may be stated)${prohibited.length ? `; also avoid: ${prohibited.join("; ")}` : ""}.`;
   const contextLine = [description && `About: ${description}`, positioning && `Positioning: ${positioning}`, audienceSummary && `Audience: ${audienceSummary}`, tone && `Tone: ${tone}`, differentiators.length && `Differentiators: ${differentiators.join("; ")}`].filter(Boolean).join(" | ");
 
   const items = ARC.map((slotDef, index) => {
@@ -100,7 +109,10 @@ function buildContentPlan({ campaign, brandBrain, startDate }) {
       : slotDef.lane === "consumer"
         ? { label: primaryCta || "Follow for more", source: primaryCta ? "brand_brain" : "default_needs_confirmation" }
         : { label: primaryCta || "Get in touch", source: primaryCta ? "brand_brain" : "default_needs_confirmation" };
-    const name = `${slotDef.post ? `Day ${slotDef.day} · ` : ""}${slotDef.theme} (${LABEL[slotDef.platform]} ${slotDef.format})`;
+    const shortName = `${slotDef.post ? `Day ${slotDef.day} · ` : ""}${slotDef.theme} (${LABEL[slotDef.platform]} ${slotDef.format})`;
+    // Week identity: the start date is part of the saved name and of the idempotency key, so another week never collides with this one,
+    // while the same week always yields the same names and keys (exact retry safety).
+    const name = `Week of ${startDate} · ${shortName}`;
     // Copy for an image/video item is the draft in `initial_content` (the quote path can only generate text for text-format items;
     // it cannot attach AI text to a media item). Only the media asset is a priced generation step.
     const steps = [{ execution_class: CLASS_BY_FORMAT[slotDef.format], purpose: `${slotDef.format}_asset` }];
@@ -118,6 +130,8 @@ function buildContentPlan({ campaign, brandBrain, startDate }) {
     const initialContent = { title: null, body: clip(body, 4000), caption: cta.label, alt_text: clip(`Placeholder visual for ${brand}: ${slotDef.theme}`, 2000), asset_refs: [] };
     return {
       plan_item: index + 1,
+      idempotency_key: `plan:${PACK}:${startDate}:${campaign.campaign_id}:${index + 1}`,
+      display_name: clip(shortName, 200),
       key: slotDef.key,
       day: slotDef.day,
       is_post: slotDef.post,
@@ -138,6 +152,7 @@ function buildContentPlan({ campaign, brandBrain, startDate }) {
   return {
     contract_version: CONTRACT,
     pack: PACK,
+    plan_id: `${PACK}:${startDate}`,
     campaign_id: campaign.campaign_id,
     start_date: startDate,
     display_timezone: timeZone,
@@ -168,4 +183,4 @@ function buildContentPlan({ campaign, brandBrain, startDate }) {
   };
 }
 
-module.exports = { CONTRACT, PACK, PREVIEW_TUPLES, CLASS_BY_FORMAT, buildContentPlan };
+module.exports = { CONTRACT, PACK, PREVIEW_TUPLES, CLASS_BY_FORMAT, buildContentPlan, isRealDate };

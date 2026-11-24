@@ -14,7 +14,7 @@ const {
 } = require("./errors");
 const { identifier, uuid, content: contentSchema } = require("./schema");
 const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
-const { buildContentPlan } = require("./contentPlan");
+const { buildContentPlan, isRealDate } = require("./contentPlan");
 const { CampaignStrategyValidationError, CampaignVariantGenerationService } = require("./generation");
 const { safeMeasurement } = require("./measurementRegistry");
 const { GenerationIncompleteError } = require("../generation");
@@ -139,7 +139,7 @@ const calendarQuery = queryScope.extend({
 }).strict().refine(value => Date.parse(value.from) < Date.parse(value.to), {
   path: ["to"], message: "Calendar window end must be after its start",
 });
-const contentPlanQuery = queryScope.extend({ start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict();
+const contentPlanQuery = queryScope.extend({ start_date: z.string().refine(isRealDate) }).strict();
 const measurementBody = bodyScope.extend({
   idempotency_key: identifier,
   metric: z.enum(["reach","views","impressions","clicks","enquiries","leads","conversions","sales","revenue","value"]),
