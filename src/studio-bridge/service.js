@@ -16,7 +16,7 @@ const routes=[
  ['POST','/customer/campaign-recommendations'],
  ['GET|HEAD|POST','/customer/campaigns'],['GET|HEAD','/customer/campaigns/discovery'],
  ['GET|HEAD|PATCH','/customer/campaigns/'+UUID],['POST','/customer/campaigns/'+UUID+'/(?:archive|restore|content-items)'],
- ['GET|HEAD','/customer/campaigns/'+UUID+'/(?:calendar|measurements|publication-history)'],
+ ['GET|HEAD','/customer/campaigns/'+UUID+'/(?:calendar|measurements|publication-history|content-plan)'],
  ['GET|HEAD','/customer/campaigns/'+UUID+'/variants/'+UUID+'/creative-preview'],
  ['GET|HEAD','/customer/campaigns/'+UUID+'/variants/'+UUID+'/revisions/'+UUID+'/assets/'+UUID+'/preview'],
  ['POST','/customer/campaigns/'+UUID+'/variants/'+UUID+'/(?:review|preview-renders|preview-acknowledgements|approval|schedule|reschedule|unschedule|measurements)'],

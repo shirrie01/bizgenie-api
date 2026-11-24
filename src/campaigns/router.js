@@ -14,6 +14,7 @@ const {
 } = require("./errors");
 const { identifier, uuid, content: contentSchema } = require("./schema");
 const { createDefaultGoalRecommendationRegistry } = require("./goalRecommendation");
+const { buildContentPlan } = require("./contentPlan");
 const { CampaignStrategyValidationError, CampaignVariantGenerationService } = require("./generation");
 const { safeMeasurement } = require("./measurementRegistry");
 const { GenerationIncompleteError } = require("../generation");
@@ -138,6 +139,7 @@ const calendarQuery = queryScope.extend({
 }).strict().refine(value => Date.parse(value.from) < Date.parse(value.to), {
   path: ["to"], message: "Calendar window end must be after its start",
 });
+const contentPlanQuery = queryScope.extend({ start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict();
 const measurementBody = bodyScope.extend({
   idempotency_key: identifier,
   metric: z.enum(["reach","views","impressions","clicks","enquiries","leads","conversions","sales","revenue","value"]),
@@ -348,6 +350,7 @@ function createCustomerCampaignRouter({
   measurementRegistry,
   mediaPreviewStorage,
   runtimeDeliveryLimits=null,
+  brandBrainRepository=null,
   tokenVerifier,
   authorizationService,
   logger = console,
@@ -424,6 +427,23 @@ function createCustomerCampaignRouter({
     } catch (error) {
       return sendCampaignError(error, res, logger);
     }
+  });
+
+  // Read-only deterministic launch-week plan (BG-FOUNDER-E2E-FINAL-01). Builds structured content items from the
+  // campaign and its own Brand Brain; no provider, credit, ledger or write path. Nothing is created until the owner
+  // adds the items through the existing content-item route and confirms each priced generation quote.
+  router.get("/:campaignId/content-plan", async (req, res) => {
+    try {
+      const query = parse(contentPlanQuery, req.query);
+      const campaignId = parse(uuid, req.params.campaignId);
+      const context = await authorize({ req, tokenVerifier, authorizationService, tenantId: query.tenant_id, projectId: query.project_id, action: "project:read" });
+      if (!brandBrainRepository) throw new CampaignPersistenceError();
+      const campaign = await repository.getCampaign(context, campaignId);
+      if (campaign.archived_at) throw new CampaignValidationError();
+      const brain = await brandBrainRepository.getByProjectAndBrand(query.project_id, campaign.brand_id);
+      if (!brain) throw new CampaignValidationError();
+      return res.json({ plan: buildContentPlan({ campaign, brandBrain: brain, startDate: query.start_date }) });
+    } catch (error) { return sendCampaignError(error, res, logger); }
   });
 
   router.get("/:campaignId", async (req, res) => {
