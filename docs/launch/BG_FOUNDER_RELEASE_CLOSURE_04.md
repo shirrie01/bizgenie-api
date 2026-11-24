@@ -43,6 +43,10 @@ Every stage below needs recorded real browser evidence after a separately approv
 11. Connect/reconnect/renew the approved social account under founder-only lifecycle scope. Do not dispatch or publish. LinkedIn refresh is unavailable unless genuinely supported; present reconnection truthfully.
 12. Manual publishing and measurements are readiness checks only. Their write routes are not newly admitted. Do not fabricate published state, performance or measurable acquisition results.
 
+## Private Fonzo binding prerequisite
+
+The accepted Fairway campaign/scope must not be silently relabelled Fonzo. Before a real Fonzo campaign write, use the existing accepted private evidence to identify the intended Fonzo brand and exact seven-field body/pins. The root bridge currently fixes `bg-r2-founder-campaign-v1`; campaign idempotency is scoped by existing actor/tenant/project/brand authority. If that same scope/key already created the accepted campaign, changing the payload must conflict, not produce a second campaign. Reuse the accepted campaign only with explicit product approval, or separately approve the minimum new scope/key contract; do not reset idempotency or enable broad campaign writes. The local Fonzo fixture cannot establish private runtime scope or clear a spent creation key. This executor did not inspect private live records or reopen ownership checks.
+
 ## One consolidated runtime evidence procedure (read-only; operator required)
 
 Use the existing authorised operator and private candidates; never obtain new credentials, create jobs or substitute SQL Editor for application-pool proof. Reuse accepted BG-017C role/15-table/preflight evidence; do not rerun that gate. Inspect only newly required dependencies:
