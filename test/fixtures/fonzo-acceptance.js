@@ -1,7 +1,7 @@
 'use strict';
 // FIXTURE ONLY (BG-FOUNDER-E2E-FINAL-01). A deterministic, non-billable Fonzo launch-week scenario.
 // Facts are limited to what the founder supplied: UK sugar-free soft drinks, 330ml cans, and the campaign objectives.
-// No flavours, prices, nutrition values, certifications, testimonials or retailers are asserted. No genuine Fonzo brand
+// No prices, nutrition values, certifications, testimonials or retailers are asserted. Founder-supplied flavour names are in assetBrief below. No genuine Fonzo brand
 // image assets were found in either repository, so every image/video is a deterministic placeholder (see `placeholders`).
 const goal = 'Generate wholesale and retail stockist enquiries and build consumer brand awareness for Fonzo sugar-free soft drinks in 330ml cans, communicating flavour, value and product positioning to drive interest in stocking and purchasing Fonzo';
 const brandBrain = Object.freeze({
@@ -18,4 +18,5 @@ const brandBrain = Object.freeze({
 const provisionalPrices = Object.freeze({ 'text.standard': 1, 'image.normal': 2, 'video.normal': 5 }); // staging.standard.v1; NOT commercially approved
 const expected = Object.freeze({ posts: 7, contentItems: 8, images: 5, videos: 3, textGenerations: 0, provisionalCredits: 5 * 2 + 3 * 5 });
 const placeholders = Object.freeze(['Fonzo logo and can imagery: not located in either repository; placeholder composition used', 'Product photography: none supplied', 'Enquiry destination: none supplied']);
-module.exports = { goal, brandBrain, provisionalPrices, expected, placeholders, startDate: '2026-12-07' };
+const assetBrief = Object.freeze({flavours:Object.freeze(['Classic Cola','Lemon & Lime','Mango','Orange Crush','Blue Raspberry']),logo:'original transparent logo',state:'AWAITING_APPROVED_UPLOAD',hosted:false,fixtureMedia:'synthetic provider doubles only'});
+module.exports = { goal, brandBrain, provisionalPrices, expected, placeholders, assetBrief, startDate: '2026-12-07' };

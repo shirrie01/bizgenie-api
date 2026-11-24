@@ -19,7 +19,7 @@ const routes=[
  ['GET|HEAD','/customer/campaigns/'+UUID+'/(?:calendar|measurements|publication-history|content-plan)'],
  ['GET|HEAD','/customer/campaigns/'+UUID+'/variants/'+UUID+'/creative-preview'],
  ['GET|HEAD','/customer/campaigns/'+UUID+'/variants/'+UUID+'/revisions/'+UUID+'/assets/'+UUID+'/preview'],
- ['POST','/customer/campaigns/'+UUID+'/variants/'+UUID+'/(?:review|preview-renders|preview-acknowledgements|approval|schedule|reschedule|unschedule|measurements)'],
+ ['POST','/customer/campaigns/'+UUID+'/variants/'+UUID+'/(?:review|preview-renders|preview-acknowledgements|approval|schedule|reschedule|unschedule|measurements|revisions)'],
  ['GET|HEAD|DELETE','/customer/assets/'+UUID],['GET|HEAD','/customer/assets/'+UUID+'/preview'],['POST','/customer/assets/(?:uploads|'+UUID+'/complete|'+UUID+'/revoke)'],['PUT','/customer/assets/uploads/'+UUID+'/bytes'],
  ['POST','/customer/social/(?:oauth-intents|oauth-complete|connections/'+UUID+'/(?:refresh|disconnect)|dispatches|dispatches/'+UUID+'/cancel)']
 ].map(([methods,path])=>({methods:new Set(methods.split('|')),path:new RegExp('^'+path+'$')}));
@@ -40,6 +40,7 @@ function founderCampaignWrite(c,method,url){return c.allowFounderCampaignRoot===
 // Reuse the existing deterministic draft classification, excluding workspace/root writes.
 // This is candidate routing only; verified founder/scope/campaign admission is below.
 function founderDraftCampaign(c,method,url){
+ if(c.allowFounderCopyEditing===true&&method==='POST'){const copy=new RegExp('^/customer/campaigns/('+UUID+')/variants/'+UUID+'/revisions$').exec(url);if(copy)return copy[1];}
  if(c.allowFounderDraftWorkflow!==true||method!=='POST'||!isDraftWorkflowWrite(method,url))return null;
  const match=new RegExp('^/customer/campaigns/('+UUID+')/(?:content-items|variants/'+UUID+'/(?:review|preview-renders|preview-acknowledgements|approval|schedule|reschedule|unschedule))$').exec(url);
  return match?match[1]:null;
@@ -65,13 +66,18 @@ function config(input){
   if(c.allowFounderCampaignRoot===true&&['tenant_id','project_id','brand_id'].some(k=>c.founderCampaign[k]!==c.founderDraftScope[k]))throw Error('Consistent founder campaign scope required');
  }else if(c.founderDraftScope!==undefined)throw Error('Explicit founder draft permission required');
  if(c.founderVideo!==undefined){c.founderVideo=require('../provider-spend/founderVideo').binding(c.founderVideo);if(c.allowFounderOnboarding===true&&c.founderAuthUserId!==c.founderVideo.auth_user_id||['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'].some(k=>c[k]!==undefined&&c[k]!==false))throw Error('Isolated founder video permission required');}
+ for(const key of ['allowFounderCopyEditing','allowFounderVideoAttachment','allowFounderSocialConnections'])if(c[key]!==undefined&&typeof c[key]!=='boolean')throw Error('Explicit founder release permission required');
+ if((c.allowFounderCopyEditing===true||c.allowFounderSocialConnections===true)&&c.allowFounderDraftWorkflow!==true)throw Error('Founder draft binding required');
+ if(c.allowFounderVideoAttachment===true&&(!c.founderVideo||c.founderAuthUserId!==c.founderVideo.auth_user_id))throw Error('Founder video binding required');
  const u=new URL(c.upstream),a=new URL(c.audience);
  if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
  for(const [key,lo,hi] of [['maxRequests',1,600],['maxIdentities',1,10000],['maxConcurrent',1,32],['timeoutMs',100,30000]])if(!Number.isInteger(c[key])||c[key]<lo||c[key]>hi)throw Error('Bounded bridge limits required');
  return {...c,upstream:u.origin,audience:a.origin};
 }
 function videoConfirmation(c,method,url){return !!c.founderVideo&&method==='POST'&&new RegExp('^/customer/generation-quotes/'+UUID+'/confirm$').test(url);}
-function videoWrite(c,method,url){return videoConfirmation(c,method,url)||!!c.founderVideo&&method==='POST'&&url==='/customer/generation-quotes';}
+function videoAttachment(c,method,url){return c.allowFounderVideoAttachment===true&&method==='POST'&&new RegExp('^/customer/creative-jobs/quoted(?::|%3[aA])'+UUID+'/attach$').test(url);}
+function founderSocialConnection(c,method,url){return c.allowFounderSocialConnections===true&&method==='POST'&&(url==='/customer/social/oauth-intents'||url==='/customer/social/oauth-complete'||new RegExp('^/customer/social/connections/'+UUID+'/(?:refresh|disconnect)$').test(url));}
+function videoWrite(c,method,url){return videoAttachment(c,method,url)||videoConfirmation(c,method,url)||!!c.founderVideo&&method==='POST'&&url==='/customer/generation-quotes';}
 function route(method,path){return routes.some(r=>r.methods.has(method)&&r.path.test(path));}
 function bounded(promise,signal){return new Promise((resolve,reject)=>{const abort=()=>reject(Error('Request aborted'));if(signal.aborted)return abort();signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));});}
 function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=globalThis.fetch,now=()=>Date.now()}){
@@ -91,10 +97,10 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(requested.some(x=>!['authorization','content-type','range'].includes(x)))return failure(res,403,'HEADERS_FORBIDDEN');
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
-  if(!['GET','HEAD'].includes(req.method)&&!founderDraftCampaign(c,req.method,req.originalUrl)&&!founderCampaignWrite(c,req.method,req.originalUrl)&&!videoWrite(c,req.method,req.originalUrl)&&!founderRecommendation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(!['GET','HEAD'].includes(req.method)&&!founderDraftCampaign(c,req.method,req.originalUrl)&&!founderCampaignWrite(c,req.method,req.originalUrl)&&!videoWrite(c,req.method,req.originalUrl)&&!founderSocialConnection(c,req.method,req.originalUrl)&&!founderRecommendation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
   if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true&&!videoConfirmation(c,req.method,req.originalUrl))return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
-  if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true)return failure(res,403,'SOCIAL_WRITES_DISABLED');
+  if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true&&!founderSocialConnection(c,req.method,req.originalUrl))return failure(res,403,'SOCIAL_WRITES_DISABLED');
   return next();
  });
  app.use((req,res,next)=>{if(active>=c.maxConcurrent)return failure(res,429,'BRIDGE_RATE_LIMITED');active++;const controller=new AbortController();res.locals.controller=controller;const timer=setTimeout(()=>{controller.abort();if(!res.headersSent)failure(res,504,'STUDIO_BRIDGE_TIMEOUT');else res.destroy();},c.timeoutMs);res.once('close',()=>{clearTimeout(timer);controller.abort();active--;});next();});
@@ -111,7 +117,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });
- const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:(founderRecommendation(c,req.method,req.originalUrl)||founderCampaignWrite(c,req.method,req.originalUrl)||founderDraftCampaign(c,req.method,req.originalUrl))?draftBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
+ const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:(founderRecommendation(c,req.method,req.originalUrl)||founderCampaignWrite(c,req.method,req.originalUrl)||founderDraftCampaign(c,req.method,req.originalUrl)||videoAttachment(c,req.method,req.originalUrl)||founderSocialConnection(c,req.method,req.originalUrl))?draftBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
  app.use(async(req,res)=>{
   const controller=res.locals.controller;let upstream;
   const cancel=()=>controller.abort();req.once('aborted',cancel);res.once('close',cancel);
@@ -144,6 +150,13 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
     if(!CustomerTrustedScopeSchema.safeParse(scope).success||['tenant_id','project_id','brand_id'].some(key=>scope[key]!==c.founderDraftScope[key])||draftCampaign!==c.founderDraftScope.campaign_id)return failure(res,404,'RESOURCE_NOT_AVAILABLE');
     // Existing strict API bodies contain tenant/project, not a client brand override.
     if(['tenant_id','project_id'].some(key=>typeof body?.[key]!=='string'||body[key]!==scope[key]))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+   }
+   if(videoAttachment(c,req.method,req.originalUrl)){
+    if(!body||Object.keys(body).sort().join(',')!=='brand_id,project_id,tenant_id'||['tenant_id','project_id','brand_id'].some(key=>body[key]!==c.founderVideo[key]||body[key]!==scope?.[key]))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+   }
+   if(founderSocialConnection(c,req.method,req.originalUrl)){
+    if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
+    if(!CustomerTrustedScopeSchema.safeParse(scope).success||['tenant_id','project_id','brand_id'].some(key=>scope[key]!==c.founderDraftScope[key]||body?.[key]!==scope[key]))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
    }
    const credential=await bounded(iamTokenProvider({audience:c.audience}),controller.signal);
    if(typeof credential!=='string'||!credential||/[\r\n]/.test(credential))throw Error();
