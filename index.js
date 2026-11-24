@@ -569,6 +569,7 @@ function createApp({
       measurementRegistry: campaignMeasurementRegistry,
       mediaPreviewStorage,
       runtimeDeliveryLimits,
+      brandBrainRepository,
       logger,
     })
   );

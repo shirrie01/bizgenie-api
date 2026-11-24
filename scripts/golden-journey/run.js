@@ -4,6 +4,7 @@ const {target}=require('./safety');
 const root=path.resolve(__dirname,'../..');
 const stages=[
  {id:'postgres_golden',kind:'existing_chained_disposable_postgres',files:['test/customer-golden-journey.postgres.integration.test.js']},
+ {id:'content_plan',kind:'independent_curated_contracts',files:['test/campaign-content-plan.test.js']},
  {id:'identity_and_bridge',kind:'independent_curated_contracts',files:['test/customer-authentication.test.js','test/studio-bridge-founder.test.js','test/studio-bridge-founder-recommendations.test.js']},
  {id:'campaign_and_revision',kind:'independent_curated_contracts',files:['test/customer-campaigns.test.js','test/customer-copy-revisions.test.js']},
  {id:'private_media',kind:'independent_curated_contracts',files:['test/media-preview-delivery.test.js']},
