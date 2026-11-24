@@ -4,7 +4,9 @@ const CALLBACK_PATH='/customer/social/oauth/callback/tiktok';
 const REDIRECT_URI='https://getbizgenie.com'+CALLBACK_PATH;
 // BG-LAUNCH-008: staging serves the same route on its own mapped host. The redirect URI is the default above unless TIKTOK_REDIRECT_URI names exactly one reviewed host (no other host, port, query or path is accepted).
 const REDIRECT_HOSTS=Object.freeze(['getbizgenie.com','staging-api.getbizgenie.com']);
-function redirectUriFrom(env){const v=env.TIKTOK_REDIRECT_URI;if(v===undefined||v==='')return REDIRECT_URI;let u;try{u=new URL(v);}catch{throw new QuoteError('TIKTOK_NOT_CONFIGURED',503);}if(u.protocol!=='https:'||!REDIRECT_HOSTS.includes(u.hostname)||u.port||u.username||u.password||u.search||u.hash||u.pathname!==CALLBACK_PATH||u.href!==v)throw new QuoteError('TIKTOK_NOT_CONFIGURED',503);return v;}
+// Studio-hosted staging callback (BG_OAUTH_STAGING_CALLBACK option D): accepted only when the API itself runs as staging.
+const STUDIO_STAGING_HOST='staging-app.getbizgenie.com';
+function redirectUriFrom(env){const v=env.TIKTOK_REDIRECT_URI;if(v===undefined||v==='')return REDIRECT_URI;let u;try{u=new URL(v);}catch{throw new QuoteError('TIKTOK_NOT_CONFIGURED',503);}if(u.protocol!=='https:'||!(REDIRECT_HOSTS.includes(u.hostname)||(u.hostname===STUDIO_STAGING_HOST&&env.BIZGENIE_ENVIRONMENT==='staging'))||u.port||u.username||u.password||u.search||u.hash||u.pathname!==CALLBACK_PATH||u.href!==v)throw new QuoteError('TIKTOK_NOT_CONFIGURED',503);return v;}
 const SCOPES=Object.freeze(['user.info.basic','video.upload']);
 const API='https://open.tiktokapis.com/v2';
 const unavailable=()=>new QuoteError('TIKTOK_PROVIDER_UNAVAILABLE',503);
