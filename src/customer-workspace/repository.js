@@ -1,5 +1,5 @@
-const { randomUUID } = require("node:crypto");
-const { CustomerWorkspacePersistenceError } = require("./errors");
+const { createHash, randomUUID } = require("node:crypto");
+const { CustomerWorkspacePersistenceError, CustomerWorkspaceValidationError } = require("./errors");
 
 function clone(value) {
   return value ? structuredClone(value) : null;
@@ -24,6 +24,12 @@ function additionalWorkspaceIds() {
     project_id: `project_${suffix}`,
     brand_id: `brand_${suffix}`,
   };
+}
+
+// Deterministic ids for a keyed request: the primary keys of projects and brand_brains are the durable single-use record, so no new table is needed.
+function idempotentWorkspaceIds({ auth_user_id, tenant_id, idempotency_key }) {
+  const digest = createHash("sha256").update(JSON.stringify(["customer-workspace.v1", auth_user_id, tenant_id, idempotency_key])).digest("hex").slice(0, 32);
+  return { project_id: `project_${digest}`, brand_id: `brand_${digest}` };
 }
 
 function workspaceDto({
@@ -107,12 +113,17 @@ class InMemoryCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
     return clone(workspace);
   }
 
-  createAdditionalWorkspace({ auth_user_id, tenant_id, business_name }) {
+  createAdditionalWorkspace({ auth_user_id, tenant_id, business_name, idempotency_key }) {
     const rows = this.workspaces.get(auth_user_id) || [];
     const parent = rows.find((workspace) => workspace.tenant_id === tenant_id && workspace.membership_role === "owner");
     if (!parent) return null;
-    const ids = additionalWorkspaceIds();
+    const ids = idempotency_key ? idempotentWorkspaceIds({ auth_user_id, tenant_id, idempotency_key }) : additionalWorkspaceIds();
     const businessName = business_name || "BizGenie Workspace";
+    const prior = idempotency_key && rows.find((workspace) => workspace.tenant_id === tenant_id && workspace.project_id === ids.project_id && workspace.brand_id === ids.brand_id);
+    if (prior) {
+      if (prior.project_name !== `${businessName} Campaign Workspace`) throw new CustomerWorkspaceValidationError([{ path: "idempotency_key", code: "idempotency_conflict", message: "This key was already used for a different workspace" }]);
+      return clone(prior);
+    }
     const workspace = workspaceDto({
       tenant_id,
       tenant_name: parent.tenant_name,
@@ -142,5 +153,6 @@ module.exports = {
   InMemoryCustomerWorkspaceRepository,
   additionalWorkspaceIds,
   defaultWorkspaceIds,
+  idempotentWorkspaceIds,
   workspaceDto,
 };

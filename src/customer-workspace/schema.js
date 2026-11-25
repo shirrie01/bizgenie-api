@@ -11,8 +11,12 @@ const BootstrapWorkspaceSchema = z
   })
   .strict();
 
+// Optional replay key (BG-FOUNDER-RELEASE-07): the same owner, tenant and key always name the same workspace, so a lost response or a second instance can
+// never create a duplicate. Without a key the existing behaviour (a new workspace per call) is unchanged.
+const WorkspaceIdempotencyKey = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const CreateAdditionalWorkspaceSchema = BootstrapWorkspaceSchema.extend({
   tenant_id: z.string().trim().min(1).max(200),
+  idempotency_key: WorkspaceIdempotencyKey.optional(),
 }).strict();
 
 const SelectWorkspaceSchema = z

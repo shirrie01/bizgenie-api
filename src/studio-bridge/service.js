@@ -84,7 +84,7 @@ function route(method,path){return routes.some(r=>r.methods.has(method)&&r.path.
 function bounded(promise,signal){return new Promise((resolve,reject)=>{const abort=()=>reject(Error('Request aborted'));if(signal.aborted)return abort();signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(resolve,reject).finally(()=>signal.removeEventListener('abort',abort));});}
 function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=globalThis.fetch,now=()=>Date.now()}){
  const c=config(target);if(!tokenVerifier?.verifyIdentityAccessToken||!tokenVerifier.verifyAccessToken||typeof iamTokenProvider!=='function')throw Error('Existing verified identity providers required');
- const app=express(),windows=new Map();let active=0,workspaceAttempted=false;app.disable('x-powered-by');
+ const app=express(),windows=new Map();let active=0;app.disable('x-powered-by');
  function failure(res,status,code){return res.status(status).json({error:{code,message:'Studio API request is unavailable'}});}
  app.use((req,res,next)=>{res.set('Cache-Control','private, no-store');res.vary('Authorization');res.vary('Origin');
   if(req.headers.origin&&req.headers.origin!==c.origin)return failure(res,403,'ORIGIN_FORBIDDEN');
@@ -163,8 +163,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(R07.workspace(c,req.method,req.originalUrl)){
     if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
     if(!R07.workspaceBodyMatches(c.founderAdditionalWorkspace,body))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
-    // The upstream operation is not idempotent (each call makes another project and brand): one attempt per bridge process, lost responses are reconciled by listing the workspaces, never by replay.
-    if(workspaceAttempted)return failure(res,409,'FOUNDER_WORKSPACE_ALREADY_ATTEMPTED');workspaceAttempted=true;
+    // No bridge-local state: the pinned idempotency_key makes the API return the same workspace for every replay (restart, replica, lost response).
    }
    const intake=R07.intakeKind(c,req.method,req.originalUrl);
    if(intake){

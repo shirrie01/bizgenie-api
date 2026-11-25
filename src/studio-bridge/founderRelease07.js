@@ -1,6 +1,7 @@
 'use strict';
 // BG-FOUNDER-RELEASE-07 — two separate, default-OFF founder bridge permissions. Pure checks: no I/O, no provider, no database.
-//   1. allowFounderAdditionalWorkspace: exactly `POST /customer/workspace/brands` with one pinned body (the existing additional-workspace operation).
+//   1. allowFounderAdditionalWorkspace: exactly `POST /customer/workspace/brands` with one pinned body, which MUST carry a pinned idempotency key: the API derives the
+//      workspace ids from (owner, tenant, key), so duplicate protection is durable in the database and survives restarts, replicas and lost responses.
 //   2. allowFounderAssetIntake: exactly the existing media-intake sequence (init, bytes, complete) plus founder-only reads, for ONE pinned scope.
 // The API keeps every authoritative check (owner role, tenant ownership, rights policy, hash, scan, state machine). This module only narrows what the bridge forwards.
 const {z}=require('zod');
@@ -10,7 +11,7 @@ const MAX_BYTES=33554432;
 const TYPES=Object.freeze(['image/png','image/jpeg','image/webp','video/mp4']);
 const BROAD=['allowWrites','allowWorkspaceBootstrap','allowDraftWorkflow','allowGenerationConfirmation','allowSocialWrites','allowStripeCheckout'];
 const text=max=>z.string().min(1).max(max).refine(v=>v===v.trim()&&v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v));
-const WorkspaceBinding=z.object({tenant_id:CustomerTrustedScopeSchema.shape.tenant_id,business_name:text(200),website_or_social_profile:text(500).optional(),primary_marketing_challenge:text(1000).optional()}).strict();
+const WorkspaceBinding=z.object({tenant_id:CustomerTrustedScopeSchema.shape.tenant_id,idempotency_key:z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/).refine(v=>v!=='bg-r2-founder-campaign-v1'),business_name:text(200),website_or_social_profile:text(500).optional(),primary_marketing_challenge:text(1000).optional()}).strict();
 const same=(a,b)=>['tenant_id','project_id','brand_id'].every(k=>a?.[k]!==undefined&&a[k]===b?.[k]);
 const plain=v=>!!v&&typeof v==='object'&&!Array.isArray(v)&&!Buffer.isBuffer(v);
 const keys=v=>Object.keys(v).sort().join(',');
@@ -39,7 +40,7 @@ function fromEnv(env){
  const flag=(key)=>{const v=env[key];if(v===undefined||v==='false')return false;if(v==='true')return true;throw Error('Explicit founder release permission required');};
  const ws=flag('BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE'),ia=flag('BG_BRIDGE_ALLOW_FOUNDER_ASSET_INTAKE'),out={allowFounderAdditionalWorkspace:ws,allowFounderAssetIntake:ia};
  const pins=prefix=>Object.keys(env).filter(k=>k.startsWith(prefix)&&env[k]!==undefined);
- if(ws){const w={tenant_id:env.BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID,business_name:env.BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME};if(env.BG_BRIDGE_FOUNDER_WORKSPACE_WEBSITE!==undefined)w.website_or_social_profile=env.BG_BRIDGE_FOUNDER_WORKSPACE_WEBSITE;if(env.BG_BRIDGE_FOUNDER_WORKSPACE_CHALLENGE!==undefined)w.primary_marketing_challenge=env.BG_BRIDGE_FOUNDER_WORKSPACE_CHALLENGE;out.founderAdditionalWorkspace=w;}
+ if(ws){const w={tenant_id:env.BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID,idempotency_key:env.BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY,business_name:env.BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME};if(env.BG_BRIDGE_FOUNDER_WORKSPACE_WEBSITE!==undefined)w.website_or_social_profile=env.BG_BRIDGE_FOUNDER_WORKSPACE_WEBSITE;if(env.BG_BRIDGE_FOUNDER_WORKSPACE_CHALLENGE!==undefined)w.primary_marketing_challenge=env.BG_BRIDGE_FOUNDER_WORKSPACE_CHALLENGE;out.founderAdditionalWorkspace=w;}
  else if(pins('BG_BRIDGE_FOUNDER_WORKSPACE_').length)throw Error('Explicit founder workspace permission required');
  if(ia)out.founderAssetIntake={tenant_id:env.BG_BRIDGE_FOUNDER_INTAKE_TENANT_ID,project_id:env.BG_BRIDGE_FOUNDER_INTAKE_PROJECT_ID,brand_id:env.BG_BRIDGE_FOUNDER_INTAKE_BRAND_ID};
  else if(pins('BG_BRIDGE_FOUNDER_INTAKE_').length)throw Error('Explicit founder intake permission required');

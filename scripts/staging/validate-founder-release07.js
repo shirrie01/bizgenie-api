@@ -7,7 +7,7 @@ const {validateFounderRelease04}=require('./validate-founder-release04');
 const {validateBridgeTarget}=require('../../src/studio-bridge/service');
 const R07=require('../../src/studio-bridge/founderRelease07');
 const UUID=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
-const WORKSPACE_KEYS=['BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE','BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID','BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME','BG_BRIDGE_FOUNDER_WORKSPACE_WEBSITE','BG_BRIDGE_FOUNDER_WORKSPACE_CHALLENGE'];
+const WORKSPACE_KEYS=['BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE','BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID','BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY','BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME','BG_BRIDGE_FOUNDER_WORKSPACE_WEBSITE','BG_BRIDGE_FOUNDER_WORKSPACE_CHALLENGE'];
 const INTAKE_KEYS=['BG_BRIDGE_ALLOW_FOUNDER_ASSET_INTAKE','BG_BRIDGE_FOUNDER_INTAKE_TENANT_ID','BG_BRIDGE_FOUNDER_INTAKE_PROJECT_ID','BG_BRIDGE_FOUNDER_INTAKE_BRAND_ID'];
 const ref=v=>typeof v==='string'&&/^https:\/\/github\.com\/shirrie01\/bizgenie-api\/(?:issues|pull)\/\d+#issuecomment-\d+$/.test(v);
 const ids=['tenant_id','project_id','brand_id'];

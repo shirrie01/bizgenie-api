@@ -4,7 +4,7 @@ const R07=require('../src/studio-bridge/founderRelease07');
 const scope={tenant_id:'tenant_fonzo',project_id:'project_fonzo',brand_id:'brand_fonzo'};
 const fairway={tenant_id:'tenant_fairway',project_id:'project_fairway',brand_id:'brand_fairway'};
 const id='44444444-4444-4444-8444-444444444444';
-const wsPin={tenant_id:'tenant_fairway',business_name:'Fonzo'};
+const wsPin={tenant_id:'tenant_fairway',idempotency_key:'fonzo.workspace.v1',business_name:'Fonzo'};
 const wsBody={...wsPin};
 const initBody={...scope,filename:'classic-cola.png',content_type:'image/png',bytes:1024,rights_confirmed:true,idempotency_key:'fonzo.classic.v1'};
 const q=`tenant_id=${scope.tenant_id}&project_id=${scope.project_id}&brand_id=${scope.brand_id}`;
@@ -26,19 +26,21 @@ test('additional workspace: exact route, exact pinned body, founder only, one up
  assert.equal(r.status,200);assert.deepEqual(k.counts(),[1,1]);
  assert.equal(new URL(k.seen[0][0]).pathname,'/customer/workspace/brands');assert.equal(k.seen[0][1].method,'POST');
 });
-test('additional workspace: the upstream operation is not idempotent, so a second attempt in the same process is refused before IAM',async()=>{
+test('additional workspace: the bridge keeps no creation state; every replay of the pinned body is forwarded unchanged so the API (durable idempotency key) decides',async()=>{
  const k=kit({mode:'workspace'});
- assert.equal((await send(k,'post','/customer/workspace/brands',wsBody)).status,200);
- const again=await send(k,'post','/customer/workspace/brands',wsBody);
- assert.equal(again.status,409);assert.equal(again.body.error.code,'FOUNDER_WORKSPACE_ALREADY_ATTEMPTED');assert.deepEqual(k.counts(),[1,1]);
+ for(let n=0;n<3;n++)assert.equal((await send(k,'post','/customer/workspace/brands',wsBody)).status,200);
+ assert.deepEqual(k.counts(),[3,3]);
+ for(const [,o] of k.seen)assert.deepEqual(JSON.parse(Buffer.from(o.body).toString()),wsBody);
 });
-test('additional workspace: concurrent identical requests produce at most one upstream call',async()=>{
- const k=kit({mode:'workspace'});
- const all=await Promise.all([1,2,3,4].map(()=>send(k,'post','/customer/workspace/brands',wsBody)));
- assert.equal(all.filter(r=>r.status===200).length,1);assert.equal(all.filter(r=>r.status===409).length,3);assert.deepEqual(k.counts(),[1,1]);
+test('additional workspace: concurrent identical requests are all forwarded with the same idempotency key (no per-process one-shot to bypass by restart or replica)',async()=>{
+ const a=kit({mode:'workspace'}),b=kit({mode:'workspace'});
+ const all=await Promise.all([a,b,a,b].map(k=>send(k,'post','/customer/workspace/brands',wsBody)));
+ assert.ok(all.every(r=>r.status===200));
+ assert.deepEqual(a.counts(),[2,2]);assert.deepEqual(b.counts(),[2,2]);
+ assert.equal(new Set([...a.seen,...b.seen].map(([,o])=>Buffer.from(o.body).toString())).size,1,'identical bytes, identical key');
 });
 test('additional workspace: any different body, tenant, name, extra field or whitespace is refused with no IAM and no upstream',async()=>{
- const bad=[{...wsBody,business_name:'Fairway'},{...wsBody,business_name:' Fonzo'},{...wsBody,tenant_id:'tenant_other'},{...wsBody,extra:1},{...wsBody,website_or_social_profile:'https://example.invalid'},{tenant_id:wsPin.tenant_id},{business_name:'Fonzo'},{},[],'x',{...wsBody,business_name:['Fonzo']}];
+ const {idempotency_key:_k,...noKey}=wsBody;const bad=[noKey,{...wsBody,idempotency_key:'fonzo.workspace.v2'},{...wsBody,idempotency_key:' fonzo.workspace.v1'},{...wsBody,idempotency_key:'bg-r2-founder-campaign-v1'},{...wsBody,idempotency_key:undefined},{...wsBody,business_name:'Fairway'},{...wsBody,business_name:' Fonzo'},{...wsBody,tenant_id:'tenant_other'},{...wsBody,extra:1},{...wsBody,website_or_social_profile:'https://example.invalid'},{tenant_id:wsPin.tenant_id},{business_name:'Fonzo'},{},[],'x',{...wsBody,business_name:['Fonzo']}];
  for(const body of bad){const k=kit({mode:'workspace'});const r=await send(k,'post','/customer/workspace/brands',body);assert.ok([400,404,415].includes(r.status),JSON.stringify(body)+' '+r.status);assert.deepEqual(k.counts(),[0,0],JSON.stringify(body));}
 });
 test('additional workspace: non-founder and anonymous are refused, a refused request does not consume the one attempt',async()=>{
@@ -62,7 +64,7 @@ test('additional workspace: default OFF in the accepted profile and with an expl
 test('additional workspace: configuration is isolated and strict',()=>{
  const make=patch=>()=>kit({mode:'workspace',patch});
  assert.doesNotThrow(make({}));
- for(const patch of [{allowFounderOnboarding:true},{allowFounderRecommendations:true},{allowFounderCampaignRoot:true},{allowFounderDraftWorkflow:true},{allowFounderCopyEditing:true},{allowFounderSocialConnections:true},{allowFounderVideoAttachment:true},{allowFounderAssetIntake:true,founderAssetIntake:scope},{allowWrites:true},{allowWorkspaceBootstrap:true},{allowDraftWorkflow:true},{allowGenerationConfirmation:true},{allowSocialWrites:true},{allowStripeCheckout:true},{founderAuthUserId:undefined},{founderAuthUserId:'not-a-uuid'},{allowFounderAdditionalWorkspace:'true'},{founderAdditionalWorkspace:undefined},{founderAdditionalWorkspace:{...wsPin,extra:1}},{founderAdditionalWorkspace:{tenant_id:'t',business_name:' Fonzo'}},{founderAdditionalWorkspace:{tenant_id:'',business_name:'Fonzo'}}])assert.throws(make(patch),/./,JSON.stringify(patch));
+ for(const patch of [{allowFounderOnboarding:true},{allowFounderRecommendations:true},{allowFounderCampaignRoot:true},{allowFounderDraftWorkflow:true},{allowFounderCopyEditing:true},{allowFounderSocialConnections:true},{allowFounderVideoAttachment:true},{allowFounderAssetIntake:true,founderAssetIntake:scope},{allowWrites:true},{allowWorkspaceBootstrap:true},{allowDraftWorkflow:true},{allowGenerationConfirmation:true},{allowSocialWrites:true},{allowStripeCheckout:true},{founderAuthUserId:undefined},{founderAuthUserId:'not-a-uuid'},{allowFounderAdditionalWorkspace:'true'},{founderAdditionalWorkspace:undefined},{founderAdditionalWorkspace:{...wsPin,extra:1}},{founderAdditionalWorkspace:{tenant_id:'t',idempotency_key:'k',business_name:' Fonzo'}},{founderAdditionalWorkspace:{tenant_id:'',idempotency_key:'k',business_name:'Fonzo'}},{founderAdditionalWorkspace:{tenant_id:'t',business_name:'Fonzo'}},{founderAdditionalWorkspace:{...wsPin,idempotency_key:'has space'}},{founderAdditionalWorkspace:{...wsPin,idempotency_key:'bg-r2-founder-campaign-v1'}},{founderAdditionalWorkspace:{...wsPin,idempotency_key:''}}])assert.throws(make(patch),/./,JSON.stringify(patch));
  assert.throws(()=>kit({mode:'intake',patch:{founderAdditionalWorkspace:wsPin}}),/./);
 });
 test('additional workspace: entrypoint parsing is strict, rejects stale pins and never reads other settings',()=>{
@@ -71,8 +73,8 @@ test('additional workspace: entrypoint parsing is strict, rejects stale pins and
  assert.throws(()=>R07.fromEnv({BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID:'t'}));
  assert.throws(()=>R07.fromEnv({BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE:'false',BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME:'Fonzo'}));
  assert.throws(()=>R07.fromEnv({BG_BRIDGE_FOUNDER_INTAKE_TENANT_ID:'t'}));
- const ok=R07.fromEnv({BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE:'true',BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID:'t',BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME:'Fonzo'});
- assert.deepEqual(ok.founderAdditionalWorkspace,{tenant_id:'t',business_name:'Fonzo'});
+ const ok=R07.fromEnv({BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE:'true',BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID:'t',BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY:'k.1',BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME:'Fonzo'});
+ assert.deepEqual(ok.founderAdditionalWorkspace,{tenant_id:'t',idempotency_key:'k.1',business_name:'Fonzo'});
 });
 
 // ---- Part B: asset intake --------------------------------------------------------------------------------------------------------

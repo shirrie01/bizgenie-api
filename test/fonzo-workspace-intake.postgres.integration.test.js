@@ -104,24 +104,68 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
     assert.equal(fairwaySnapshot.version >= 1, true);
   });
 
-  it('a separate Fonzo workspace is created by the existing additional-workspace operation with its own project and brand; Fairway is unchanged', async () => {
-    const result = await workspaceService.createAdditionalWorkspace({ actor: { ...founder }, request: { tenant_id: 'tenant_fairway', business_name: 'Fonzo' } });
-    assert.equal(result.status, 'ready');
-    fonzoScope = { tenant_id: result.workspace.tenant_id, project_id: result.workspace.project_id, brand_id: result.workspace.brand_id };
-    assert.equal(fonzoScope.tenant_id, fairway.tenant_id, 'additional workspaces live under the existing owner tenant');
-    assert.notEqual(fonzoScope.project_id, fairway.project_id);
-    assert.notEqual(fonzoScope.brand_id, fairway.brand_id);
-    assert.equal(provisioned.at(-1).trusted_scope.project_id, fonzoScope.project_id, 'the founder trusted scope is moved to the new workspace');
+  const WS_KEY = 'fonzo.workspace.v1';
+  const newWorkspaceService = (provisioner) => new CustomerWorkspaceService({ repository: new PostgresCustomerWorkspaceRepository({ pool }), brandBrainRepository: brainRepo, scopeProvisioner: provisioner || { provisionTrustedScope: async (input) => { provisioned.push(input); return { requires_session_refresh: true }; } } });
+  const create = (svc, actor = founder, patch = {}) => svc.createAdditionalWorkspace({ actor: { ...actor }, request: { tenant_id: 'tenant_fairway', business_name: 'Fonzo', idempotency_key: WS_KEY, ...patch } });
+  const countFonzoRows = async () => ({ projects: (await pool.query("select count(*)::int n from projects where name='Fonzo Campaign Workspace'")).rows[0].n, brands: (await pool.query("select count(*)::int n from brand_brains where name='Fonzo' and project_id like 'project_%'")).rows[0].n });
+
+  it('a lost response cannot create a duplicate: the keyed request creates the Fonzo workspace once, and a replay after a failed provisioning step returns the same workspace', async () => {
+    // First attempt: the workspace is committed but the response is lost (the trusted-scope step fails after the commit).
+    await assert.rejects(create(newWorkspaceService({ provisionTrustedScope: async () => { throw new Error('synthetic lost response'); } })), (e) => e.code === 'WORKSPACE_PROVISIONING_UNAVAILABLE');
+    assert.deepEqual(await countFonzoRows(), { projects: 1, brands: 1 }, 'the commit happened exactly once');
+    // Replay with the same key: same workspace, provisioning now succeeds.
+    const replay = await create(newWorkspaceService());
+    assert.equal(replay.status, 'ready');
+    fonzoScope = { tenant_id: replay.workspace.tenant_id, project_id: replay.workspace.project_id, brand_id: replay.workspace.brand_id };
+    assert.deepEqual(await countFonzoRows(), { projects: 1, brands: 1 }, 'the replay created nothing');
+    assert.equal(provisioned.at(-1).trusted_scope.project_id, fonzoScope.project_id, 'the replay re-provisions the founder trusted scope to the same workspace');
+  });
+
+  it('restarts and concurrent instances all converge on the one Fonzo workspace', async () => {
+    const instances = [newWorkspaceService(), newWorkspaceService(), newWorkspaceService()];
+    const results = await Promise.all(Array.from({ length: 9 }, (_, n) => create(instances[n % 3])));
+    for (const r of results) assert.deepEqual({ t: r.workspace.tenant_id, p: r.workspace.project_id, b: r.workspace.brand_id }, { t: fonzoScope.tenant_id, p: fonzoScope.project_id, b: fonzoScope.brand_id });
+    assert.deepEqual(await countFonzoRows(), { projects: 1, brands: 1 });
+    const afterRestart = await create(newWorkspaceService());
+    assert.equal(afterRestart.workspace.project_id, fonzoScope.project_id, 'a brand-new service instance (process restart) reads the same durable record');
+  });
+
+  it('the key is bound to its owner, tenant and intent: a different name conflicts, other users cannot replay or probe it, bad keys are rejected', async () => {
+    const svc = newWorkspaceService();
+    await assert.rejects(create(svc, founder, { business_name: 'Fonzo Two' }), (e) => e.code === 'WORKSPACE_VALIDATION_ERROR' && e.details.some((d) => d.code === 'idempotency_conflict'));
+    for (const actor of [member, stranger]) await assert.rejects(create(svc, actor), (e) => e.code === 'WORKSPACE_VALIDATION_ERROR' && e.details.some((d) => d.code === 'unauthorized'));
+    for (const bad of ['', ' lead', 'has space', 'x'.repeat(201), 'a/b']) await assert.rejects(create(svc, founder, { idempotency_key: bad }), (e) => e.code === 'WORKSPACE_VALIDATION_ERROR');
+    assert.deepEqual(await countFonzoRows(), { projects: 1, brands: 1 }, 'nothing was created by any refused request');
+    // The same key from another owner would name different ids (the owner is part of the derivation), so it cannot collide with or reveal this workspace.
+    const { idempotentWorkspaceIds } = require('../src/customer-workspace/repository');
+    assert.notEqual(idempotentWorkspaceIds({ auth_user_id: founder.auth_user_id, tenant_id: 'tenant_fairway', idempotency_key: WS_KEY }).project_id, idempotentWorkspaceIds({ auth_user_id: stranger.auth_user_id, tenant_id: 'tenant_fairway', idempotency_key: WS_KEY }).project_id);
+  });
+
+  it('a different key is an explicit new workspace, and a request without a key keeps the existing non-idempotent behaviour', async () => {
+    const svc = newWorkspaceService();
+    const other = await create(svc, founder, { business_name: 'Fonzo Three', idempotency_key: 'fonzo.workspace.v2' });
+    assert.notEqual(other.workspace.project_id, fonzoScope.project_id);
+    const a = await svc.createAdditionalWorkspace({ actor: { ...founder }, request: { tenant_id: 'tenant_fairway', business_name: 'Unkeyed' } });
+    const b = await svc.createAdditionalWorkspace({ actor: { ...founder }, request: { tenant_id: 'tenant_fairway', business_name: 'Unkeyed' } });
+    assert.notEqual(a.workspace.project_id, b.workspace.project_id);
+    assert.deepEqual(await countFonzoRows(), { projects: 1, brands: 1 }, 'Fonzo itself is still exactly one workspace');
+  });
+
+  it('founder scope recovery: the workspaces stay listable, selection back to Fairway and to Fonzo works at the API layer, Fairway is unchanged', async () => {
+    const svc = newWorkspaceService();
+    const listed = await svc.getWorkspace({ actor: { ...founder } });
+    assert.equal(listed.status, 'selection_required');
+    assert.ok(listed.workspaces.some((w) => w.project_id === fonzoScope.project_id && w.brand_name === 'Fonzo'));
+    assert.ok(listed.workspaces.some((w) => w.project_id === fairway.project_id));
+    const toFairway = await svc.selectWorkspace({ actor: { ...founder }, request: { ...fairway } });
+    assert.equal(toFairway.status, 'ready'); assert.equal(provisioned.at(-1).trusted_scope.project_id, fairway.project_id);
+    const toFonzo = await svc.selectWorkspace({ actor: { ...founder }, request: { ...fonzoScope } });
+    assert.equal(provisioned.at(-1).trusted_scope.project_id, fonzoScope.project_id); assert.equal(toFonzo.status, 'ready');
+    await assert.rejects(svc.selectWorkspace({ actor: { ...stranger }, request: { ...fonzoScope } }), (e) => e.code === 'WORKSPACE_VALIDATION_ERROR');
     const brain = await brainRepo.getByProjectAndBrand(fonzoScope.project_id, fonzoScope.brand_id);
     assert.equal(brain.name, 'Fonzo');
     assert.equal((await brainRepo.getByProjectAndBrand(fairway.project_id, fairway.brand_id)).name, 'Fairway');
     assert.deepEqual(await snapshot(fairway, fairwayCampaign), fairwaySnapshot);
-    // The operation is not idempotent: a replay makes ANOTHER workspace. This is why the bridge permits one attempt per process.
-    const again = await workspaceService.createAdditionalWorkspace({ actor: { ...founder }, request: { tenant_id: 'tenant_fairway', business_name: 'Fonzo' } });
-    assert.notEqual(again.workspace.project_id, fonzoScope.project_id);
-    // A non-owner of the tenant cannot create one in it.
-    await assert.rejects(workspaceService.createAdditionalWorkspace({ actor: { ...member }, request: { tenant_id: 'tenant_fairway', business_name: 'Fonzo' } }));
-    await assert.rejects(workspaceService.createAdditionalWorkspace({ actor: { ...stranger }, request: { tenant_id: 'tenant_fairway', business_name: 'Fonzo' } }));
   });
 
   it('Fonzo gets its own campaign under the SAME fixed key without touching Fairway; the spent Fairway key cannot be reused for Fonzo content', async () => {

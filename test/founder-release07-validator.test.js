@@ -9,7 +9,7 @@ function common(b){Object.assign(b.environment,{SUPABASE_PUBLISHABLE_KEY:'sb_pub
 function workspace(){
  const b=structuredClone(require('../scripts/staging/bridge-founder-onboarding-release.example.json'));
  Object.assign(b,{sourceSha:'a'.repeat(40),image:'europe-west1-docker.pkg.dev/bizgenie-backend/cloud-run-source-deploy/bizgenie-studio-bridge@sha256:'+'b'.repeat(64),identitySuitabilityEvidence:'synthetic.iam',publicInvokerApproval:'synthetic.invoker',upstreamTagEvidence:'synthetic.tag'});common(b);
- Object.assign(b.environment,{BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE:'true',BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID:fairway.tenant_id,BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME:'Fonzo'});
+ Object.assign(b.environment,{BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE:'true',BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID:fairway.tenant_id,BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY:'fonzo.workspace.v1',BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME:'Fonzo'});
  return {profile:'workspace',baseProfile:b,approvalRef:ref(1),independentScopeEvidenceRef:ref(2),rollbackEvidenceRef:ref(3),protectedScope:{...fairway}};
 }
 function a2(){
@@ -27,7 +27,7 @@ test('workspace profile validates offline, never mutates its input, and says it 
 });
 test('workspace profile rejects missing or reused evidence, other permissions, wrong tenant and unknown fields',()=>{
  const edits=[r=>delete r.independentScopeEvidenceRef,r=>r.independentScopeEvidenceRef=r.approvalRef,r=>r.rollbackEvidenceRef='UNKNOWN',r=>r.approvalRef='https://example.invalid/x#issuecomment-1',r=>r.extra=true,r=>r.profile='general',r=>delete r.protectedScope,r=>r.protectedScope.campaign_id='not-a-uuid',
-  r=>r.baseProfile.environment.BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE='false',r=>r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID='tenant_other',r=>r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME=' Fonzo',r=>delete r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME,
+  r=>r.baseProfile.environment.BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE='false',r=>r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID='tenant_other',r=>r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME=' Fonzo',r=>delete r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME,r=>delete r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY,r=>r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY='bg-r2-founder-campaign-v1',r=>r.baseProfile.environment.BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY='bad key',
   r=>r.baseProfile.environment.BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING='true',r=>r.baseProfile.environment.BG_BRIDGE_ALLOW_FOUNDER_CAMPAIGN_ROOT='true',r=>r.baseProfile.environment.BG_BRIDGE_ALLOW_FOUNDER_ASSET_INTAKE='true',r=>r.baseProfile.environment.BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP='true',r=>r.baseProfile.environment.BG_BRIDGE_ALLOW_WRITES='true',r=>r.baseProfile.image='latest',r=>delete r.baseProfile.environment.BG_BRIDGE_FOUNDER_AUTH_USER_ID];
  for(const edit of edits){const r=workspace();edit(r);assert.throws(()=>validate(r),/FOUNDER_RELEASE07_NOT_READY/);}
 });
