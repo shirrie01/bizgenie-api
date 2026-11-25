@@ -1,8 +1,9 @@
-const { CustomerWorkspacePersistenceError } = require("./errors");
+const { CustomerWorkspacePersistenceError, CustomerWorkspaceValidationError } = require("./errors");
 const {
   CustomerWorkspaceRepository,
   additionalWorkspaceIds,
   defaultWorkspaceIds,
+  idempotentWorkspaceIds,
   workspaceDto,
 } = require("./repository");
 
@@ -144,9 +145,9 @@ class PostgresCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
     }
   }
 
-  async createAdditionalWorkspace({ auth_user_id, tenant_id, business_name, website_or_social_profile, primary_marketing_challenge }) {
+  async createAdditionalWorkspace({ auth_user_id, tenant_id, business_name, website_or_social_profile, primary_marketing_challenge, idempotency_key }) {
     const client = await this.pool.connect();
-    const ids = additionalWorkspaceIds();
+    const ids = idempotency_key ? idempotentWorkspaceIds({ auth_user_id, tenant_id, idempotency_key }) : additionalWorkspaceIds();
     const businessName = business_name || "BizGenie Workspace";
     const projectName = `${businessName} Campaign Workspace`;
     const now = new Date().toISOString();
@@ -160,6 +161,23 @@ class PostgresCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
       if (membership.rows[0]?.role !== "owner") {
         await client.query("ROLLBACK");
         return null;
+      }
+      if (idempotency_key) {
+        // Replay (restart, second instance, lost response): the deterministic primary keys are the durable record. The per-user advisory lock above
+        // serialises concurrent callers, so exactly one of them inserts and every other one reads the same workspace back.
+        const prior = await client.query(`${WORKSPACE_SELECT}
+          WHERE tm.auth_user_id = $1 AND tm.tenant_id = $2 AND p.project_id = $3 AND b.brand_id = $4 LIMIT 1`,
+        [auth_user_id, tenant_id, ids.project_id, ids.brand_id]);
+        if (prior.rows[0]) {
+          const replay = mapWorkspaceRow(prior.rows[0]);
+          await client.query("ROLLBACK");
+          if (replay.project_name !== projectName) {
+            throw new CustomerWorkspaceValidationError([{ path: "idempotency_key", code: "idempotency_conflict", message: "This key was already used for a different workspace" }]);
+          }
+          return replay;
+        }
+        const taken = await client.query(`SELECT 1 FROM public.projects WHERE project_id = $1`, [ids.project_id]);
+        if (taken.rowCount) throw new CustomerWorkspacePersistenceError();
       }
       await client.query(`INSERT INTO public.projects (project_id, tenant_id, name, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $4)`, [ids.project_id, tenant_id, projectName, now]);
@@ -182,7 +200,7 @@ class PostgresCustomerWorkspaceRepository extends CustomerWorkspaceRepository {
       return workspace;
     } catch (error) {
       try { await client.query("ROLLBACK"); } catch {}
-      if (error instanceof CustomerWorkspacePersistenceError) throw error;
+      if (error instanceof CustomerWorkspacePersistenceError || error instanceof CustomerWorkspaceValidationError) throw error;
       throw new CustomerWorkspacePersistenceError();
     } finally {
       client.release();

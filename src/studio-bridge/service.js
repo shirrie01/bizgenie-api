@@ -30,6 +30,7 @@ function isDraftWorkflowWrite(method,path){
  if(['/customer/campaign-recommendations','/customer/campaigns'].includes(path))return true;
  return new RegExp('^/customer/campaigns/'+UUID+'/content-items$').test(path)||new RegExp('^/customer/campaigns/'+UUID+'/variants/'+UUID+'/(?:review|preview-renders|preview-acknowledgements|approval|schedule|reschedule|unschedule)$').test(path);
 }
+const R07=require('./founderRelease07');
 const IDENTITY=/^\/customer\/workspace(?:\/(?:bootstrap|select|brands))?$/;
 const PRIVATE_HEADERS=['x-serverless-authorization','x-admin-key','x-api-key','proxy-authorization'];
 const FOUNDER_ID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -69,6 +70,7 @@ function config(input){
  for(const key of ['allowFounderCopyEditing','allowFounderVideoAttachment','allowFounderSocialConnections'])if(c[key]!==undefined&&typeof c[key]!=='boolean')throw Error('Explicit founder release permission required');
  if((c.allowFounderCopyEditing===true||c.allowFounderSocialConnections===true)&&c.allowFounderDraftWorkflow!==true)throw Error('Founder draft binding required');
  if(c.allowFounderVideoAttachment===true&&(!c.founderVideo||c.founderAuthUserId!==c.founderVideo.auth_user_id))throw Error('Founder video binding required');
+ R07.validate(c,validFounderId);
  const u=new URL(c.upstream),a=new URL(c.audience);
  if(!/^https:\/\/[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(u.origin)||u.href!==u.origin+'/'||!/^https:\/\/bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$/.test(a.origin)||a.href!==a.origin+'/'||!u.hostname.endsWith('---'+a.hostname)||!['https://staging-app.getbizgenie.com','https://bizgenie-studio-staging.pages.dev'].includes(c.origin))throw Error('Pinned staging URLs and Studio origin required');
  for(const [key,lo,hi] of [['maxRequests',1,600],['maxIdentities',1,10000],['maxConcurrent',1,32],['timeoutMs',100,30000]])if(!Number.isInteger(c[key])||c[key]<lo||c[key]>hi)throw Error('Bounded bridge limits required');
@@ -97,7 +99,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(requested.some(x=>!['authorization','content-type','range'].includes(x)))return failure(res,403,'HEADERS_FORBIDDEN');
    res.set('Access-Control-Allow-Headers','authorization,content-type,range');res.set('Access-Control-Allow-Methods',method);return res.status(204).end();
   }
-  if(!['GET','HEAD'].includes(req.method)&&!founderDraftCampaign(c,req.method,req.originalUrl)&&!founderCampaignWrite(c,req.method,req.originalUrl)&&!videoWrite(c,req.method,req.originalUrl)&&!founderSocialConnection(c,req.method,req.originalUrl)&&!founderRecommendation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
+  if(!['GET','HEAD'].includes(req.method)&&!founderDraftCampaign(c,req.method,req.originalUrl)&&!founderCampaignWrite(c,req.method,req.originalUrl)&&!videoWrite(c,req.method,req.originalUrl)&&!founderSocialConnection(c,req.method,req.originalUrl)&&!R07.workspace(c,req.method,req.originalUrl)&&!R07.intakeKind(c,req.method,req.originalUrl)&&!founderRecommendation(c,req.method,req.originalUrl)&&!(c.allowFounderOnboarding===true&&founderWrite(req.method,req.originalUrl))&&c.allowWrites!==true&&!(c.allowWorkspaceBootstrap===true&&req.method==='POST'&&req.originalUrl==='/customer/workspace/bootstrap')&&!(c.allowDraftWorkflow===true&&req.originalUrl===raw&&isDraftWorkflowWrite(req.method,raw)))return failure(res,403,'STAGING_WRITES_DISABLED');
   if(raw==='/billing/stripe/checkout'&&c.allowStripeCheckout!==true)return failure(res,403,'STRIPE_CHECKOUT_DISABLED');
   if(/\/generation-quotes\/[^/]+\/confirm$/.test(raw)&&c.allowGenerationConfirmation!==true&&!videoConfirmation(c,req.method,req.originalUrl))return failure(res,403,'GENERATION_CONFIRMATION_DISABLED');
   if(/\/social\//.test(raw)&&req.method!=='GET'&&req.method!=='HEAD'&&c.allowSocialWrites!==true&&!founderSocialConnection(c,req.method,req.originalUrl))return failure(res,403,'SOCIAL_WRITES_DISABLED');
@@ -117,7 +119,7 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    return next();
   }catch{if(!res.headersSent)return failure(res,401,'AUTHENTICATION_REQUIRED');}
  });
- const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:(founderRecommendation(c,req.method,req.originalUrl)||founderCampaignWrite(c,req.method,req.originalUrl)||founderDraftCampaign(c,req.method,req.originalUrl)||videoAttachment(c,req.method,req.originalUrl)||founderSocialConnection(c,req.method,req.originalUrl))?draftBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
+ const draftBody=express.raw({type:()=>true,limit:'16kb'}),bootstrapBody=express.raw({type:()=>true,limit:'2kb'}),jsonBody=express.raw({type:()=>true,limit:'100kb'}),checkoutBody=express.raw({type:()=>true,limit:'32kb'}),quoteBody=express.raw({type:()=>true,limit:'16kb'}),uploadBody=express.raw({type:()=>true,limit:'32mb'});app.use((req,res,next)=>(req.method==='POST'&&req.path==='/customer/workspace/bootstrap'?bootstrapBody:(founderRecommendation(c,req.method,req.originalUrl)||founderCampaignWrite(c,req.method,req.originalUrl)||founderDraftCampaign(c,req.method,req.originalUrl)||videoAttachment(c,req.method,req.originalUrl)||founderSocialConnection(c,req.method,req.originalUrl)||R07.workspace(c,req.method,req.originalUrl)||['init','complete'].includes(R07.intakeKind(c,req.method,req.originalUrl)))?draftBody:c.allowDraftWorkflow===true&&isDraftWorkflowWrite(req.method,req.path)?draftBody:req.method==='PUT'&&/\/assets\/uploads\//.test(req.path)?uploadBody:req.path==='/billing/stripe/checkout'?checkoutBody:req.path.startsWith('/customer/generation-quotes')?quoteBody:jsonBody)(req,res,next));
  app.use(async(req,res)=>{
   const controller=res.locals.controller;let upstream;
   const cancel=()=>controller.abort();req.once('aborted',cancel);res.once('close',cancel);
@@ -157,6 +159,20 @@ function createStudioBridge({target,tokenVerifier,iamTokenProvider,fetchImpl=glo
    if(founderSocialConnection(c,req.method,req.originalUrl)){
     if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
     if(!CustomerTrustedScopeSchema.safeParse(scope).success||['tenant_id','project_id','brand_id'].some(key=>scope[key]!==c.founderDraftScope[key]||body?.[key]!==scope[key]))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+   }
+   if(R07.workspace(c,req.method,req.originalUrl)){
+    if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
+    if(!R07.workspaceBodyMatches(c.founderAdditionalWorkspace,body))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+    // No bridge-local state: the pinned idempotency_key makes the API return the same workspace for every replay (restart, replica, lost response).
+   }
+   const intake=R07.intakeKind(c,req.method,req.originalUrl);
+   if(intake){
+    if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
+    if(!R07.intakeValid(c,intake,{body,url:req.originalUrl,contentType:req.header('content-type'),trustedScope:scope}))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
+   }
+   if(R07.intakeRead(c,req.method,req.originalUrl)){
+    if(res.locals.actor.auth_user_id!==c.founderAuthUserId)return failure(res,403,'STAGING_WRITES_DISABLED');
+    if(!R07.readScopeValid(c,req.originalUrl)||!R07.trustedScopeValid(c,scope))return failure(res,404,'RESOURCE_NOT_AVAILABLE');
    }
    const credential=await bounded(iamTokenProvider({audience:c.audience}),controller.signal);
    if(typeof credential!=='string'||!credential||/[\r\n]/.test(credential))throw Error();
