@@ -27,7 +27,7 @@ for e in "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG"; do [[ "$e" =~ $EVR
 [ "$(printf '%s\n' "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG" "${EV_RECONCILIATION:-}" "${EV_BRIDGE_RECONCILIATION:-}" | grep -v '^$' | sort -u | wc -l)" = "$(printf '%s\n' "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG" "${EV_RECONCILIATION:-}" "${EV_BRIDGE_RECONCILIATION:-}" | grep -vc '^$')" ] || die "the evidence references (including the reconciliation approvals) must all be distinct"
 
 say "1/6 baseline safeguards (read-only): the serving bridge and API must still be the recorded rollback targets"
-BJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json); AJ=$(gcloud run services describe "$API_SVC" --project="$P" --region="$R" --format=json)
+BJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "the bridge service metadata command failed"; AJ=$(gcloud run services describe "$API_SVC" --project="$P" --region="$R" --format=json) || die "the API service metadata command failed"
 serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
 [ "$(serving "$BJ")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision is not $BASE_BRIDGE_REV (drift): re-run the inventory"
 [ "$(serving "$AJ")" = "$BASE_API_REV" ] || die "API serving revision is not $BASE_API_REV (drift): re-run the inventory"
@@ -36,7 +36,7 @@ norm_digest() { local v=${1##*@}; [[ "$v" =~ ^sha256:[a-f0-9]{64}$ ]] || return 
 dig_of() { local raw; raw=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)') || return 1; norm_digest "$raw" || { echo "STOP: revision $1 reported a missing or malformed image digest" >&2; return 1; }; }
 [ "$(dig_of "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "bridge rollback digest differs from the recorded one"
 [ "$(dig_of "$BASE_API_REV")" = "$BASE_API_DIGEST" ] || die "API rollback digest differs from the recorded one"
-BREV=$(gcloud run revisions describe "$BASE_BRIDGE_REV" --project="$P" --region="$R" --format=json)
+BREV=$(gcloud run revisions describe "$BASE_BRIDGE_REV" --project="$P" --region="$R" --format=json) || die "the serving bridge revision metadata command failed"
 [ "$(jq '[.spec.containers[]?.env[]? | select(.valueFrom != null)] | length' <<<"$BREV")" = 0 ] || die "the serving bridge has secret-backed env vars: a full env replacement would drop them; handle manually"
 echo "bridge $BASE_BRIDGE_REV and API $BASE_API_REV are serving and match the recorded digests"
 

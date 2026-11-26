@@ -7,11 +7,12 @@
 set -euo pipefail
 P=bizgenie-backend; R=europe-west1; API_SVC=bizgenie-api-staging; BRIDGE_SVC=bizgenie-studio-bridge-staging; TAG=a0-dfd49116
 BASE_BRIDGE_REV=bizgenie-studio-bridge-staging-step7-c023184c; BASE_BRIDGE_DIGEST=sha256:312be533f275ad578e52973ec6fb00eff266a07d1af53de6982ab423bf96ce18
-BASE_API_REV=bizgenie-api-staging-00029-wtc
+BASE_API_REV=bizgenie-api-staging-00029-wtc; BASE_API_DIGEST=sha256:e443d4bc136c79080f6535f78a7fb72a03d69a6ea39b91473ee3d84e240f7ae2
 PRIV="$HOME/.bg-private"; STATE="$PRIV/a0-state.json"; EVID="$PRIV/a0-smoke-evidence.json"; MAX_EVIDENCE_AGE=${MAX_EVIDENCE_AGE:-3600}
 die() { echo "STOP: $*" >&2; exit 1; }
-describe() { gcloud run services describe "$1" --project="$P" --region="$R" --format=json; }
-revjson() { gcloud run revisions describe "$1" --project="$P" --region="$R" --format=json; }
+# Every metadata read captures the output, checks the exit status and prints NOTHING when the command failed (a command can print complete JSON and still exit nonzero).
+describe() { local o; o=$(gcloud run services describe "$1" --project="$P" --region="$R" --format=json) || return 1; printf '%s' "$o"; }
+revjson() { local o; o=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format=json) || return 1; printf '%s' "$o"; }
 # Cloud Run returns status.imageDigest as <repository>@sha256:<64 hex>; reduce to the bare digest and fail closed on anything else (missing, malformed, uppercase, short).
 norm_digest() { local v=${1##*@}; [[ "$v" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1; printf '%s' "$v"; }
 revdigest() { local raw; raw=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)') || return 1; norm_digest "$raw" || { echo "STOP: revision $1 reported a missing or malformed image digest" >&2; return 1; }; }
@@ -20,8 +21,15 @@ tag_revision() { jq -r --arg t "$2" '[.status.traffic[]? | select(.tag == $t) | 
 ready() { jq -e '[.status.conditions[]? | select(.type == "Ready")][0].status == "True"' <<<"$1" >/dev/null; }
 h12() { sha256sum | cut -c1-12; }
 # Metadata reads can fail silently inside `$(...)` when bash runs us in a conditional context (set -e is ignored there), producing an empty document that would compare "equal" to another empty one.
-need_service_json() { jq -e '.spec.template.spec.containers[0] != null and (.status.traffic | type == "array")' <<<"$1" >/dev/null 2>&1 || die "could not read the service $2 (metadata read failed or malformed): no conclusion drawn"; }
-need_revision_json() { jq -e '.spec.containers[0] != null and (.status.conditions | type == "array")' <<<"$1" >/dev/null 2>&1 || die "could not read revision $2 (metadata read failed or malformed): no conclusion drawn"; }
+# Container shape: every container has a DNS-label name (lowercase letter first, letter or digit last, at most 63 characters) and a well-formed, duplicate-free environment list. Duplicates are
+# NEVER collapsed into a map: they are refused outright, before comparing, fingerprinting, adopting or resuming.
+CONTAINERS_OK='type == "array" and length >= 1 and all(.[]; type == "object" and (.name | type == "string" and test("\\A[a-z]([a-z0-9-]{0,61}[a-z0-9])?\\z")) and ((.env // []) | type == "array" and all(.[]; type == "object" and (.name | type == "string" and length > 0) and ((has("value") and has("valueFrom")) | not)) and ((map(.name) | length) == (map(.name) | unique | length))))'
+valid_service_json() { jq -e '.spec.template.spec.containers != null and (.status.traffic | type == "array")' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.template.spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
+valid_revision_json() { jq -e '.spec.containers != null and (.status.conditions | type == "array")' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
+read_svc() { local o; o=$(describe "$1") || { echo "STOP: the metadata command for service $1 failed (nonzero exit status): its output is not accepted" >&2; return 1; }; valid_service_json "$o" || { echo "STOP: service $1 metadata is malformed, has a duplicate or malformed environment entry, or an invalid container name (names only shown)" >&2; return 1; }; printf '%s' "$o"; }
+read_rev() { local o; o=$(revjson "$1") || { echo "STOP: the metadata command for revision $1 failed (nonzero exit status): its output is not accepted" >&2; return 1; }; valid_revision_json "$o" || { echo "STOP: revision $1 metadata is malformed, has a duplicate or malformed environment entry, or an invalid container name (names only shown)" >&2; return 1; }; printf '%s' "$o"; }
+need_service_json() { valid_service_json "$1" || die "could not read service $2: metadata failed, is malformed, has a duplicate or malformed environment entry, or an invalid container name: no conclusion drawn"; }
+need_revision_json() { valid_revision_json "$1" || die "could not read revision $2: metadata failed, is malformed, has a duplicate or malformed environment entry, or an invalid container name: no conclusion drawn"; }
 # Canonical, secret-safe fingerprint of everything a NEW revision would inherit. Values are hashed (12 hex) and never printed; secret references are compared too.
 # $1 = JSON, $2 = "svc" (service object: template under .spec.template) or "rev" (revision object).
 fingerprint() {
@@ -45,8 +53,8 @@ REVIEWED_BRIDGE_ENV="BG_BRIDGE_ALLOW_DRAFT_WORKFLOW BG_BRIDGE_ALLOW_FOUNDER_CAMP
 APPROVED_ROLE_NAME=bizgenie-staging-supabase-service-role-key; APPROVED_ROLE_VERSION=1; HISTORICAL_ROLE_NAME=bizgenie-supabase-service-role-key; APPROVED_ISOLATION=local
 template_matches_serving() { # $1 service name  $2 serving revision  $3 "reconcile-api" to allow the two reviewed API differences
   local sj rj sfp rfp key applied="" bad="" k superseded=""
-  sj=$(describe "$1") || true; rj=$(revjson "$2") || true; need_service_json "$sj" "$1"; need_revision_json "$rj" "$2"
-  sfp=$(fingerprint "$sj" svc) || true; rfp=$(fingerprint "$rj" rev) || true
+  sj=$(read_svc "$1") || die "cannot read service $1: no conclusion drawn"; rj=$(read_rev "$2") || die "cannot read revision $2: no conclusion drawn"
+  sfp=$(fingerprint "$sj" svc) || die "the fingerprint of $1 failed (nonzero status): no conclusion drawn"; rfp=$(fingerprint "$rj" rev) || die "the fingerprint of revision $2 failed (nonzero status): no conclusion drawn"
   # a fingerprint that is empty or lacks its identity line means the comparator itself failed: never "equal"
   printf '%s\n' "$sfp" | grep -q '^SA' && printf '%s\n' "$rfp" | grep -q '^SA' && [ "$(printf '%s\n' "$sfp" | wc -l)" -ge 20 ] && [ "$(printf '%s\n' "$rfp" | wc -l)" -ge 20 ] || die "the comparison of $1 could not be computed (comparator failure): no conclusion drawn"
   declare -A S R; while IFS=$'\t' read -r k1 k2 v; do S["$k1|$k2"]=$v; done <<<"$sfp"; while IFS=$'\t' read -r k1 k2 v; do R["$k1|$k2"]=$v; done <<<"$rfp"
@@ -87,7 +95,7 @@ template_matches_serving() { # $1 service name  $2 serving revision  $3 "reconci
 }
 bridge_structure() { # $1 json, $2 tmpl|rev
   local q; if [ "$2" = tmpl ]; then q='.spec.template.spec as $s | (.spec.template.metadata.annotations // {}) as $a'; else q='.spec as $s | (.metadata.annotations // {}) as $a'; fi
-  jq -e "$q"' | ($s.containers | length) == 1 and ($s.containers[0].name | type == "string" and test("^[a-z][a-z0-9-]{0,62}$")) and (($a["run.googleapis.com/container-dependencies"] // "") == "")
+  jq -e "$q"' | ($s.containers | length) == 1 and ($s.containers[0].name | type == "string" and test("\\A[a-z]([a-z0-9-]{0,61}[a-z0-9])?\\z")) and (($a["run.googleapis.com/container-dependencies"] // "") == "")
     and (($s.volumes // []) | length) == 0 and (($s.containers[0].volumeMounts // []) | length) == 0
     and (($s.containers[0].ports // []) | length) == 1 and $s.containers[0].ports[0].containerPort == 8080 and (($s.containers[0].ports[0].name // "http1") == "http1") and (($s.containers[0].ports[0].protocol // "TCP") == "TCP")' <<<"$1" >/dev/null 2>&1
 }
@@ -95,7 +103,7 @@ bridge_structure() { # $1 json, $2 tmpl|rev
 bridge_container_name_ok() { # $1 service json  $2 revision json  $3 dependency-annotation hash  $4/$5 volume hashes
   local n1 n2; n1=$(jq -r '.spec.template.spec.containers[0].name // ""' <<<"$1"); n2=$(jq -r '.spec.containers[0].name // ""' <<<"$2")
   [ "$(jq '.spec.template.spec.containers | length' <<<"$1")" = 1 ] && [ "$(jq '.spec.containers | length' <<<"$2")" = 1 ] || return 1
-  [[ "$n1" =~ ^[a-z][a-z0-9-]{0,62}$ && "$n2" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || return 1
+  [[ "$n1" =~ ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ && "$n2" =~ ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] || return 1
   [ "$3" = "$(printf '' | h12)" ]
 }
 # The ONLY environment names the A0 bridge file may contain (PORT is reserved by Cloud Run and must not be set). Flags must have the exact values below.
@@ -103,7 +111,7 @@ A0_ENV_NAMES="BG_BRIDGE_ALLOW_DRAFT_WORKFLOW BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_
 validate_a0_env_file() { # $1 = env file written by a0-prepare.sh; $2 (optional) = the accepted API revision it must be pinned to. Values are checked, never printed.
   local f="$1" names n v j bad="" aud tu
   [ -s "$f" ] || die "A0 bridge env file missing: run a0-prepare.sh first"
-  [ "$(grep -cvE '^[A-Za-z0-9_]+: ' "$f" || true)" = 0 ] || die "the A0 bridge env file contains lines that are not NAME: value"
+  [ "$(awk '!/^[A-Za-z0-9_]+: /{n++} END{print n+0}' "$f")" = 0 ] || die "the A0 bridge env file contains lines that are not NAME: value"
   names=$(sed -E 's/^([A-Za-z0-9_]+):.*/\1/' "$f" | sort)
   [ -z "$(printf '%s\n' "$names" | uniq -d)" ] || die "the A0 bridge env file contains duplicate names"
   j=$(jq -Rn '[inputs | select(length > 0) | capture("^(?<k>[A-Za-z0-9_]+): (?<v>.*)$") | {key:.k, value:(.v | fromjson)}] | from_entries' < "$f" 2>/dev/null) || die "the A0 bridge env file has a malformed value"
@@ -148,7 +156,7 @@ print_env_plan() { # $1 service json  $2 serving revision json
 }
 # One consolidated READ-ONLY diagnostic for the bridge template. Prints only safe facts: presence, equality, boolean flag values, expected-value matches. Never prints ids, tokens, key material or campaign contents.
 diagnose_bridge() {
-  local sj rj; sj=$(describe "$BRIDGE_SVC") || true; rj=$(revjson "$BASE_BRIDGE_REV") || true; need_service_json "$sj" "$BRIDGE_SVC"; need_revision_json "$rj" "$BASE_BRIDGE_REV"
+  local sj rj; sj=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service: no conclusion drawn"; rj=$(read_rev "$BASE_BRIDGE_REV") || die "cannot read the serving bridge revision: no conclusion drawn"
   tv() { jq -r --arg n "$1" '[.spec.template.spec.containers[0].env[]? | select(.name == $n)][0] | if . == null then "<absent>" elif .valueFrom then "<secret-ref>" else (.value // "") end' <<<"$sj"; }
   sv() { jq -r --arg n "$1" '[.spec.containers[0].env[]? | select(.name == $n)][0] | if . == null then "<absent>" elif .valueFrom then "<secret-ref>" else (.value // "") end' <<<"$rj"; }
   echo "== permission flags (true/false values are safe to show)"
@@ -172,9 +180,9 @@ check_templates() {
   local rc=0
   echo "-- API template vs serving $BASE_API_REV"; ( template_matches_serving "$API_SVC" "$BASE_API_REV" reconcile-api ) || rc=1
   echo "-- bridge template vs serving $BASE_BRIDGE_REV (non-environment settings strict; reviewed bridge differences need a distinct approval)"; ( template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" reconcile-bridge ) || rc=1
-  local rj; rj=$(revjson "$BASE_BRIDGE_REV") || true; need_revision_json "$rj" "$BASE_BRIDGE_REV"
+  local rj; rj=$(read_rev "$BASE_BRIDGE_REV") || die "cannot read the serving bridge revision: no conclusion drawn"
   [ "$(jq '[.spec.containers[]?.env[]? | select(.valueFrom != null)] | length' <<<"$rj")" = 0 ] || { echo "STOP: the serving bridge has secret-backed env vars; the env-file deployment would drop them" >&2; rc=1; }
-  local bsj; bsj=$(describe "$BRIDGE_SVC") || true; need_service_json "$bsj" "$BRIDGE_SVC"; print_env_plan "$bsj" "$rj"
+  local bsj; bsj=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service: no conclusion drawn"; print_env_plan "$bsj" "$rj"
   [ "$rc" = 0 ] && echo "TEMPLATE CHECK: PASS (read-only; nothing changed)" || { echo "TEMPLATE CHECK: FAIL (read-only; nothing changed)" >&2; return 1; }
 }
 # All six approval/evidence references are required, valid and pairwise distinct before the bridge is deployed (and are re-proven at the shift from the state).
@@ -183,6 +191,19 @@ require_evidence() {
   local a b; for a in $EVIDENCE_NAMES; do [[ "${!a:-}" =~ $COMMENT_RE ]] || die "$a is required and must be a #191 issue-comment URL"; done
   for a in $EVIDENCE_NAMES; do for b in $EVIDENCE_NAMES; do [ "$a" = "$b" ] || [ "${!a}" != "${!b}" ] || die "$a and $b must be distinct evidence references"; done; done
 }
+# --- recovery: an exact baseline readback is the ONLY proof of recovery. Anything else is INDETERMINATE: a lock file blocks every further shift, resume or smoke until rollback-bridge proves the baseline.
+LOCKF="$PRIV/a0-indeterminate.json"
+refuse_if_indeterminate() { [ ! -e "$LOCKF" ] || die "INDETERMINATE: an earlier traffic recovery could not be verified (lock $LOCKF). No shift, resume or smoke is allowed. Verify what the bridge serves by hand, then run: bash a0-deploy.sh rollback-bridge"; }
+mark_indeterminate() { umask 077; mkdir -p "$PRIV"; jq -n --arg at "$(date -u +%FT%TZ)" --arg why "$1" --arg base "$BASE_BRIDGE_REV" '{state:"INDETERMINATE",at:$at,reason:$why,baseline:$base}' > "$LOCKF" 2>/dev/null || printf '{"state":"INDETERMINATE"}\n' > "$LOCKF"; chmod 600 "$LOCKF" 2>/dev/null
+  invalidate_downstream || rm -f "$EVID"
+  echo "INDETERMINATE: $1. The bridge may NOT be serving $BASE_BRIDGE_REV. No further shift or resume is allowed. Run by hand NOW and verify: gcloud run services update-traffic $BRIDGE_SVC --project=$P --region=$R --to-revisions=$BASE_BRIDGE_REV=100 ; then: bash a0-deploy.sh rollback-bridge" >&2; exit 1; }
+# Exact baseline readback: the service is readable and well-formed, and exactly one traffic target carries traffic: the recorded baseline revision at 100 %.
+baseline_readback_ok() { local j; j=$(read_svc "$BRIDGE_SVC" 2>/dev/null) || return 1
+  jq -e --arg b "$BASE_BRIDGE_REV" '[.status.traffic[]? | select((.percent // 0) > 0)] | (length == 1) and (.[0].revisionName == $b) and ((.[0].percent // 0) == 100)' <<<"$j" >/dev/null 2>&1; }
+restore_baseline() { # $1 = why. Returns only when the baseline was PROVEN by readback; otherwise exits INDETERMINATE.
+  echo "restoring the recorded rollback target $BASE_BRIDGE_REV ($1)" >&2
+  if gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100" >&2 && baseline_readback_ok; then invalidate_downstream; echo "RECOVERED: exact baseline readback confirms $BASE_BRIDGE_REV serves 100% ($1); earlier smoke evidence is no longer usable" >&2; return 0; fi
+  mark_indeterminate "restoring $BASE_BRIDGE_REV could not be verified ($1)"; }
 # --- resume / duplicate protection --------------------------------------------------------------------------------------------------------------------
 # `gcloud run deploy --tag` silently MOVES an existing tag. So before any deploy, an existing tag is either adopted (proven identical: exact image digest, Ready, not serving, and for the bridge the
 # exact environment of the validated A0 file) or the run stops. Nothing is ever deployed twice under the same tag.
@@ -196,7 +217,8 @@ env_matches_manifest() { # $1 env file, $2 private manifest: the deployed file m
   have=$(jq -Rn '[inputs | select(length > 0) | capture("^(?<k>[A-Za-z0-9_]+): (?<v>.*)$") | {key:.k, value:(.v | fromjson)}] | from_entries' < "$1" 2>/dev/null | jq -cS .) || die "the A0 bridge env file could not be parsed"
   [ "$want" = "$have" ] || die "the A0 bridge env file is not exactly the validated manifest's environment: re-run a0-prepare.sh"
 }
-invalidate_downstream() { # any new attempt first removes earlier smoke eligibility and the earlier bridge checkpoint, so an early failure can never leave a shiftable state
+invalidate_downstream() { # NB: must not hide a state-file failure
+  [ ! -s "$STATE" ] || jq -e . "$STATE" >/dev/null 2>&1 || die "the state file is not valid JSON: inspect it by hand" # any new attempt first removes earlier smoke eligibility and the earlier bridge checkpoint, so an early failure can never leave a shiftable state
   rm -f "$EVID"; [ -s "$STATE" ] || return 0
   jq 'del(.bridgeRevision, .bridgeDigest, .bridgeTag)' "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE" && chmod 600 "$STATE"
 }
@@ -205,29 +227,30 @@ existing_tag() { # $1 service json, $2 expected bare digest, $3 baseline revisio
   [ "$t" != "$3" ] || die "tag $TAG points at the serving baseline $3: refusing"
   d=$(revdigest "$t") || die "cannot read the digest of the already-tagged revision $t"
   [ "$d" = "$2" ] || die "tag $TAG already points at $t with a DIFFERENT image: a previous run was partial or foreign. Inspect it read-only; do not redeploy (a deploy would move the tag)"
-  ready "$(revjson "$t")" || die "tag $TAG points at $t which is not Ready: inspect it before any further deployment"
+  local tj; tj=$(read_rev "$t") || die "cannot read the already-tagged revision $t"; ready "$tj" || die "tag $TAG points at $t which is not Ready: inspect it before any further deployment"
   jq -e --arg r "$t" '[.status.traffic[]? | select(.revisionName == $r and ((.percent // 0) > 0))] | length == 0' <<<"$1" >/dev/null || die "the tagged revision $t is receiving traffic"
   printf '%s' "$t"
 }
 COMMENT_RE='^https://github\.com/shirrie01/bizgenie-api/issues/191#issuecomment-[0-9]+$'
-state_get() { [ -s "$STATE" ] && jq -r --arg k "$1" '.[$k] // ""' "$STATE" || true; }
+state_get() { if [ -s "$STATE" ]; then jq -r --arg k "$1" '.[$k] // ""' "$STATE" || return 1; fi; }
 epoch_of() { date -u -d "$1" +%s 2>/dev/null || echo 0; }
 MAX_STATE_AGE=${MAX_STATE_AGE:-86400}
 # Revisions of a service, as a sorted space-separated list (names are not secret).
-list_revisions() { gcloud run revisions list --service="$1" --project="$P" --region="$R" --format='value(metadata.name)' | sort | tr '\n' ' '; }
+list_revisions() { local o; o=$(gcloud run revisions list --service="$1" --project="$P" --region="$R" --format='value(metadata.name)') || return 1; printf '%s\n' "$o" | sort | tr '\n' ' '; }
 need_baseline_in() { case " $1 " in *" $2 "*) ;; *) die "the revision list of the service could not be read or does not contain the serving baseline $2: no conclusion drawn about earlier attempts";; esac; }
 verify_api_tag() { # the accepted API revision must still be the tagged, Ready, non-serving revision with the accepted digest
   [ -n "$1" ] && [[ "$2" =~ ^sha256:[a-f0-9]{64}$ ]] || die "no valid accepted API revision and digest are recorded: an empty value can never be compared with an unreadable one"
-  local aj; aj=$(describe "$API_SVC"); [ "$(tag_revision "$aj" "$TAG")" = "$1" ] || die "API tag $TAG no longer points at $1"
+  local aj; aj=$(read_svc "$API_SVC") || die "cannot read the API service"; [ "$(tag_revision "$aj" "$TAG")" = "$1" ] || die "API tag $TAG no longer points at $1"
   [ "$(serving "$aj")" = "$BASE_API_REV" ] || die "API serving revision is no longer $BASE_API_REV"
-  [ "$(revdigest "$1")" = "$2" ] || die "live digest of API revision $1 differs from the accepted digest"; ready "$(revjson "$1")" || die "API revision $1 is not Ready"
+  [ "$(revdigest "$1")" = "$2" ] || die "live digest of API revision $1 differs from the accepted digest"; local av; av=$(read_rev "$1") || die "cannot read API revision $1"; ready "$av" || die "API revision $1 is not Ready"
 }
 write_state() { umask 077; mkdir -p "$PRIV"; jq -n --arg k "$1" --arg v "$2" '{($k):$v}' >/dev/null; local cur='{}'; [ -s "$STATE" ] && cur=$(cat "$STATE"); jq --arg k "$1" --arg v "$2" '. + {($k):$v}' <<<"$cur" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"; chmod 600 "$STATE"; }
 case "${1:-}" in
  api)
-  invalidate_downstream
-  : "${API_REF:?export API_REF (E1 output)}"; D="${API_REF##*@}"; J=$(describe "$API_SVC"); [ "$(serving "$J")" = "$BASE_API_REV" ] || die "API serving revision drifted"
-  NEW=$(existing_tag "$J" "$D" "$BASE_API_REV"); SREV=$(state_get apiRevision); SSTART=$(state_get apiDeployStartedAt); SBEFORE=$(state_get apiRevisionsBefore); NOWREVS=$(list_revisions "$API_SVC"); need_baseline_in "$NOWREVS" "$BASE_API_REV"
+  refuse_if_indeterminate; invalidate_downstream
+  : "${API_REF:?export API_REF (E1 output)}"; D="${API_REF##*@}"; J=$(read_svc "$API_SVC") || die "cannot read the API service"; [ "$(serving "$J")" = "$BASE_API_REV" ] || die "API serving revision drifted"
+  [ "$(revdigest "$BASE_API_REV")" = "$BASE_API_DIGEST" ] || die "the API rollback revision digest differs from the recorded one (or could not be read)"
+  NEW=$(existing_tag "$J" "$D" "$BASE_API_REV"); SREV=$(state_get apiRevision); SSTART=$(state_get apiDeployStartedAt); SBEFORE=$(state_get apiRevisionsBefore); NOWREVS=$(list_revisions "$API_SVC") || die "the revision list command failed: no conclusion drawn"; need_baseline_in "$NOWREVS" "$BASE_API_REV"
   if [ -n "$SSTART" ] && [ $(( $(date +%s) - $(epoch_of "$SSTART") )) -gt "$MAX_STATE_AGE" ] && [ -z "$NEW" ]; then die "a previous API deployment attempt ($SSTART) is older than ${MAX_STATE_AGE}s and left no verifiable tagged revision: STALE state. Inspect the service read-only; only after review remove $STATE by hand"; fi
   if [ -n "$NEW" ]; then
     [ -z "$SREV" ] || [ "$SREV" = "$NEW" ] || die "CONFLICT: the state records API revision $SREV but tag $TAG points at $NEW: do not continue"
@@ -240,40 +263,41 @@ case "${1:-}" in
     write_state baseApiRevision "$BASE_API_REV"; write_state apiRevisionsBefore "$NOWREVS"
     write_state apiDeployStartedAt "$(date -u +%FT%TZ)"
     gcloud run deploy "$API_SVC" --project="$P" --region="$R" --image="$API_REF" --no-traffic --tag="$TAG" --quiet || die "the API deploy command failed. A revision may exist. Do NOT redeploy by hand: re-run this step, which adopts an exact tagged match or stops with a reason. Verify serving is still $BASE_API_REV"
-    J=$(describe "$API_SVC"); NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged revision not found"
+    J=$(read_svc "$API_SVC") || die "cannot read the API service after the deploy"; NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged revision not found"
   fi
   [ "$(serving "$J")" = "$BASE_API_REV" ] || die "SERVING TRAFFIC CHANGED: roll back with: gcloud run services update-traffic $API_SVC --to-revisions=$BASE_API_REV=100 --project=$P --region=$R"
-  [ "$(revdigest "$NEW")" = "$D" ] || die "new API revision digest differs from API_REF"; ready "$(revjson "$NEW")" || die "new API revision is not Ready"
+  [ "$(revdigest "$NEW")" = "$D" ] || die "new API revision digest differs from API_REF"; NJ=$(read_rev "$NEW") || die "cannot read the new API revision"; ready "$NJ" || die "new API revision is not Ready"
   write_state apiRevision "$NEW"; write_state apiDigest "$D"; write_state apiVerifiedAt "$(date -u +%FT%TZ)"
   echo "NEW_API_REVISION=$NEW  NEW_API_TAG=$TAG  digest=$D"; echo "traffic unchanged (still $BASE_API_REV). Post the readback in #191 (EV_TAG), then run a0-prepare.sh.";;
  bridge)
-  invalidate_downstream
+  refuse_if_indeterminate; invalidate_downstream
   : "${BRIDGE_REF:?export BRIDGE_REF}"; BD="${BRIDGE_REF##*@}"; Y="$PRIV/a0-bridge-env.yaml"; [ -s "$Y" ] || die "run a0-prepare.sh first ($Y missing)"; [ -s "$STATE" ] || die "state file missing: run 'a0-deploy.sh api' first"
   APIREV=$(jq -r '.apiRevision // ""' "$STATE"); APIDIG=$(jq -r '.apiDigest // ""' "$STATE"); [ -n "$APIREV" ] && [ -n "$APIDIG" ] || die "state has no accepted API revision"
   verify_api_tag "$APIREV" "$APIDIG"
   require_evidence
   [ -z "$(state_get evTag)" ] || { [ "$(state_get evTag)" = "$EV_TAG" ] && [ "$(state_get evTagRevision)" = "$APIREV" ]; } || die "CONFLICT: the state binds a different EV_TAG/revision pair"
-  J=$(describe "$BRIDGE_SVC"); [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision drifted"
+  J=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service"; [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision drifted"
   [ "$(revdigest "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "rollback digest differs from the recorded one"
   validate_a0_env_file "$Y" "$APIREV"; env_matches_manifest "$Y" "$PRIV/a0-manifest.json"
   NEW=$(existing_tag "$J" "$BD" "$BASE_BRIDGE_REV")
   if [ -n "$NEW" ]; then echo "bridge tag $TAG already points at $NEW with the accepted digest: ADOPTING it only if its environment equals the validated A0 file"
   else
-    SBB=$(state_get bridgeRevisionsBefore); NOWB=$(list_revisions "$BRIDGE_SVC"); need_baseline_in "$NOWB" "$BASE_BRIDGE_REV"
+    SBB=$(state_get bridgeRevisionsBefore); NOWB=$(list_revisions "$BRIDGE_SVC") || die "the revision list command failed: no conclusion drawn"; need_baseline_in "$NOWB" "$BASE_BRIDGE_REV"
     if [ -n "$SBB" ]; then for r in $NOWB; do case " $SBB " in *" $r "*) ;; *) die "a previous attempt left an UNTAGGED/unrecognised bridge revision ($r): inspect it read-only, do not redeploy";; esac; done; fi
     template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" reconcile-bridge
     write_state bridgeRevisionsBefore "$NOWB"; write_state bridgeDeployStartedAt "$(date -u +%FT%TZ)"
     gcloud run deploy "$BRIDGE_SVC" --project="$P" --region="$R" --image="$BRIDGE_REF" --env-vars-file="$Y" --no-traffic --tag="$TAG" --quiet || die "the bridge deploy command failed. Do NOT redeploy by hand: re-run this step, which adopts an exact tagged match or stops with a reason. Verify serving is still $BASE_BRIDGE_REV"
-    J=$(describe "$BRIDGE_SVC"); NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged bridge revision not found"
+    J=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service after the deploy"; NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged bridge revision not found"
   fi
   [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "SERVING TRAFFIC CHANGED: run: bash a0-deploy.sh rollback-bridge"
   [ "$(revdigest "$NEW")" = "$BD" ] || die "new bridge revision digest differs from BRIDGE_REF"
-  RJ=$(revjson "$NEW"); ready "$RJ" || die "the bridge revision is not Ready"
+  RJ=$(read_rev "$NEW") || die "cannot read the bridge revision"; ready "$RJ" || die "the bridge revision is not Ready"
   env_equals_file "$RJ" "$Y" || die "the bridge revision's environment is not exactly the validated A0 file"
   [ "$(jq -r '[.spec.containers[0].env[]? | select(.name == "BG_BRIDGE_REVISION") | .value][0] // ""' <<<"$RJ")" = "$APIREV" ] || die "the bridge is not pinned to the accepted API revision $APIREV"
   write_state bridgeRevision "$NEW"; write_state bridgeDigest "$BD"; write_state bridgeTag "$TAG"; write_state evTag "$EV_TAG"; write_state evTagRevision "$APIREV"; write_state evReconciliation "$EV_RECONCILIATION"; write_state evBridgeReconciliation "$EV_BRIDGE_RECONCILIATION"; write_state evApproval "$EV_APPROVAL"; write_state evScope "$EV_SCOPE"; write_state evRollback "$EV_ROLLBACK"; rm -f "$EVID"
   echo "bridge A0 revision $NEW deployed under tag $TAG with 0% traffic; serving still $BASE_BRIDGE_REV. Next: bash a0-smoke.sh (mandatory), then shift-bridge.";;
  shift-bridge)
+  refuse_if_indeterminate
   : "${BRIDGE_REF:?export BRIDGE_REF (the accepted E1 reference; independent of the state file)}"; : "${A0_CONFIRM_REVISION:?type the bridge revision name you are accepting, as A0_CONFIRM_REVISION}"
   [ -s "$STATE" ] && [ -s "$EVID" ] || die "state or smoke evidence missing: run a0-deploy.sh bridge and a0-smoke.sh first"
   REV=$(jq -r .bridgeRevision "$STATE"); DIG=$(jq -r .bridgeDigest "$STATE"); APIREV=$(jq -r .apiRevision "$STATE")
@@ -284,30 +308,29 @@ case "${1:-}" in
   NOW=$(date +%s); jq -e --arg rev "$REV" --arg dig "$DIG" --arg tag "$TAG" --arg api "$APIREV" --arg apidig "$(jq -r '.apiDigest // ""' "$STATE")" --arg evtag "$(state_get evTag)" --argjson names "$NAMES" --argjson now "$NOW" --argjson max "$MAX_EVIDENCE_AGE" \
     '.revision == $rev and .digest == $dig and .tag == $tag and .apiRevision == $api and .apiDigest == $apidig and .evTag == $evtag and .authenticatedRead == true and ([.checks[]?.name] | sort) == ($names | sort) and (.checks | all(.result == "PASS")) and ($now - .passedAt) >= 0 and ($now - .passedAt) <= $max' "$EVID" >/dev/null \
     || die "smoke evidence does not cover this exact revision/digest, is incomplete (the authenticated read is mandatory), failed, or is older than ${MAX_EVIDENCE_AGE}s: rerun a0-smoke.sh"
-  J=$(describe "$BRIDGE_SVC"); [ "$(tag_revision "$J" "$TAG")" = "$REV" ] || die "tag $TAG no longer points at $REV"
+  J=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service"; [ "$(tag_revision "$J" "$TAG")" = "$REV" ] || die "tag $TAG no longer points at $REV"
   [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision drifted since the smoke test"
   [ "$(revdigest "$REV")" = "$DIG" ] || die "live digest of $REV differs from the accepted digest"; [ "$(revdigest "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "rollback digest differs from the recorded one"
   verify_api_tag "$APIREV" "$(jq -r '.apiDigest // ""' "$STATE")"
   [ "$(state_get evTagRevision)" = "$APIREV" ] || die "the state binds EV_TAG to a different API revision"
   for k1 in evApproval evScope evRollback evReconciliation evBridgeReconciliation evTag; do [[ "$(state_get $k1)" =~ $COMMENT_RE ]] || die "the state lacks a valid $k1: run the bridge step again with all six evidence references exported"; done
   for k1 in evApproval evScope evRollback evReconciliation evBridgeReconciliation evTag; do for k2 in evApproval evScope evRollback evReconciliation evBridgeReconciliation evTag; do [ "$k1" = "$k2" ] || [ "$(state_get $k1)" != "$(state_get $k2)" ] || die "the recorded evidence references $k1 and $k2 are not distinct"; done; done
-  RJ=$(revjson "$REV"); ready "$RJ" || die "$REV is not Ready"
+  RJ=$(read_rev "$REV") || die "cannot read revision $REV"; ready "$RJ" || die "$REV is not Ready"
   jq -e '[.spec.containers[0].env[]? | select(.name | test("^BG_BRIDGE_ALLOW_(WRITES|GENERATION_CONFIRMATION|SOCIAL_WRITES|STRIPE_CHECKOUT|WORKSPACE_BOOTSTRAP|DRAFT_WORKFLOW|FOUNDER_ONBOARDING)$")) | .value == "false"] | length == 7 and all' <<<"$RJ" >/dev/null || die "the live bridge revision does not carry all seven permission flags as false"
   [ "$(jq -r '[.spec.containers[]?.env[]? | select(.name == "BG_BRIDGE_REVISION") | .value][0] // ""' <<<"$RJ")" = "$APIREV" ] || die "the bridge revision is not pinned to the accepted API revision"
   [ "$(jq -r '[.spec.containers[]?.env[]? | select(.name == "BG_BRIDGE_REVIEW_REF") | .value][0] // ""' <<<"$RJ")" = "$(state_get evApproval)" ] || die "the live revision's review reference is not the recorded release approval"
-  restore_baseline() { echo "restoring the recorded rollback target $BASE_BRIDGE_REV" >&2; gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100" || echo "RESTORE COMMAND FAILED. Run by hand NOW: gcloud run services update-traffic $BRIDGE_SVC --project=$P --region=$R --to-revisions=$BASE_BRIDGE_REV=100" >&2; }
-  if ! gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$REV=100"; then restore_baseline; die "the traffic update failed part-way; restoring was attempted: verify serving is $BASE_BRIDGE_REV"; fi
-  J=$(describe "$BRIDGE_SVC") || J=""
-  if [ "$(serving "$J")" != "$REV" ]; then restore_baseline; die "traffic did not verifiably settle on $REV (post-shift read failed or differed); restored $BASE_BRIDGE_REV was attempted: verify serving"; fi
+  if ! gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$REV=100"; then restore_baseline "the traffic update command failed"; die "the shift failed and was rolled back (RECOVERED above): nothing is shifted"; fi
+  if ! J=$(read_svc "$BRIDGE_SVC") || [ "$(serving "$J")" != "$REV" ] || ! jq -e --arg r "$REV" '[.status.traffic[]? | select((.percent // 0) > 0)] | (length == 1) and (.[0].revisionName == $r) and ((.[0].percent // 0) == 100)' <<<"$J" >/dev/null 2>&1; then
+    restore_baseline "the post-shift read failed, was malformed or did not show $REV at 100%"; die "the shift could not be verified and was rolled back (RECOVERED above): nothing is shifted"; fi
   echo "bridge now serves $REV (digest $DIG). Rollback: bash a0-deploy.sh rollback-bridge";;
  check-templates) check_templates;;
  diagnose-bridge) diagnose_bridge;;
  rollback-bridge)
   [ "$(revdigest "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "recorded rollback revision digest mismatch: do not roll back blindly"
   invalidate_downstream   # a rollback ends the eligibility of every earlier smoke result and checkpoint
-  ready "$(revjson "$BASE_BRIDGE_REV")" || die "the recorded rollback revision is not Ready"
-  gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100" || die "the rollback command failed: run by hand NOW: gcloud run services update-traffic $BRIDGE_SVC --project=$P --region=$R --to-revisions=$BASE_BRIDGE_REV=100"
-  J=$(describe "$BRIDGE_SVC") || J=""; [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "the rollback did not settle (serving could not be verified as $BASE_BRIDGE_REV): run the command by hand and verify"
-  echo "bridge restored to $BASE_BRIDGE_REV";;
+  BR=$(read_rev "$BASE_BRIDGE_REV") || die "cannot read the recorded rollback revision"; ready "$BR" || die "the recorded rollback revision is not Ready"
+  if ! gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100"; then mark_indeterminate "the rollback command failed"; fi
+  baseline_readback_ok || mark_indeterminate "the rollback did not settle: exact baseline readback failed"
+  rm -f "$LOCKF"; echo "bridge restored to $BASE_BRIDGE_REV (verified by exact readback); any INDETERMINATE lock is cleared";;
  *) die "usage: a0-deploy.sh api|bridge|shift-bridge|rollback-bridge|check-templates|diagnose-bridge";;
 esac

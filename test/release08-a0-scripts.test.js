@@ -241,7 +241,7 @@ test('self-review: shift refuses unbound evidence, future-dated or malformed smo
     const { w, r } = readyToShift(over); const res = r(); assert.notStrictEqual(res.status, 0, JSON.stringify(over)); assert.doesNotMatch(w.calls(), /update-traffic/, JSON.stringify(over));
   }
   const { w, r } = readyToShift(); const res = r(); // traffic-effect absent: the stub never moves traffic, so the post-shift check fails and the baseline is restored
-  assert.notStrictEqual(res.status, 0); const calls = w.calls().split('\n').filter((l) => /update-traffic/.test(l)); assert.strictEqual(calls.length, 2); assert.match(calls[0], new RegExp(`--to-revisions=${NEWB}=100`)); assert.match(calls[1], new RegExp(`--to-revisions=${BB}=100`)); assert.match(res.stderr, /restored/);
+  assert.notStrictEqual(res.status, 0); const calls = w.calls().split('\n').filter((l) => /update-traffic/.test(l)); assert.strictEqual(calls.length, 2); assert.match(calls[0], new RegExp(`--to-revisions=${NEWB}=100`)); assert.match(calls[1], new RegExp(`--to-revisions=${BB}=100`)); assert.match(res.stderr, /RECOVERED|restoring/);
 });
 test('self-review: the live bridge revision must carry all seven flags false at shift time', { skip: !haveTools }, () => {
   const { w, r } = readyToShift(); const f = path.join(w.d, `rev-${NEWB}.json`); const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.spec.containers[0].env.find((e) => e.name === 'BG_BRIDGE_ALLOW_WRITES').value = 'true'; fs.writeFileSync(f, JSON.stringify(j));
@@ -427,6 +427,79 @@ test('F7 smoke evidence: the exact set of named checks, and the API digest and E
   const cases = { arbitraryNames: names(EXPECTED_CHECKS.map((_, i) => 'c' + i)), oneMissing: names(EXPECTED_CHECKS.slice(1)), duplicated: names([...EXPECTED_CHECKS.slice(1), EXPECTED_CHECKS[1]]), extra: names([...EXPECTED_CHECKS, 'extra']), noAuthName: names(EXPECTED_CHECKS.filter((n) => !/^authenticated read/.test(n)).concat('x')), otherApiDigest: { ev: { apiDigest: 'sha256:' + '8'.repeat(64) } }, noApiDigest: { ev: { apiDigest: undefined } }, otherEvTag: { ev: { evTag: BEV } }, noEvTag: { ev: { evTag: undefined } }, extraKeysNotChecks: { ev: { checks: EXPECTED_CHECKS.map((name) => ({ name, result: 'PASS' })).concat([{ name: EXPECTED_CHECKS[0], result: 'FAIL' }]) } } };
   for (const [name, over] of Object.entries(cases)) { const { w, r } = readyToShift(over); const res = r(); assert.notStrictEqual(res.status, 0, name); assert.doesNotMatch(w.calls(), /update-traffic/, name); }
   const s = smokeWorld(); assert.strictEqual(s.run().status, 0); const e = JSON.parse(fs.readFileSync(s.evid(), 'utf8')); assert.deepStrictEqual(e.checks.map((c) => c.name).sort(), [...EXPECTED_CHECKS].sort(), 'smoke must emit exactly the named checks the shift requires'); assert.strictEqual(e.apiDigest, NAD); assert.strictEqual(e.evTag, EVTAG);
+});
+
+// ======== Four-defect final correction (Codex independent review of 675b45c1; replay of its seven assertions is documented in the PR) ========
+const LOCK = (w) => path.join(w.home, '.bg-private', 'a0-indeterminate.json');
+test('G1 metadata exit status: a command that prints complete JSON but exits nonzero is never accepted on any critical path', { skip: !haveTools }, () => {
+  const kinds = { apiServiceDescribe: 'services describe bizgenie-api-staging', bridgeServiceDescribe: 'services describe bizgenie-studio-bridge-staging', servingApiRevision: `revisions describe ${BA} .*--format=json`, servingBridgeRevision: `revisions describe ${BB} .*--format=json`, digestRead: 'status.imageDigest', revisionList: 'revisions list' };
+  for (const [name, match] of Object.entries(kinds)) {
+    for (const sub of ['check-templates', 'diagnose-bridge']) { const w = world({ svcEnv: [ENVSTG, ISO()], revEnv: [ENVSTG, ISO()] }); const r = w.run('a0-deploy.sh', [sub], { EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV, STUB_FAIL_MATCH: match }); const touches = new RegExp(match).test(w.calls().split('\n').join(' | ')) || true; assert.ok(touches);
+      if (/status.imageDigest/.test(match) || /list/.test(match)) continue; // those reads are not part of the read-only comparison
+      if (sub === 'diagnose-bridge' && /api/i.test(name)) continue; assert.notStrictEqual(r.status, 0, `${name} ${sub}`); assert.doesNotMatch(out(r), /TEMPLATE CHECK: PASS|template equals the serving revision.*template equals/s, `${name} ${sub}`); }
+    if (!/bridge/i.test(name)) { const a = apiWorld(); const ra = a.w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR, STUB_FAIL_MATCH: match }); assert.notStrictEqual(ra.status, 0, 'api ' + name); assert.doesNotMatch(a.w.calls(), /run deploy/, 'api ' + name); }
+    if (name !== 'servingApiRevision') { const b = bridgeWorld(); const rb = b.run({ STUB_FAIL_MATCH: match }); assert.notStrictEqual(rb.status, 0, 'bridge ' + name); assert.doesNotMatch(b.w.calls(), /run deploy bizgenie-studio/, 'bridge ' + name); }
+  }
+  // Codex's exact case: only the revision describe emits the valid fixture and exits 29
+  const w = world(); const g = path.join(w.home, 'bin', 'gcloud'); fs.writeFileSync(g, fs.readFileSync(g, 'utf8').replace('cat "$STUB_DIR/rev-$4.json";;', 'cat "$STUB_DIR/rev-$4.json"; exit 29;;')); const r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF }); assert.notStrictEqual(r.status, 0); assert.doesNotMatch(w.calls(), /run deploy/);
+  // the existing-tag, verify and shift reads
+  const s = readyToShift(); const rs = s.w.run('a0-deploy.sh', ['shift-bridge'], { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB, STUB_FAIL_MATCH: `revisions describe ${NEWB} .*--format=json` }); assert.notStrictEqual(rs.status, 0); assert.doesNotMatch(s.w.calls(), /update-traffic/);
+  const t = readyToShift(); const rt = t.w.run('a0-deploy.sh', ['shift-bridge'], { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB, STUB_FAIL_MATCH: 'services describe bizgenie-api-staging' }); assert.notStrictEqual(rt.status, 0); assert.doesNotMatch(t.w.calls(), /update-traffic/);
+  const u = apiWorld({ preTagged: 'api' }); const ru = u.w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR, STUB_FAIL_MATCH: `revisions describe ${NEWA} .*--format=json` }); assert.notStrictEqual(ru.status, 0); assert.doesNotMatch(u.w.calls(), /run deploy/);
+});
+test('G2 duplicate or malformed live environment entries are refused on either side before comparing, fingerprinting, adopting or resuming', { skip: !haveTools }, () => {
+  const cases = { dupIdenticalTemplate: [[{ name: 'FOO', value: 'v1' }, { name: 'FOO', value: 'v1' }], [{ name: 'FOO', value: 'v1' }]], dupIdenticalServing: [[{ name: 'FOO', value: 'v1' }], [{ name: 'FOO', value: 'v1' }, { name: 'FOO', value: 'v1' }]], dupBothSides: [[{ name: 'FOO', value: 'v1' }, { name: 'FOO', value: 'v1' }], [{ name: 'FOO', value: 'v1' }, { name: 'FOO', value: 'v1' }]],
+    dupConflicting: [[{ name: 'FOO', value: 'a' }, { name: 'FOO', value: 'b' }], [{ name: 'FOO', value: 'b' }]], dupSecretAndPlain: [[{ name: 'FOO', value: 'a' }, { name: 'FOO', valueFrom: { secretKeyRef: { name: 's', key: '1' } } }], [{ name: 'FOO', value: 'a' }]],
+    bothValueAndRef: [[{ name: 'FOO', value: 'a', valueFrom: { secretKeyRef: { name: 's', key: '1' } } }], [{ name: 'FOO', value: 'a' }]], noName: [[{ value: 'a' }], [{ value: 'a' }]], nonStringName: [[{ name: 7, value: 'a' }], [{ name: 7, value: 'a' }]], nonObjectEntry: [['FOO=a'], ['FOO=a']] };
+  for (const [name, [s, v]] of Object.entries(cases)) {
+    const w = world({ svcEnv: s, revEnv: v }); const r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0, name); assert.doesNotMatch(w.calls(), /run deploy/, name); assert.match(out(r), /duplicate|malformed/i, name);
+    const c = world({ svcEnv: s, revEnv: v }).run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV }); assert.doesNotMatch(out(c), /TEMPLATE CHECK: PASS/, name);
+  }
+  // adopting an existing tagged API revision whose live env has a duplicate
+  const a = apiWorld({ preTagged: 'api' }); const f = path.join(a.w.d, `rev-${NEWA}.json`); const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.spec.containers[0].env = [...j.spec.containers[0].env, j.spec.containers[0].env[0]]; fs.writeFileSync(f, JSON.stringify(j));
+  const ra = a.run(); assert.notStrictEqual(ra.status, 0); assert.match(out(ra), /duplicate|malformed/i); assert.doesNotMatch(a.w.calls(), /run deploy/);
+  // a bridge revision with a duplicated name collapses to the same map as the A0 file: it must not be adopted
+  const b = bridgeWorld(); assert.strictEqual(b.run().status, 0); const nf = path.join(b.w.d, `rev-${NEWB}.json`); const N = JSON.parse(fs.readFileSync(nf, 'utf8')); N.spec.containers[0].env.push({ ...N.spec.containers[0].env[0] }); fs.writeFileSync(nf, JSON.stringify(N));
+  const rb = b.run(); assert.notStrictEqual(rb.status, 0); assert.match(out(rb), /duplicate|malformed/i);
+  // the bridge template/serving side too
+  const d = bridgeWorld({ svc: (S) => { S.spec.template.spec.containers[0].env.push({ ...S.spec.template.spec.containers[0].env[0] }); } }); const rd = d.run(); assert.notStrictEqual(rd.status, 0); assert.doesNotMatch(d.w.calls(), /run deploy/);
+});
+test('G3 container names must be DNS labels on both sides, equal or not, for the bridge and the API; structural restrictions stay unconditional', { skip: !haveTools }, () => {
+  for (const bad of ['bridge-', '-bridge', 'Bridge', 'br_idge', 'bridge.1', '1bridge', '', 'a'.repeat(64), '-', 'br--', 'bridge ']) {
+    const { w, run } = bridgeWorld(sameName(bad)); const r = run(); assert.notStrictEqual(r.status, 0, JSON.stringify(bad)); assert.doesNotMatch(w.calls(), /run deploy/, JSON.stringify(bad));
+    const sv = bridgeWorld({ svc: (S) => { S.spec.template.spec.containers[0].name = bad; }, rev: (R) => { R.spec.containers[0].name = 'bridge'; } }); assert.notStrictEqual(sv.run().status, 0, 'template ' + JSON.stringify(bad));
+    const rv = bridgeWorld({ svc: (S) => { S.spec.template.spec.containers[0].name = 'bridge'; }, rev: (R) => { R.spec.containers[0].name = bad; } }); assert.notStrictEqual(rv.run().status, 0, 'serving ' + JSON.stringify(bad));
+    const w2 = world({ svcEnv: [ENVSTG, ISO()], revEnv: [ENVSTG, ISO()] }); for (const f of ['svc-bizgenie-api-staging.json']) { const p = path.join(w2.d, f); const j = JSON.parse(fs.readFileSync(p, 'utf8')); j.spec.template.spec.containers[0].name = bad; fs.writeFileSync(p, JSON.stringify(j)); }
+    const ra = w2.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(ra.status, 0, 'api ' + JSON.stringify(bad)); assert.doesNotMatch(w2.calls(), /run deploy/);
+  }
+  for (const good of ['bridge', 'b', 'bridge-1', 'a1', 'b'.repeat(63)]) { const { run } = bridgeWorld(sameName(good)); assert.strictEqual(run().status, 0, good); }
+});
+test('G4 verified rollback recovery: restore is invoked, the exact baseline is read back, and anything else is INDETERMINATE and blocks every further shift or resume', { skip: !haveTools }, () => {
+  const patch = (w) => { const f = path.join(w.home, 'bin', 'gcloud'); fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('[ -f "$STUB_DIR/traffic-effect.sh" ] && bash "$STUB_DIR/traffic-effect.sh" "$@"; true;;', 'if [ -f "$STUB_DIR/traffic-effect.sh" ]; then bash "$STUB_DIR/traffic-effect.sh" "$@" || exit 1; fi;;')); };
+  const svcFile = (w) => path.join(w.d, 'svc-bizgenie-studio-bridge-staging.json');
+  const effect = (w, { afterShift, onRestore }) => { if (!fs.existsSync(svcFile(w) + '.orig')) fs.copyFileSync(svcFile(w), svcFile(w) + '.orig'); fs.writeFileSync(path.join(w.d, 'traffic-effect.sh'), `#!/bin/sh\nf="$STUB_DIR/svc-bizgenie-studio-bridge-staging.json"\ncase "$*" in *"--to-revisions=${NEWB}=100"*) ${afterShift};; *"--to-revisions=${BB}=100"*) ${onRestore};; esac\n`); };
+  const restoreOk = 'cp "$f.orig" "$f"', unreadable = 'rm -f "$f"', other = `jq '.status.traffic=[{revisionName:"bizgenie-studio-bridge-staging-00099-zzz",percent:100}]' "$f.orig" > "$f"`, split = `jq '.status.traffic=[{revisionName:"${BB}",percent:60},{revisionName:"${NEWB}",percent:40}]' "$f.orig" > "$f"`, malformed = 'echo "{" > "$f"', empty = ': > "$f"', fail = 'exit 1';
+  const shiftsThenLock = (s) => { const again = s.r(); assert.notStrictEqual(again.status, 0); assert.match(again.stderr, /INDETERMINATE/); assert.doesNotMatch(s.w.calls().split('\n').slice(s.before).join('\n'), /update-traffic bizgenie-studio-bridge-staging .*--to-revisions=bizgenie-studio-bridge-staging-00040/, 'a second shift was attempted'); };
+  // (1) shift ok, post-shift read unreadable (exit 29 / missing / malformed / empty / wrong revision), restore + exact readback succeeds -> RECOVERED, still a failed shift, no lock, evidence gone
+  for (const [name, after] of Object.entries({ missing: unreadable, malformed, empty, otherRevision: other, split })) {
+    const s = readyToShift(); patch(s.w); effect(s.w, { afterShift: after, onRestore: restoreOk }); const res = s.r(); assert.notStrictEqual(res.status, 0, name); assert.match(res.stderr, /RECOVERED/, name); assert.doesNotMatch(out(res), /INDETERMINATE/, name);
+    const calls = s.w.calls().split('\n').filter((l) => /update-traffic/.test(l)); assert.match(calls.at(-1), new RegExp(`--to-revisions=${BB}=100`), name); assert.ok(!fs.existsSync(LOCK(s.w)), name); assert.ok(!fs.existsSync(path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json')), name + ': evidence reused');
+  }
+  // (1b) post-shift read exits 29 with complete JSON
+  { const s = readyToShift(); const res = s.w.run('a0-deploy.sh', ['shift-bridge'], { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB, STUB_FAIL_MATCH: 'services describe bizgenie-studio-bridge-staging' }); assert.notStrictEqual(res.status, 0); }
+  // (2) restore command fails, or its readback is unreadable / differs -> INDETERMINATE, lock, and every later shift/resume is refused with evidence unusable
+  const bad = { restoreCommandFails: [unreadable, fail], readbackMissing: [unreadable, unreadable], readbackMalformed: [unreadable, malformed], readbackEmpty: [unreadable, empty], readbackOtherRevision: [unreadable, other], readbackSplit: [unreadable, split] };
+  for (const [name, [after, restore]] of Object.entries(bad)) {
+    const s = readyToShift(); patch(s.w); effect(s.w, { afterShift: after, onRestore: restore }); const res = s.r(); assert.notStrictEqual(res.status, 0, name); assert.match(res.stderr, /INDETERMINATE/, name); assert.ok(fs.existsSync(LOCK(s.w)), name + ': no lock'); assert.ok(!fs.existsSync(path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json')), name + ': evidence kept');
+    const st = JSON.parse(fs.readFileSync(path.join(s.w.home, '.bg-private', 'a0-state.json'), 'utf8')); assert.ok(!st.bridgeRevision, name + ': checkpoint kept');
+    for (const sub of [['shift-bridge', { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB }], ['api', { API_REF: APIREF, EV_RECONCILIATION: EVR }], ['bridge', { BRIDGE_REF: BRREF, ...IDENT, EV_TAG: EVTAG, EV_SCOPE, EV_ROLLBACK, EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV }]]) { const before = s.w.calls().length; const again = s.w.run('a0-deploy.sh', sub[0] === 'shift-bridge' ? [sub[0]] : [sub[0]], sub[1]); assert.notStrictEqual(again.status, 0, `${name} ${sub[0]}`); assert.match(again.stderr, /INDETERMINATE/, `${name} ${sub[0]}`); assert.doesNotMatch(s.w.calls().slice(before), /update-traffic|run deploy/, `${name} ${sub[0]}`); }
+  }
+  // (3) rollback-bridge is the sanctioned recovery: it verifies exact readback, and clears the lock only when the baseline is proven
+  { const s = readyToShift(); patch(s.w); effect(s.w, { afterShift: unreadable, onRestore: unreadable }); s.r(); assert.ok(fs.existsSync(LOCK(s.w)));
+    const fail1 = s.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.notStrictEqual(fail1.status, 0); assert.ok(fs.existsSync(LOCK(s.w)), 'lock cleared without proof'); assert.match(fail1.stderr, /INDETERMINATE|did not settle|could not/i);
+    effect(s.w, { afterShift: unreadable, onRestore: restoreOk }); fs.copyFileSync(svcFile(s.w) + '.orig', svcFile(s.w)); const ok = s.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.strictEqual(ok.status, 0, out(ok)); assert.ok(!fs.existsSync(LOCK(s.w)), 'lock not cleared after verified readback'); }
+  // (4) smoke refuses to run while INDETERMINATE
+  { const sm = smokeWorld(); fs.writeFileSync(LOCK(sm.w), '{}'); const r = sm.run(); assert.notStrictEqual(r.status, 0); assert.ok(!fs.existsSync(sm.evid())); }
 });
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {

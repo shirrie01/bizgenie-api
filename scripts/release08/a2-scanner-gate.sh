@@ -33,7 +33,7 @@ case "${1:-}" in
  post)
   : "${SCANNER_REVISION:?export SCANNER_REVISION (the 0%-traffic tagged revision)}"; : "${SCANNER_TAG:?export SCANNER_TAG}"
   [ -s "$EV" ] && jq -e --arg c "$CLAMAV_REF" '.clamav == $c and .acceptance == "PASS"' "$EV" >/dev/null || die "no scanner pre-gate evidence for this exact ClamAV digest"
-  RJ=$(gcloud run revisions describe "$SCANNER_REVISION" --project="$P" --region="$R" --format=json); SJ=$(gcloud run services describe "$API_SVC" --project="$P" --region="$R" --format=json)
+  RJ=$(gcloud run revisions describe "$SCANNER_REVISION" --project="$P" --region="$R" --format=json) || die "the scanner revision metadata command failed"; SJ=$(gcloud run services describe "$API_SVC" --project="$P" --region="$R" --format=json) || die "the API service metadata command failed"
   jq -e '[.status.conditions[]? | select(.type == "Ready")][0].status == "True"' <<<"$RJ" >/dev/null || die "revision is not Ready"
   jq -e '[.status.conditions[]? | select(.type == "ContainerHealthy")][0].status != "False"' <<<"$RJ" >/dev/null || die "a container is unhealthy"
   jq -e --arg api "$API_REF" --arg clam "$CLAMAV_REF" '([.spec.containers[].name] == ["api","clamav"])' <<<"$RJ" >/dev/null || die "containers are not exactly [api, clamav]"

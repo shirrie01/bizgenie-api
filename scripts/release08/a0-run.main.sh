@@ -14,8 +14,9 @@ case "$CMD" in
   say "read-only: API and bridge template compatibility (changes nothing)"
   read -r -p "EV_RECONCILIATION (founder approval comment URL for the two reviewed API differences; blank to see the check fail closed): " EV_RECONCILIATION; export EV_RECONCILIATION
   read -r -p "EV_BRIDGE_RECONCILIATION (DISTINCT founder approval comment URL for the reviewed bridge differences; blank to see the check fail closed): " EV_BRIDGE_RECONCILIATION; export EV_BRIDGE_RECONCILIATION
-  bash "$BG_A0_DIR/a0-deploy.sh" diagnose-bridge || true
-  bash "$BG_A0_DIR/a0-deploy.sh" check-templates; echo "Log: $BG_A0_LOG";;
+  drc=0; bash "$BG_A0_DIR/a0-deploy.sh" diagnose-bridge || drc=$?
+  crc=0; bash "$BG_A0_DIR/a0-deploy.sh" check-templates || crc=$?
+  echo "Log: $BG_A0_LOG"; [ "$drc" = 0 ] && [ "$crc" = 0 ] || { echo "PREFLIGHT: FAIL (diagnostic exit $drc, template check exit $crc): do not continue" >&2; exit 1; };;
  run)
   read -r -p "EV_RECONCILIATION (founder approval comment URL in #191 for the two reviewed API template differences): " EV_RECONCILIATION; export EV_RECONCILIATION
   read -r -p "EV_BRIDGE_RECONCILIATION (DISTINCT founder approval comment URL in #191 for the reviewed bridge template differences): " EV_BRIDGE_RECONCILIATION; export EV_BRIDGE_RECONCILIATION
