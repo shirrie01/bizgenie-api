@@ -8,6 +8,7 @@ die() { echo "STOP: $*" >&2; exit 1; }
 rm -f "$EVID"   # an earlier PASS must never stay eligible while a new run is incomplete or aborted
 for t in gcloud jq curl sha256sum; do command -v "$t" >/dev/null 2>&1 || die "missing tool: $t"; done
 [ -s "$STATE" ] || die "state file missing: run a0-deploy.sh api and bridge first"
+APIDIG=$(jq -r '.apiDigest // ""' "$STATE"); EVTAG=$(jq -r '.evTag // ""' "$STATE"); [[ "$APIDIG" =~ ^sha256:[a-f0-9]{64}$ && -n "$EVTAG" ]] || die "the state lacks the accepted API digest or EV_TAG: run the bridge step first"
 REV=$(jq -r '.bridgeRevision // ""' "$STATE"); DIG=$(jq -r '.bridgeDigest // ""' "$STATE"); APIREV=$(jq -r '.apiRevision // ""' "$STATE"); [ -n "$REV" ] && [ -n "$DIG" ] && [ -n "$APIREV" ] || die "state file incomplete"
 SJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "cannot describe the bridge service"
 URL=$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .url][0] // ""' <<<"$SJ"); [ -n "$URL" ] || die "tag $TAG not found"
@@ -34,7 +35,7 @@ if jq -e . "$BODY" >/dev/null 2>&1; then
 else FOUND=no; fi
 chk "authenticated response carries the recorded Fairway project fingerprint" yes "$FOUND"
 if [ "$FAIL" = 0 ]; then
-  umask 077; jq -n --arg rev "$REV" --arg dig "$DIG" --arg tag "$TAG" --arg api "$APIREV" --argjson checks "$CHECKS" --argjson now "$(date +%s)" \
-    '{revision:$rev,digest:$dig,tag:$tag,apiRevision:$api,authenticatedRead:true,checks:$checks,passedAt:$now}' > "$EVID.tmp" && mv "$EVID.tmp" "$EVID"; chmod 600 "$EVID"
+  umask 077; jq -n --arg rev "$REV" --arg dig "$DIG" --arg tag "$TAG" --arg api "$APIREV" --arg apidig "$APIDIG" --arg evtag "$EVTAG" --argjson checks "$CHECKS" --argjson now "$(date +%s)" \
+    '{revision:$rev,digest:$dig,tag:$tag,apiRevision:$api,apiDigest:$apidig,evTag:$evtag,authenticatedRead:true,checks:$checks,passedAt:$now}' > "$EVID.tmp" && mv "$EVID.tmp" "$EVID"; chmod 600 "$EVID"
   echo "A0 SMOKE: PASS (evidence written, valid 60 minutes)"
 else rm -f "$EVID"; echo "A0 SMOKE: FAIL: do not shift traffic"; exit 1; fi

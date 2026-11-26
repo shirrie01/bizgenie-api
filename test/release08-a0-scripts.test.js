@@ -18,7 +18,7 @@ function world({ svcEnv, revEnv, svcSa = 'sa@x', revSa = 'sa@x', bridgeEnvOnNew,
   const sSpec = tmpl(svcEnv || envA, svcSa), rSpec = tmpl(revEnv || envA, revSa);
   W(`svc-bizgenie-api-staging.json`, svcJson('a', sSpec, [{ revisionName: BA, percent: 100 }, { revisionName: NEWA, percent: 0, tag: 'a0-dfd49116' }], BA)); W(`rev-${BA}.json`, revJson(rSpec, BAD)); W(`rev-${NEWA}.json`, revJson(rSpec, NAD));
   W(`svc-bizgenie-studio-bridge-staging.json`, svcJson('b', sSpec, [{ revisionName: BB, percent: 100 }, { revisionName: NEWB, percent: 0, tag: 'a0-dfd49116', url: 'https://a0---b.run.app' }], BB));
-  W(`rev-${BB}.json`, revJson(rSpec, BBD)); const nspec = tmpl([{ name: 'BG_BRIDGE_REVISION', value: bridgeEnvOnNew ?? NEWA }, ...FALSE_FLAGS.map((n) => ({ name: n, value: 'false' }))]); W(`rev-${NEWB}.json`, revJson(nspec, NBD));
+  W(`rev-${BB}.json`, revJson(rSpec, BBD)); const nspec = tmpl([{ name: 'BG_BRIDGE_REVISION', value: bridgeEnvOnNew ?? NEWA }, ...FALSE_FLAGS.map((n) => ({ name: n, value: 'false' })), { name: 'BG_BRIDGE_REVIEW_REF', value: APPR_EV }]); W(`rev-${NEWB}.json`, revJson(nspec, NBD));
   const untag = (f) => { const j = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8')); j.status.traffic = j.status.traffic.filter((x) => !x.tag); fs.writeFileSync(path.join(d, f), JSON.stringify(j)); };
   if (preTagged !== true && preTagged !== 'api') untag('svc-bizgenie-api-staging.json'); if (preTagged !== true) untag('svc-bizgenie-studio-bridge-staging.json');
   // a successful deploy creates the tagged, 0% revision (the stub mirrors what Cloud Run reports afterwards)
@@ -39,10 +39,12 @@ test('secret reference change and service-account change are refused', { skip: !
 test('an identical template passes the comparison and deploys with no traffic', { skip: !haveTools }, () => {
   const w = world(); const r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF }); assert.match(w.calls(), /run deploy bizgenie-api-staging .*--no-traffic/); assert.match(out(r), /NEW_API_REVISION=/);
 });
+const EXPECTED_CHECKS = ['preflight before auth (204)', 'foreign origin refused (403)', 'no token on a read (401)', 'generic bootstrap stays closed (403)', 'campaign/asset writes stay closed (403)', 'workspace permission ACTIVE: unauthenticated request reaches auth (401, not 403)', 'authenticated read through bridge -> new API -> database (200)', 'authenticated response carries the recorded Fairway project fingerprint'];
+const SCOPE_EV = 'https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-7178370682', ROLLBACK_EV = 'https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-7178371363', APPR_EV = 'https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-7175314064';
 function readyToShift(over = {}) {
-  const w = world({ preTagged: true, ...(over.world || {}) }); const st = { apiRevision: NEWA, apiDigest: NAD, bridgeRevision: NEWB, bridgeDigest: NBD, bridgeTag: 'a0-dfd49116', evTag: EVTAG, evTagRevision: NEWA, evReconciliation: EVR, evBridgeReconciliation: BEV, ...(over.state || {}) };
+  const w = world({ preTagged: true, ...(over.world || {}) }); const st = { apiRevision: NEWA, apiDigest: NAD, bridgeRevision: NEWB, bridgeDigest: NBD, bridgeTag: 'a0-dfd49116', evTag: EVTAG, evTagRevision: NEWA, evReconciliation: EVR, evBridgeReconciliation: BEV, evApproval: APPR_EV, evScope: SCOPE_EV, evRollback: ROLLBACK_EV, ...(over.state || {}) };
   fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify(st));
-  const ev = { revision: NEWB, digest: NBD, tag: 'a0-dfd49116', apiRevision: NEWA, authenticatedRead: true, checks: Array.from({ length: 8 }, (_, i) => ({ name: 'c' + i, result: 'PASS' })), passedAt: Math.floor(Date.now() / 1000), ...(over.ev || {}) };
+  const ev = { revision: NEWB, digest: NBD, tag: 'a0-dfd49116', apiRevision: NEWA, authenticatedRead: true, checks: EXPECTED_CHECKS.map((name) => ({ name, result: 'PASS' })), apiDigest: NAD, evTag: EVTAG, passedAt: Math.floor(Date.now() / 1000), ...(over.ev || {}) };
   if (!over.noEvidence) fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-smoke-evidence.json'), JSON.stringify(ev));
   const env = { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB, ...(over.env || {}) }; return { w, r: () => w.run('a0-deploy.sh', ['shift-bridge'], env) };
 }
@@ -57,7 +59,7 @@ test('shift-bridge with complete fresh evidence shifts by exact revision (never 
   const res = r(); assert.strictEqual(res.status, 0, out(res)); assert.match(w.calls(), new RegExp(`update-traffic bizgenie-studio-bridge-staging .*--to-revisions=${NEWB}=100`)); assert.doesNotMatch(w.calls(), /--to-tags/);
 });
 test('smoke: an empty token is refused and no evidence is written', { skip: !haveTools || !have('curl') }, () => {
-  const w = world({ preTagged: true }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, bridgeRevision: NEWB, bridgeDigest: NBD }));
+  const w = world({ preTagged: true }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD, evTag: EVTAG, bridgeRevision: NEWB, bridgeDigest: NBD }));
   fs.writeFileSync(path.join(w.home, 'bin', 'curl'), '#!/bin/sh\nprev=; for a in "$@"; do case "$prev" in -w) fmt=1;; esac; prev=$a; done\ncase "$*" in *"-X OPTIONS"*"foreign"*) printf 403;; *"-X OPTIONS"*) printf 204;; *"-X POST"*"bootstrap"*|*"-X POST"*"uploads"*) printf 403;; *"-X POST"*) printf 401;; *) printf 401;; esac\n'); fs.chmodSync(path.join(w.home, 'bin', 'curl'), 0o755);
   const r = w.run('a0-smoke.sh', [], {}, '\n'); assert.notStrictEqual(r.status, 0); assert.match(out(r), /mandatory/); assert.ok(!fs.existsSync(path.join(w.home, '.bg-private', 'a0-smoke-evidence.json')));
 });
@@ -125,7 +127,7 @@ test('reconciliation: any other content, extra drift or a changed value is refus
 });
 test('reconciliation never applies to the bridge: the same differences are refused there', { skip: !haveTools }, () => {
   const w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()], preTagged: 'api' }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD })); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), a0Yaml()); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-manifest.json'), JSON.stringify({ baseProfile: { environment: { ...a0Values(), PORT: '8080' } } }));
-  const r = w.run('a0-deploy.sh', ['bridge'], { BRIDGE_REF: BRREF, EV_RECONCILIATION: EVR, EV_TAG: EVTAG, ...IDENT }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /template differs/); assert.doesNotMatch(w.calls(), /run deploy/);
+  const r = w.run('a0-deploy.sh', ['bridge'], { BRIDGE_REF: BRREF, EV_RECONCILIATION: EVR, EV_TAG: EVTAG, EV_SCOPE, EV_ROLLBACK, EV_BRIDGE_RECONCILIATION: BEV, ...IDENT }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /template differs/); assert.doesNotMatch(w.calls(), /run deploy/);
 });
 test('check-templates is read-only and reports both services', { skip: !haveTools }, () => {
   let w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); let r = w.run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR });
@@ -141,6 +143,7 @@ const FOUNDER = '11111111-1111-4111-8111-111111111111', TENANT = 'tenant-sentine
 const AUD = 'https://bizgenie-api-staging-abc123xyz-ew.a.run.app', sha8 = (v) => require('node:crypto').createHash('sha256').update(v).digest('hex').slice(0, 8);
 const GOOD = { BG_BRIDGE_AUDIENCE: AUD, BG_BRIDGE_TARGET_URL: 'https://a0-dfd49116---' + AUD.slice(8), BG_BRIDGE_REVISION: NEWA, BG_BRIDGE_SOURCE_SHA: 'dfd49116a0fe6bde11dbc25ca4599a03b8046999', BG_BRIDGE_BIND: '0.0.0.0', BG_BRIDGE_STUDIO_ORIGIN: 'https://bizgenie-studio-staging.pages.dev',
   SUPABASE_URL: 'https://zrczojyxebwjgpymbmgu.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_synthetic', BG_BRIDGE_FOUNDER_AUTH_USER_ID: FOUNDER, BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID: TENANT, BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY: 'fonzo.workspace.v1', BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME: 'Fonzo', BG_BRIDGE_REVIEW_REF: APPR };
+const EV_SCOPE = 'https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-7178370682', EV_ROLLBACK = 'https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-7178371363';
 const IDENT = { EXPECT_FOUNDER_H: sha8(FOUNDER), EXPECT_TENANT_H: sha8(TENANT), EV_APPROVAL: APPR };
 function a0Values(over = {}, drop = [], extra = {}) {
   const base = Object.fromEntries(A0_NAMES.map((n) => [n, FALSE_FLAGS.includes(n) ? 'false' : n === 'BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE' ? 'true' : n === 'BIZGENIE_ENVIRONMENT' ? 'staging' : GOOD[n]]));
@@ -161,7 +164,7 @@ function bridgeWorld(mut = {}) {
   const yaml = mut.yaml ?? a0Yaml(); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD, ...(mut.state || {}) })); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), yaml);
   if (mut.manifest !== false) { let env = {}; try { env = Object.fromEntries(yaml.trim().split('\n').map((l) => [l.slice(0, l.indexOf(': ')), JSON.parse(l.slice(l.indexOf(': ') + 2))])); } catch { /* malformed */ } fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-manifest.json'), JSON.stringify(mut.manifest ?? { baseProfile: { environment: { ...env, PORT: '8080' } } })); }
   const nf = path.join(w.d, `rev-${NEWB}.json`), N = JSON.parse(fs.readFileSync(nf, 'utf8')); try { N.spec.containers[0].env = Object.entries(Object.fromEntries(yaml.trim().split('\n').map((l) => [l.slice(0, l.indexOf(': ')), JSON.parse(l.slice(l.indexOf(': ') + 2))]))).map(([name, value]) => ({ name, value })); } catch { /* malformed file tests */ } if (mut.liveEnv) mut.liveEnv(N); fs.writeFileSync(nf, JSON.stringify(N));
-  return { w, run: (env = {}) => w.run('a0-deploy.sh', ['bridge'], { BRIDGE_REF: BRREF, ...IDENT, EV_TAG: EVTAG, EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV, ...env }) };
+  return { w, run: (env = {}) => w.run('a0-deploy.sh', ['bridge'], { BRIDGE_REF: BRREF, ...IDENT, EV_TAG: EVTAG, EV_SCOPE, EV_ROLLBACK, EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV, ...env }) };
 }
 test('bridge reconciliation: the nine reviewed differences are accepted with a distinct approval; env is replaced, not inherited', { skip: !haveTools }, () => {
   const { w, run } = bridgeWorld(); const r = run(); assert.strictEqual(r.status, 0, out(r)); assert.match(w.calls(), /run deploy bizgenie-studio-bridge-staging .*--env-vars-file=.*--no-traffic/); assert.doesNotMatch(w.calls(), /update-traffic/);
@@ -249,7 +252,7 @@ test('secret-safe output: no private value, token or id reaches stdout/stderr or
   for (const secret of [FOUNDER, TENANT, 'sb_publishable_synthetic']) assert.ok(!all.includes(secret), `leaked ${secret.slice(0, 6)}`);
 });
 // ---- Phase 2: partial API deployment recovery ----
-const apiWorld = (opts = {}) => { const w = world({ preTagged: opts.preTagged }); if (opts.state) fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify(opts.state)); if (opts.mut) { const f = path.join(w.d, 'svc-bizgenie-api-staging.json'); const j = JSON.parse(fs.readFileSync(f, 'utf8')); opts.mut(j); fs.writeFileSync(f, JSON.stringify(j)); } if (opts.revlist) fs.writeFileSync(path.join(w.d, 'revlist-bizgenie-api-staging.txt'), opts.revlist); return { w, run: () => w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }) }; };
+const apiWorld = (opts = {}) => { const w = world({ preTagged: opts.preTagged }); if (opts.state) fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify(opts.state)); if (opts.mut) { const f = path.join(w.d, 'svc-bizgenie-api-staging.json'); const j = JSON.parse(fs.readFileSync(f, 'utf8')); opts.mut(j); fs.writeFileSync(f, JSON.stringify(j)); } if (opts.revlist !== undefined) fs.writeFileSync(path.join(w.d, 'revlist-bizgenie-api-staging.txt'), opts.revlist); return { w, run: () => w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }) }; };
 test('resume: an existing tagged API revision with the accepted digest is adopted without a second deploy', { skip: !haveTools }, () => {
   for (const state of [undefined, { apiRevision: NEWA, apiDigest: NAD, baseApiRevision: BA }]) { const { w, run } = apiWorld({ preTagged: 'api', state }); const r = run(); assert.strictEqual(r.status, 0, out(r)); assert.match(out(r), /RESUMING from this verified checkpoint/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/); }
 });
@@ -287,7 +290,7 @@ test('bridge resume: an existing tagged bridge revision is adopted only when its
 
 // ---- smoke: mandatory authenticated read, identity and secret safety ----
 function smokeWorld({ code = '200', body, state } = {}) {
-  const w = world({ preTagged: true }); const PROJ = 'project-sentinel-55'; fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify(state || { apiRevision: NEWA, bridgeRevision: NEWB, bridgeDigest: NBD }));
+  const w = world({ preTagged: true }); const PROJ = 'project-sentinel-55'; fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify(state || { apiRevision: NEWA, apiDigest: NAD, evTag: EVTAG, bridgeRevision: NEWB, bridgeDigest: NBD }));
   fs.copyFileSync(path.join(__dirname, 'fixtures', 'release08', 'curl-stub.sh'), path.join(w.home, 'bin', 'curl')); fs.chmodSync(path.join(w.home, 'bin', 'curl'), 0o755);
   fs.writeFileSync(path.join(w.d, 'auth-code'), code); fs.writeFileSync(path.join(w.d, 'auth-body'), body === undefined ? JSON.stringify({ workspaces: [{ tenant_id: 't', project_id: PROJ, brand_id: 'b' }] }) : body);
   return { w, PROJ, run: (token = 'TOKEN-SENTINEL-abc123') => w.run('a0-smoke.sh', [], { EXPECT_PROJECT_H: sha8(PROJ) }, token + '\n'), evid: () => path.join(w.home, '.bg-private', 'a0-smoke-evidence.json') };
@@ -302,8 +305,8 @@ test('smoke: wrong status, wrong identity, non-JSON body, empty token or a tag o
   const cases = { unauthorised: smokeWorld({ code: '401' }), noIdentity: smokeWorld({ body: JSON.stringify({ workspaces: [{ project_id: 'someone-else' }] }) }), notJson: smokeWorld({ body: '<html>200 OK</html>' }), emptyBody: smokeWorld({ body: '' }), serverError: smokeWorld({ code: '500' }) };
   for (const [name, c] of Object.entries(cases)) { const r = c.run(); assert.notStrictEqual(r.status, 0, name); assert.ok(!fs.existsSync(c.evid()), name); }
   const e = smokeWorld(); assert.notStrictEqual(e.run('').status, 0); assert.ok(!fs.existsSync(e.evid()));
-  const d = smokeWorld({ state: { apiRevision: NEWA, bridgeRevision: 'bizgenie-studio-bridge-staging-00099-zzz', bridgeDigest: NBD } }); const r = d.run(); assert.notStrictEqual(r.status, 0); assert.match(r.stderr, /does not point at the deployed A0 revision/); assert.ok(!fs.existsSync(d.evid()));
-  const g = smokeWorld({ state: { apiRevision: NEWA, bridgeRevision: NEWB, bridgeDigest: 'sha256:' + '1'.repeat(64) } }); const r2 = g.run(); assert.notStrictEqual(r2.status, 0); assert.match(r2.stderr, /live digest/); assert.ok(!fs.existsSync(g.evid()));
+  const d = smokeWorld({ state: { apiRevision: NEWA, apiDigest: NAD, evTag: EVTAG, bridgeRevision: 'bizgenie-studio-bridge-staging-00099-zzz', bridgeDigest: NBD } }); const r = d.run(); assert.notStrictEqual(r.status, 0); assert.match(r.stderr, /does not point at the deployed A0 revision/); assert.ok(!fs.existsSync(d.evid()));
+  const g = smokeWorld({ state: { apiRevision: NEWA, apiDigest: NAD, evTag: EVTAG, bridgeRevision: NEWB, bridgeDigest: 'sha256:' + '1'.repeat(64) } }); const r2 = g.run(); assert.notStrictEqual(r2.status, 0); assert.match(r2.stderr, /live digest/); assert.ok(!fs.existsSync(g.evid()));
 });
 
 // ---- Codex REQUEST CHANGES (older head) re-checked on the current head: reproduced, fixed, regression-tested ----
@@ -382,6 +385,48 @@ test('P2-D: attempts are journaled before any mutation, failed attempts are not 
   const e = bridgeWorld({ state: { bridgeDeployStartedAt: new Date(Date.now() - 60000).toISOString().replace(/\.\d+Z$/, 'Z'), bridgeRevisionsBefore: `${BB} ` } }); fs.writeFileSync(path.join(e.w.d, 'revlist-bizgenie-studio-bridge-staging.txt'), `${BB}\n${NEWB}\n`); const re = e.run(); assert.notStrictEqual(re.status, 0); assert.match(re.stderr, /UNTAGGED\/unrecognised bridge revision/); assert.doesNotMatch(e.w.calls(), /run deploy/);
   // shift is unavailable without a verified checkpoint
   const s = readyToShift({ state: { bridgeRevision: '' } }); assert.notStrictEqual(s.r().status, 0);
+});
+
+// ======== Final A0 correction: seven defects found by independent adversarial review of the current head (Codex's API_CORRECTIONS.md was not obtainable; reconstructed, NOT Codex's fixtures) ========
+test('F1 metadata: an empty accepted API digest can never equal an unreadable live digest (empty == empty)', { skip: !haveTools }, () => {
+  const { w, r } = readyToShift({ state: { apiDigest: '' } }); const f = path.join(w.d, `rev-${NEWA}.json`); const j = JSON.parse(fs.readFileSync(f, 'utf8')); delete j.status.imageDigest; fs.writeFileSync(f, JSON.stringify(j));
+  const res = r(); assert.notStrictEqual(res.status, 0); assert.doesNotMatch(w.calls(), /update-traffic/);
+  const b = bridgeWorld({ state: { apiDigest: '' } }); const g = path.join(b.w.d, `rev-${NEWA}.json`); const k = JSON.parse(fs.readFileSync(g, 'utf8')); delete k.status.imageDigest; fs.writeFileSync(g, JSON.stringify(k)); const rb = b.run(); assert.notStrictEqual(rb.status, 0); assert.doesNotMatch(b.w.calls(), /run deploy/);
+});
+test('F2 metadata: an unreadable or baseline-less revision list stops a deploy instead of silently disabling untagged-revision detection', { skip: !haveTools }, () => {
+  for (const list of ['\n', ' \n', 'some-other-revision\n']) { const a = apiWorld({ revlist: list }); const r = a.run(); assert.notStrictEqual(r.status, 0, JSON.stringify(list)); assert.match(r.stderr, /revision list/, JSON.stringify(list)); assert.doesNotMatch(a.w.calls(), /run deploy/); }
+  const b = bridgeWorld(); fs.writeFileSync(path.join(b.w.d, 'revlist-bizgenie-studio-bridge-staging.txt'), '\n'); const rb = b.run(); assert.notStrictEqual(rb.status, 0); assert.doesNotMatch(b.w.calls(), /run deploy bizgenie-studio/);
+});
+test('F3 rollback recovery: a failed or unreadable post-shift check restores the baseline and never leaves an unverified shift', { skip: !haveTools }, () => {
+  const patchStub = (w) => { const f = path.join(w.home, 'bin', 'gcloud'); fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('[ -f "$STUB_DIR/traffic-effect.sh" ] && bash "$STUB_DIR/traffic-effect.sh" "$@"; true;;', 'if [ -f "$STUB_DIR/traffic-effect.sh" ]; then bash "$STUB_DIR/traffic-effect.sh" "$@" || exit 1; fi;;')); };
+  // (a) the service cannot be read after the shift
+  let s = readyToShift(); patchStub(s.w); fs.writeFileSync(path.join(s.w.d, 'traffic-effect.sh'), `#!/bin/sh\ncase "$*" in *"--to-revisions=${NEWB}=100"*) rm -f "$STUB_DIR/svc-bizgenie-studio-bridge-staging.json";; esac\n`);
+  let res = s.r(); assert.notStrictEqual(res.status, 0); let calls = s.w.calls().split('\n').filter((l) => /update-traffic/.test(l)); assert.ok(calls.length >= 2, 'no restore attempted: ' + calls.length); assert.match(calls.at(-1), new RegExp(`--to-revisions=${BB}=100`));
+  // (b) the update command itself fails part-way
+  s = readyToShift(); patchStub(s.w); fs.writeFileSync(path.join(s.w.d, 'traffic-effect.sh'), `#!/bin/sh\ncase "$*" in *"--to-revisions=${NEWB}=100"*) exit 1;; esac\n`);
+  res = s.r(); assert.notStrictEqual(res.status, 0); calls = s.w.calls().split('\n').filter((l) => /update-traffic/.test(l)); assert.ok(calls.length >= 2, 'no restore after a failed update: ' + calls.length); assert.match(calls.at(-1), new RegExp(`--to-revisions=${BB}=100`)); assert.match(res.stderr, /restor/i);
+});
+test('F4 rollback recovery: rollback-bridge verifies the result, and removes smoke eligibility and the checkpoint', { skip: !haveTools }, () => {
+  const settle = (w) => fs.writeFileSync(path.join(w.d, 'traffic-effect.sh'), `#!/bin/sh\nf="$STUB_DIR/svc-bizgenie-studio-bridge-staging.json"; jq '.status.traffic=[{revisionName:"${BB}",percent:100}] | .status.latestReadyRevisionName="${BB}"' "$f" > "$f.x" && mv "$f.x" "$f"\n`);
+  let s = readyToShift(); settle(s.w); let r = s.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.strictEqual(r.status, 0, out(r)); assert.ok(!fs.existsSync(path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json')), 'smoke evidence survived a rollback'); assert.ok(!JSON.parse(fs.readFileSync(path.join(s.w.home, '.bg-private', 'a0-state.json'), 'utf8')).bridgeRevision, 'checkpoint survived a rollback');
+  s = readyToShift(); { const sf = path.join(s.w.d, 'svc-bizgenie-studio-bridge-staging.json'); const sj = JSON.parse(fs.readFileSync(sf, 'utf8')); sj.status.traffic = [{ revisionName: NEWB, percent: 100 }]; sj.status.latestReadyRevisionName = NEWB; fs.writeFileSync(sf, JSON.stringify(sj)); } r = s.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.notStrictEqual(r.status, 0); assert.match(r.stderr, /did not settle|manual/i); assert.ok(!fs.existsSync(path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json')));
+});
+test('F5 env validation: control characters and trailing newlines in any setting are refused (command substitution must not normalise them away)', { skip: !haveTools }, () => {
+  const bad = { flag: { BG_BRIDGE_ALLOW_WRITES: 'false\n' }, env: { BIZGENIE_ENVIRONMENT: 'staging\n' }, sha: { BG_BRIDGE_SOURCE_SHA: 'dfd49116a0fe6bde11dbc25ca4599a03b8046999\n' }, revision: { BG_BRIDGE_REVISION: NEWA + '\n' }, url: { SUPABASE_URL: 'https://zrczojyxebwjgpymbmgu.supabase.co\n' }, origin: { BG_BRIDGE_STUDIO_ORIGIN: 'https://bizgenie-studio-staging.pages.dev\n' }, review: { BG_BRIDGE_REVIEW_REF: APPR + '\n' }, tab: { BG_BRIDGE_BIND: '0.0.0.0\t' }, founder: { BG_BRIDGE_FOUNDER_AUTH_USER_ID: FOUNDER + '\n' }, nul: { BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME: 'Fonzo\u0001' }, embedded: { BG_BRIDGE_AUDIENCE: AUD + '\nBG_BRIDGE_ALLOW_WRITES: "true"' } };
+  for (const [name, over] of Object.entries(bad)) { const { w, run } = bridgeWorld({ yaml: a0Yaml(over) }); const r = run(); assert.notStrictEqual(r.status, 0, name); assert.doesNotMatch(w.calls(), /run deploy/, name); }
+});
+test('F6 approval evidence: all six references are required, valid, distinct, recorded, and re-proven at the shift', { skip: !haveTools }, () => {
+  for (const env of [{ EV_APPROVAL: '' }, { EV_SCOPE: '' }, { EV_ROLLBACK: '' }, { EV_RECONCILIATION: '' }, { EV_SCOPE: 'https://example.com/z' }, { EV_ROLLBACK: SCOPE_EV }, { EV_SCOPE: EVR }]) { const { w, run } = bridgeWorld(); const r = run(env); assert.notStrictEqual(r.status, 0, JSON.stringify(env)); assert.doesNotMatch(w.calls(), /run deploy/, JSON.stringify(env)); }
+  const ok = bridgeWorld(); assert.strictEqual(ok.run().status, 0); const st = JSON.parse(fs.readFileSync(path.join(ok.w.home, '.bg-private', 'a0-state.json'), 'utf8')); for (const k of ['evApproval', 'evScope', 'evRollback', 'evReconciliation', 'evBridgeReconciliation', 'evTag']) assert.ok(st[k], k + ' not recorded');
+  const bad = [{ evApproval: '' }, { evScope: '' }, { evRollback: '' }, { evScope: 'not-a-url' }, { evRollback: APPR_EV }, { evBridgeReconciliation: EVTAG }, { evReconciliation: APPR_EV }];
+  for (const state of bad) { const { w, r } = readyToShift({ state }); const res = r(); assert.notStrictEqual(res.status, 0, JSON.stringify(state)); assert.doesNotMatch(w.calls(), /update-traffic/, JSON.stringify(state)); }
+  const { w, r } = readyToShift(); const f = path.join(w.d, `rev-${NEWB}.json`); const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.spec.containers[0].env.find((e) => e.name === 'BG_BRIDGE_REVIEW_REF').value = BEV; fs.writeFileSync(f, JSON.stringify(j)); assert.notStrictEqual(r().status, 0, 'live review ref must equal the recorded approval'); assert.doesNotMatch(w.calls(), /update-traffic/);
+});
+test('F7 smoke evidence: the exact set of named checks, and the API digest and EV_TAG it was produced under, are required at the shift', { skip: !haveTools }, () => {
+  const names = (list) => ({ ev: { checks: list.map((name) => ({ name, result: 'PASS' })) } });
+  const cases = { arbitraryNames: names(EXPECTED_CHECKS.map((_, i) => 'c' + i)), oneMissing: names(EXPECTED_CHECKS.slice(1)), duplicated: names([...EXPECTED_CHECKS.slice(1), EXPECTED_CHECKS[1]]), extra: names([...EXPECTED_CHECKS, 'extra']), noAuthName: names(EXPECTED_CHECKS.filter((n) => !/^authenticated read/.test(n)).concat('x')), otherApiDigest: { ev: { apiDigest: 'sha256:' + '8'.repeat(64) } }, noApiDigest: { ev: { apiDigest: undefined } }, otherEvTag: { ev: { evTag: BEV } }, noEvTag: { ev: { evTag: undefined } }, extraKeysNotChecks: { ev: { checks: EXPECTED_CHECKS.map((name) => ({ name, result: 'PASS' })).concat([{ name: EXPECTED_CHECKS[0], result: 'FAIL' }]) } } };
+  for (const [name, over] of Object.entries(cases)) { const { w, r } = readyToShift(over); const res = r(); assert.notStrictEqual(res.status, 0, name); assert.doesNotMatch(w.calls(), /update-traffic/, name); }
+  const s = smokeWorld(); assert.strictEqual(s.run().status, 0); const e = JSON.parse(fs.readFileSync(s.evid(), 'utf8')); assert.deepStrictEqual(e.checks.map((c) => c.name).sort(), [...EXPECTED_CHECKS].sort(), 'smoke must emit exactly the named checks the shift requires'); assert.strictEqual(e.apiDigest, NAD); assert.strictEqual(e.evTag, EVTAG);
 });
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
