@@ -124,7 +124,7 @@ test('reconciliation: any other content, extra drift or a changed value is refus
   for (const [name, [s, v]] of Object.entries(bad)) { const { w, r } = recon(s, v); assert.notStrictEqual(r.status, 0, name); assert.match(r.stderr, /STOP:/, name); assert.doesNotMatch(w.calls(), /run deploy/, name); assert.doesNotMatch(out(r), /literal/, name); }
 });
 test('reconciliation never applies to the bridge: the same differences are refused there', { skip: !haveTools }, () => {
-  const w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()], preTagged: 'api' }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD })); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), a0Yaml());
+  const w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()], preTagged: 'api' }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD })); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), a0Yaml()); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-manifest.json'), JSON.stringify({ baseProfile: { environment: { ...a0Values(), PORT: '8080' } } }));
   const r = w.run('a0-deploy.sh', ['bridge'], { BRIDGE_REF: BRREF, EV_RECONCILIATION: EVR, EV_TAG: EVTAG, ...IDENT }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /template differs/); assert.doesNotMatch(w.calls(), /run deploy/);
 });
 test('check-templates is read-only and reports both services', { skip: !haveTools }, () => {
@@ -159,6 +159,7 @@ function bridgeWorld(mut = {}) {
   const S = JSON.parse(fs.readFileSync(sf, 'utf8')), R = JSON.parse(fs.readFileSync(rf, 'utf8')); S.spec.template.spec.containers[0].name = 'bridge-latest'; R.spec.containers[0].name = 'bridge-serving';
   if (mut.svc) mut.svc(S); if (mut.rev) mut.rev(R); fs.writeFileSync(sf, JSON.stringify(S)); fs.writeFileSync(rf, JSON.stringify(R));
   const yaml = mut.yaml ?? a0Yaml(); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD, ...(mut.state || {}) })); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), yaml);
+  if (mut.manifest !== false) { let env = {}; try { env = Object.fromEntries(yaml.trim().split('\n').map((l) => [l.slice(0, l.indexOf(': ')), JSON.parse(l.slice(l.indexOf(': ') + 2))])); } catch { /* malformed */ } fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-manifest.json'), JSON.stringify(mut.manifest ?? { baseProfile: { environment: { ...env, PORT: '8080' } } })); }
   const nf = path.join(w.d, `rev-${NEWB}.json`), N = JSON.parse(fs.readFileSync(nf, 'utf8')); try { N.spec.containers[0].env = Object.entries(Object.fromEntries(yaml.trim().split('\n').map((l) => [l.slice(0, l.indexOf(': ')), JSON.parse(l.slice(l.indexOf(': ') + 2))]))).map(([name, value]) => ({ name, value })); } catch { /* malformed file tests */ } if (mut.liveEnv) mut.liveEnv(N); fs.writeFileSync(nf, JSON.stringify(N));
   return { w, run: (env = {}) => w.run('a0-deploy.sh', ['bridge'], { BRIDGE_REF: BRREF, ...IDENT, EV_TAG: EVTAG, EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV, ...env }) };
 }
@@ -323,6 +324,64 @@ test('smoke: an aborted run removes earlier PASS evidence so it cannot remain el
   const s = smokeWorld(); const ok = s.run(); assert.strictEqual(ok.status, 0, out(ok)); assert.ok(fs.existsSync(s.evid()));
   const r = s.run(''); assert.notStrictEqual(r.status, 0); assert.ok(!fs.existsSync(s.evid()), 'stale evidence survived an aborted run');
   const t = smokeWorld(); assert.strictEqual(t.run().status, 0); fs.writeFileSync(path.join(t.w.d, 'auth-code'), '401'); assert.notStrictEqual(t.run().status, 0); assert.ok(!fs.existsSync(t.evid()));
+});
+
+// ======== RECONSTRUCTED adversarial cases (NOT Codex's original REVIEW.md/fixtures, which are not accessible from here): built from the four reported findings ========
+const sameName = (n) => ({ svc: (S) => { S.spec.template.spec.containers[0].name = n; }, rev: (R) => { R.spec.containers[0].name = n; } });
+const both = (a, b) => ({ svc: (S) => { a.svc?.(S); b.svc?.(S); }, rev: (R) => { a.rev?.(R); b.rev?.(R); } });
+test('P1-A: identical container names cannot bypass the structural runtime guards', { skip: !haveTools }, () => {
+  const sidecar = { svc: (S) => { S.spec.template.spec.containers.push({ name: 'side', image: 'x', env: [] }); }, rev: (R) => { R.spec.containers.push({ name: 'side', image: 'x', env: [] }); } };
+  const deps = { svc: (S) => { S.spec.template.metadata.annotations['run.googleapis.com/container-dependencies'] = '{"b":["side"]}'; }, rev: (R) => { R.metadata.annotations['run.googleapis.com/container-dependencies'] = '{"b":["side"]}'; } };
+  const vol = { svc: (S) => { S.spec.template.spec.volumes = [{ name: 'v', secret: { secretName: 's' } }]; }, rev: (R) => { R.spec.volumes = [{ name: 'v', secret: { secretName: 's' } }]; } };
+  const h2c = { svc: (S) => { S.spec.template.spec.containers[0].ports = [{ name: 'h2c', containerPort: 8080 }]; }, rev: (R) => { R.spec.containers[0].ports = [{ name: 'h2c', containerPort: 8080 }]; } };
+  const twoPorts = { svc: (S) => { S.spec.template.spec.containers[0].ports = [{ containerPort: 8080 }, { containerPort: 9090 }]; }, rev: (R) => { R.spec.containers[0].ports = [{ containerPort: 8080 }, { containerPort: 9090 }]; } };
+  const wrongPort = { svc: (S) => { S.spec.template.spec.containers[0].ports = [{ containerPort: 9090 }]; }, rev: (R) => { R.spec.containers[0].ports = [{ containerPort: 9090 }]; } };
+  const secretEnv = { svc: (S) => { S.spec.template.spec.containers[0].env.push({ name: 'X', valueFrom: { secretKeyRef: { name: 's', key: '1' } } }); }, rev: (R) => { R.spec.containers[0].env.push({ name: 'X', valueFrom: { secretKeyRef: { name: 's', key: '1' } } }); } };
+  const cases = { sidecarSameNames: both(sameName('bridge'), sidecar), invalidSameName: sameName('Bad_Name'), dependenciesSame: both(both(sameName('bridge'), sidecar), deps), volumeSame: both(sameName('bridge'), vol), h2cSame: both(sameName('bridge'), h2c), twoPortsSame: both(sameName('bridge'), twoPorts), wrongPortSame: both(sameName('bridge'), wrongPort), secretEnvSame: both(sameName('bridge'), secretEnv) };
+  for (const [name, mut] of Object.entries(cases)) { const { w, run } = bridgeWorld(mut); const r = run(); assert.notStrictEqual(r.status, 0, name); assert.doesNotMatch(w.calls(), /run deploy/, name); const c = bridgeWorld(mut); const chk = c.w.run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV }); assert.notStrictEqual(chk.status, 0, 'check ' + name); assert.doesNotMatch(out(chk), /TEMPLATE CHECK: PASS/, 'check ' + name); }
+  const ok = bridgeWorld(sameName('bridge')); assert.strictEqual(ok.run().status, 0, 'a clean single-container bridge with identical names still passes');
+});
+test('P1-B: the deployed env file must equal the private validated manifest; malformed values are never disclosed', { skip: !haveTools }, () => {
+  const good = a0Values(); const cases = { missingManifest: { manifest: false }, extraInFile: { manifest: { baseProfile: { environment: { ...good, PORT: '8080', EXTRA: 'x' } } } }, valueDiffers: { manifest: { baseProfile: { environment: { ...good, PORT: '8080', BG_BRIDGE_AUDIENCE: AUD + 'x' } } } }, missingInManifest: { manifest: { baseProfile: { environment: { PORT: '8080' } } } }, noBase: { manifest: {} } };
+  for (const [name, mut] of Object.entries(cases)) { const { w, run } = bridgeWorld(mut); const r = run(); assert.notStrictEqual(r.status, 0, name); assert.doesNotMatch(w.calls(), /run deploy/, name); }
+  const SENT = 'MALFORMED-SENTINEL-9z'; const y = a0Yaml().replace('BIZGENIE_ENVIRONMENT: "staging"', `BIZGENIE_ENVIRONMENT: "staging ${SENT}`); const { w, run } = bridgeWorld({ yaml: y }); const r = run(); assert.notStrictEqual(r.status, 0); assert.ok(!(out(r) + w.calls()).includes(SENT), 'malformed value leaked');
+  const y2 = a0Yaml({ BG_BRIDGE_SOURCE_SHA: SENT }); const b = bridgeWorld({ yaml: y2 }); const r2 = b.run(); assert.notStrictEqual(r2.status, 0); assert.ok(!(out(r2) + b.w.calls()).includes(SENT), 'rejected value leaked');
+});
+test('P1-C: no failure mode of the metadata reads or the comparator can produce TEMPLATE CHECK: PASS', { skip: !haveTools }, () => {
+  const tweaks = {
+    apiMissing: (w) => { fs.rmSync(path.join(w.d, 'svc-bizgenie-api-staging.json')); }, bridgeMissing: (w) => { fs.rmSync(path.join(w.d, 'svc-bizgenie-studio-bridge-staging.json')); }, servingRevisionMissing: (w) => { fs.rmSync(path.join(w.d, `rev-${BA}.json`)); }, bridgeRevisionMissing: (w) => { fs.rmSync(path.join(w.d, `rev-${BB}.json`)); },
+    malformedText: (w) => { fs.writeFileSync(path.join(w.d, 'svc-bizgenie-api-staging.json'), '<html>nope'); }, emptyFile: (w) => { fs.writeFileSync(path.join(w.d, `rev-${BB}.json`), ''); },
+    noContainers: (w) => { const f = path.join(w.d, 'svc-bizgenie-studio-bridge-staging.json'); const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.spec.template.spec.containers = []; fs.writeFileSync(f, JSON.stringify(j)); },
+    containerNotObject: (w) => { const f = path.join(w.d, `rev-${BA}.json`); const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.spec.containers = ['x']; fs.writeFileSync(f, JSON.stringify(j)); },
+    envNotArray: (w) => { const f = path.join(w.d, 'svc-bizgenie-api-staging.json'); const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.spec.template.spec.containers[0].env = 'oops'; fs.writeFileSync(f, JSON.stringify(j)); },
+    noTraffic: (w) => { const f = path.join(w.d, 'svc-bizgenie-api-staging.json'); const j = JSON.parse(fs.readFileSync(f, 'utf8')); delete j.status.traffic; fs.writeFileSync(f, JSON.stringify(j)); },
+    noConditions: (w) => { const f = path.join(w.d, `rev-${BB}.json`); const j = JSON.parse(fs.readFileSync(f, 'utf8')); delete j.status.conditions; fs.writeFileSync(f, JSON.stringify(j)); },
+  };
+  for (const [name, tw] of Object.entries(tweaks)) { const w = world({ svcEnv: [ENVSTG, ISO()], revEnv: [ENVSTG, ISO()] }); tw(w); const apiOnly = ['apiMissing', 'malformedText', 'servingRevisionMissing', 'containerNotObject', 'envNotArray', 'noTraffic'].includes(name); for (const sub of apiOnly ? ['check-templates'] : ['check-templates', 'diagnose-bridge']) { const r = w.run('a0-deploy.sh', [sub], { EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV }); assert.notStrictEqual(r.status, 0, `${name} ${sub}`); assert.doesNotMatch(out(r), /TEMPLATE CHECK: PASS|template equals the serving revision.*\n.*template equals/s, `${name} ${sub}`); } }
+  // failed comparator subprocess: a jq that dies when it builds the fingerprint
+  const w = world({ svcEnv: [ENVSTG, ISO()], revEnv: [ENVSTG, ISO()] }); const real = spawnSync('sh', ['-c', 'command -v jq']).stdout.toString().trim(); fs.writeFileSync(path.join(w.home, 'bin', 'jq'), `#!/bin/sh\ncase "$*" in *@tsv*) echo boom >&2; exit 5;; esac\nexec ${real} "$@"\n`); fs.chmodSync(path.join(w.home, 'bin', 'jq'), 0o755);
+  const r = w.run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0); assert.doesNotMatch(out(r), /TEMPLATE CHECK: PASS|equals the serving revision/);
+  const a = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(a.status, 0); assert.doesNotMatch(w.calls(), /run deploy/);
+});
+test('P2-D: attempts are journaled before any mutation, failed attempts are not checkpoints, and every early failure leaves the traffic shift unavailable', { skip: !haveTools }, () => {
+  // journal visible to the deploy command itself
+  const a = apiWorld(); fs.appendFileSync(path.join(a.w.d, 'deploy-effect.sh'), `cp "$HOME/.bg-private/a0-state.json" "$STUB_DIR/state-at-deploy.json"\n`); const ra = a.run(); assert.strictEqual(ra.status, 0, out(ra));
+  const atDeploy = JSON.parse(fs.readFileSync(path.join(a.w.d, 'state-at-deploy.json'), 'utf8')); assert.ok(atDeploy.apiDeployStartedAt && atDeploy.apiRevisionsBefore, 'attempt not journaled before the deploy'); assert.ok(!atDeploy.apiRevision, 'unverified attempt recorded as a checkpoint');
+  const b = bridgeWorld(); fs.appendFileSync(path.join(b.w.d, 'deploy-effect.sh'), `cp "$HOME/.bg-private/a0-state.json" "$STUB_DIR/state-at-deploy.json"\n`); const rb = b.run(); assert.strictEqual(rb.status, 0, out(rb));
+  const bs = JSON.parse(fs.readFileSync(path.join(b.w.d, 'state-at-deploy.json'), 'utf8')); assert.ok(bs.bridgeDeployStartedAt && bs.bridgeRevisionsBefore, 'bridge attempt not journaled before the deploy'); assert.ok(!bs.bridgeRevision, 'unverified bridge attempt recorded as a checkpoint');
+  // earlier PASS evidence and bridge checkpoint are invalidated by ANY new attempt, even one that fails immediately
+  const earlyFailures = { badEnvFile: { yaml: a0Yaml({ BG_BRIDGE_ALLOW_WRITES: 'true' }) }, noEvTag: { env: { EV_TAG: '' } }, malformedYaml: { yaml: 'garbage\n' }, templateDrift: { svc: (S) => { S.spec.template.spec.serviceAccountName = 'other@x'; } } };
+  for (const [name, c] of Object.entries(earlyFailures)) {
+    const { w, run } = bridgeWorld(c); const f = path.join(w.home, '.bg-private'); fs.writeFileSync(path.join(f, 'a0-smoke-evidence.json'), JSON.stringify({ revision: NEWB, passedAt: Math.floor(Date.now() / 1000) })); fs.writeFileSync(path.join(f, 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD, bridgeRevision: NEWB, bridgeDigest: NBD, evTag: EVTAG, evTagRevision: NEWA, evReconciliation: EVR, evBridgeReconciliation: BEV }));
+    const r = run(c.env || {}); assert.notStrictEqual(r.status, 0, name); assert.ok(!fs.existsSync(path.join(f, 'a0-smoke-evidence.json')), `${name}: stale smoke evidence survived`); const st = JSON.parse(fs.readFileSync(path.join(f, 'a0-state.json'), 'utf8')); assert.ok(!st.bridgeRevision, `${name}: old bridge checkpoint survived`);
+  }
+  // a failed bridge deploy command leaves no checkpoint and no evidence
+  const d = bridgeWorld(); fs.writeFileSync(path.join(d.w.d, 'deploy-effect.sh'), '#!/bin/sh\nexit 1\n'); const stub = fs.readFileSync(path.join(d.w.home, 'bin', 'gcloud'), 'utf8'); fs.writeFileSync(path.join(d.w.home, 'bin', 'gcloud'), stub.replace('[ -f "$STUB_DIR/deploy-effect.sh" ] && bash "$STUB_DIR/deploy-effect.sh" "$@"; true;;', 'bash "$STUB_DIR/deploy-effect.sh" "$@";;'));
+  const rd = d.run(); assert.notStrictEqual(rd.status, 0); assert.ok(!JSON.parse(fs.readFileSync(path.join(d.w.home, '.bg-private', 'a0-state.json'), 'utf8')).bridgeRevision);
+  // bridge resume detects an unrecognised untagged revision from a failed attempt
+  const e = bridgeWorld({ state: { bridgeDeployStartedAt: new Date(Date.now() - 60000).toISOString().replace(/\.\d+Z$/, 'Z'), bridgeRevisionsBefore: `${BB} ` } }); fs.writeFileSync(path.join(e.w.d, 'revlist-bizgenie-studio-bridge-staging.txt'), `${BB}\n${NEWB}\n`); const re = e.run(); assert.notStrictEqual(re.status, 0); assert.match(re.stderr, /UNTAGGED\/unrecognised bridge revision/); assert.doesNotMatch(e.w.calls(), /run deploy/);
+  // shift is unavailable without a verified checkpoint
+  const s = readyToShift({ state: { bridgeRevision: '' } }); assert.notStrictEqual(s.r().status, 0);
 });
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
