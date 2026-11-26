@@ -53,7 +53,15 @@ say "2/6 the new API revision: Ready, tagged, 0% traffic, image equals API_REF"
 [ "$(dig_of "$NEW_API_REVISION")" = "${API_REF##*@}" ] || die "NEW_API_REVISION image digest differs from API_REF"
 jq -e --arg r "$NEW_API_REVISION" --arg t "$NEW_API_TAG" '[.status.traffic[]? | select(.revisionName == $r and .tag == $t and ((.percent // 0) == 0))] | length == 1' <<<"$AJ" >/dev/null || die "revision is not tagged $NEW_API_TAG at 0% traffic"
 TARGET_URL=$(jq -r --arg t "$NEW_API_TAG" '[.status.traffic[]? | select(.tag == $t) | .url][0] // ""' <<<"$AJ"); AUDIENCE=$(jq -r '.status.url // ""' <<<"$AJ")
-[[ "$TARGET_URL" =~ ^https://[a-z0-9-]+---bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$ && "$AUDIENCE" =~ ^https://bizgenie-api-staging-[a-z0-9-]+\.a\.run\.app$ ]] || die "tagged URL / audience not in the expected form"
+# BEGIN url-validation (the service's own status.url is the authority; both Cloud Run hostname styles are accepted; nothing else is)
+valid_service_urls() { # $1 = service.url (audience)  $2 = tagged url  $3 = expected tag
+  local aud="$1" turl="$2" tag="$3" host
+  [[ "$aud" =~ ^https://(bizgenie-api-staging-[a-z0-9]+(-[a-z0-9]+)*\.a\.run\.app|bizgenie-api-staging-[0-9]+\.europe-west1\.run\.app)$ ]] || return 1
+  [[ "$tag" =~ ^[a-z][a-z0-9-]{1,40}$ ]] || return 1
+  host=${aud#https://}; [ "$turl" = "https://${tag}---${host}" ]
+}
+# END url-validation
+valid_service_urls "$AUDIENCE" "$TARGET_URL" "$NEW_API_TAG" || die "service URL / tagged URL / audience not in the expected form (tagged URL must be https://<tag>---<service host>)"
 echo "tagged upstream URL: present (not printed); revision $NEW_API_REVISION"
 
 say "3/6 private identifiers (hidden prompts; checked against the recorded fingerprints; never printed)"

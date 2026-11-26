@@ -58,6 +58,17 @@ test('smoke: an empty token is refused and no evidence is written', { skip: !hav
   fs.writeFileSync(path.join(w.home, 'bin', 'curl'), '#!/bin/sh\nprev=; for a in "$@"; do case "$prev" in -w) fmt=1;; esac; prev=$a; done\ncase "$*" in *"-X OPTIONS"*"foreign"*) printf 403;; *"-X OPTIONS"*) printf 204;; *"-X POST"*"bootstrap"*|*"-X POST"*"uploads"*) printf 403;; *"-X POST"*) printf 401;; *) printf 401;; esac\n'); fs.chmodSync(path.join(w.home, 'bin', 'curl'), 0o755);
   const r = w.run('a0-smoke.sh', [], {}, '\n'); assert.notStrictEqual(r.status, 0); assert.match(out(r), /mandatory/); assert.ok(!fs.existsSync(path.join(w.home, '.bg-private', 'a0-smoke-evidence.json')));
 });
+test('A0 URL validation: both Cloud Run hostname styles, exact tag prefix, nothing else', { skip: !haveTools }, () => {
+  const src = fs.readFileSync(path.join(S, 'a0-prepare.sh'), 'utf8'); const fn = src.slice(src.indexOf('# BEGIN url-validation'), src.indexOf('# END url-validation'));
+  const ok = (a, t, g) => spawnSync('bash', ['-c', `${fn}\nvalid_service_urls "$1" "$2" "$3"`, 'x', a, t, g]).status === 0; const TG = 'a0-dfd49116';
+  const legacy = 'https://bizgenie-api-staging-abc123xyz-ew.a.run.app', regional = 'https://bizgenie-api-staging-303691956826.europe-west1.run.app';
+  assert.ok(ok(legacy, `https://${TG}---bizgenie-api-staging-abc123xyz-ew.a.run.app`, TG)); assert.ok(ok(regional, `https://${TG}---bizgenie-api-staging-303691956826.europe-west1.run.app`, TG));
+  const bad = [[legacy, `https://other-tag---bizgenie-api-staging-abc123xyz-ew.a.run.app`], [legacy, `https://${TG}---bizgenie-api-staging-zzz-ew.a.run.app`], [legacy, regional], [regional, `https://${TG}---bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app`],
+    [legacy, `https://${TG}--bizgenie-api-staging-abc123xyz-ew.a.run.app`], [legacy, `http://${TG}---bizgenie-api-staging-abc123xyz-ew.a.run.app`], [legacy, `https://${TG}---bizgenie-api-staging-abc123xyz-ew.a.run.app/x`], [legacy, ''],
+    ['https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app', `https://${TG}---bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app`], ['https://evil.example.com', `https://${TG}---evil.example.com`],
+    ['https://bizgenie-api-staging-303691956826.us-central1.run.app', `https://${TG}---bizgenie-api-staging-303691956826.us-central1.run.app`], [`${regional}/`, `https://${TG}---bizgenie-api-staging-303691956826.europe-west1.run.app/`], ['', '']];
+  for (const [a, t] of bad) assert.ok(!ok(a, t, TG), `${a} | ${t}`); assert.ok(!ok(legacy, `https://BAD---bizgenie-api-staging-abc123xyz-ew.a.run.app`, 'BAD'));
+});
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
   const base = ['--api-image', `${REPO}/bizgenie-api@sha256:${'a'.repeat(64)}`, '--clamav-image', `${REPO}/clamav@sha256:${'b'.repeat(64)}`, '--suffix', 'a2s1', '--tag', 'a2-scanner'];
