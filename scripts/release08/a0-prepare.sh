@@ -83,7 +83,7 @@ jq --arg sha "$API_SHA" --arg image "$BRIDGE_REF" --arg tag "$EV_TAG" --arg appr
         BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE: "true", BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID: $tenant, BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY: "fonzo.workspace.v1",
         BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME: "Fonzo" }) }) }' "$W/src/scripts/staging/bridge-founder-onboarding-release.example.json" > "$M"
 chmod 600 "$M"
-jq -r '.baseProfile.environment | to_entries[] | "\(.key): \(.value|tojson)"' "$M" > "$Y"; chmod 600 "$Y"
+jq -r '.baseProfile.environment | del(.PORT) | to_entries[] | "\(.key): \(.value|tojson)"' "$M" > "$Y"; chmod 600 "$Y"
 
 say "5/6 validate with the accepted Release 07 validator (offline; installs the locked production dependencies into the temporary export only)"
 ( cd "$W/src" && npm ci --omit=dev --no-audit --no-fund --silent ) || die "npm ci failed in the temporary export"

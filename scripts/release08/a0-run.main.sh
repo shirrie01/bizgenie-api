@@ -13,9 +13,12 @@ case "$CMD" in
  preflight)
   say "read-only: API and bridge template compatibility (changes nothing)"
   read -r -p "EV_RECONCILIATION (founder approval comment URL for the two reviewed API differences; blank to see the check fail closed): " EV_RECONCILIATION; export EV_RECONCILIATION
+  read -r -p "EV_BRIDGE_RECONCILIATION (DISTINCT founder approval comment URL for the reviewed bridge differences; blank to see the check fail closed): " EV_BRIDGE_RECONCILIATION; export EV_BRIDGE_RECONCILIATION
+  bash "$BG_A0_DIR/a0-deploy.sh" diagnose-bridge || true
   bash "$BG_A0_DIR/a0-deploy.sh" check-templates; echo "Log: $BG_A0_LOG";;
  run)
   read -r -p "EV_RECONCILIATION (founder approval comment URL in #191 for the two reviewed API template differences): " EV_RECONCILIATION; export EV_RECONCILIATION
+  read -r -p "EV_BRIDGE_RECONCILIATION (DISTINCT founder approval comment URL in #191 for the reviewed bridge template differences): " EV_BRIDGE_RECONCILIATION; export EV_BRIDGE_RECONCILIATION
   say "0a. read-only template compatibility, before anything is deployed"
   bash "$BG_A0_DIR/a0-deploy.sh" check-templates
   say "0. the accepted E1 images exist in the registry with exactly these digests (read-only)"

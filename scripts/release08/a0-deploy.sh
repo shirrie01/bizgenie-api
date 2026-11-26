@@ -24,12 +24,12 @@ h12() { sha256sum | cut -c1-12; }
 fingerprint() {
   local norm; if [ "$2" = svc ]; then norm='{spec:.spec.template.spec, ann:(.spec.template.metadata.annotations // {})}'; else norm='{spec:.spec, ann:(.metadata.annotations // {})}'; fi
   jq -r "$norm"' | (.spec) as $s | (.ann) as $a |
-    def ann_keys: ["autoscaling.knative.dev/minScale","autoscaling.knative.dev/maxScale","run.googleapis.com/cpu-throttling","run.googleapis.com/execution-environment","run.googleapis.com/vpc-access-connector","run.googleapis.com/vpc-access-egress","run.googleapis.com/startup-cpu-boost","run.googleapis.com/cloudsql-instances","run.googleapis.com/container-dependencies","run.googleapis.com/network-interfaces","run.googleapis.com/sessionAffinity"];
-    (["SA","serviceAccount",($s.serviceAccountName // "")], ["RT","containerConcurrency",(($s.containerConcurrency // "") | tostring)], ["RT","timeoutSeconds",(($s.timeoutSeconds // "") | tostring)], ["RT","volumes",([($s.volumes // [])[] | .name] | tojson)],
+    def ann_keys: ["autoscaling.knative.dev/minScale","autoscaling.knative.dev/maxScale","run.googleapis.com/cpu-throttling","run.googleapis.com/execution-environment","run.googleapis.com/vpc-access-connector","run.googleapis.com/vpc-access-egress","run.googleapis.com/startup-cpu-boost","run.googleapis.com/cloudsql-instances","run.googleapis.com/container-dependencies","run.googleapis.com/network-interfaces","run.googleapis.com/sessionAffinity","run.googleapis.com/health-check-disabled","run.googleapis.com/cmek-key","run.googleapis.com/gpu-type"];
+    (["SA","serviceAccount",($s.serviceAccountName // "")], ["RT","containerConcurrency",(($s.containerConcurrency // "") | tostring)], ["RT","timeoutSeconds",(($s.timeoutSeconds // "") | tostring)], ["RT","volumes",(($s.volumes // []) | tojson)],
      (ann_keys[] as $k | ["ANN",$k,($a[$k] // "")]),
      (($s.containers // []) | to_entries[] | .key as $i | .value as $c |
         ["RT","c\($i).name",($c.name // "")], ["RT","c\($i).limits",(($c.resources.limits // {}) | tojson)], ["RT","c\($i).ports",([($c.ports // [])[] | .containerPort] | tojson)],
-        ["RT","c\($i).command",(($c.command // []) | tojson)], ["RT","c\($i).args",(($c.args // []) | tojson)], ["RT","c\($i).mounts",([($c.volumeMounts // [])[] | [.name,.mountPath]] | tojson)],
+        ["RT","c\($i).command",(($c.command // []) | tojson)], ["RT","c\($i).args",(($c.args // []) | tojson)], ["RT","c\($i).mounts",([($c.volumeMounts // [])[] | [.name,.mountPath]] | tojson)], ["RT","c\($i).probes",([$c.startupProbe, $c.livenessProbe, $c.readinessProbe] | tojson)], ["RT","c\($i).security",(($c.securityContext // {}) | tojson)], ["RT","c\($i).workdir",($c.workingDir // "")],
         (($c.env // [])[] | if .valueFrom then ["ENVREF","c\($i).\(.name)",(if .valueFrom.secretKeyRef then "secret:\(.valueFrom.secretKeyRef.name)@\(.valueFrom.secretKeyRef.key)" else (.valueFrom | tojson) end)] else ["ENV","c\($i).\(.name)",(.value // "")] end))) | @tsv' <<<"$1" |
   while IFS=$'\t' read -r kind key val; do printf '%s\t%s\t%s\n' "$kind" "$key" "$(printf %s "$val" | h12)"; done | sort
 }
@@ -37,7 +37,7 @@ fingerprint() {
 # API only: exactly TWO reviewed differences are accepted (BG-LAUNCH-009 / BG-017C-07 security decisions; see docs/launch/BG_RELEASE08_A0_RECONCILIATION.md). Anything else, or either of these with any other content, is refused.
 APPROVED_ROLE_NAME=bizgenie-staging-supabase-service-role-key; APPROVED_ROLE_VERSION=1; HISTORICAL_ROLE_NAME=bizgenie-supabase-service-role-key; APPROVED_ISOLATION=local
 template_matches_serving() { # $1 service name  $2 serving revision  $3 "reconcile-api" to allow the two reviewed API differences
-  local sj rj sfp rfp key applied="" bad="" k
+  local sj rj sfp rfp key applied="" bad="" k superseded=""
   sj=$(describe "$1"); rj=$(revjson "$2"); sfp=$(fingerprint "$sj" svc); rfp=$(fingerprint "$rj" rev)
   declare -A S R; while IFS=$'\t' read -r k1 k2 v; do S["$k1|$k2"]=$v; done <<<"$sfp"; while IFS=$'\t' read -r k1 k2 v; do R["$k1|$k2"]=$v; done <<<"$rfp"
   for key in $(printf '%s\n' "${!S[@]}" "${!R[@]}" | sort -u); do
@@ -47,23 +47,89 @@ template_matches_serving() { # $1 service name  $2 serving revision  $3 "reconci
     elif [ "${3:-}" = reconcile-api ] && [ "$key" = "ENVREF|c0.SUPABASE_SERVICE_ROLE_KEY" ] && [ "${S[$key]:-}" = "$(printf 'secret:%s@%s' "$APPROVED_ROLE_NAME" "$APPROVED_ROLE_VERSION" | h12)" ] \
        && [ "$(jq -r '[.spec.containers[]?.env[]? | select(.name == "SUPABASE_SERVICE_ROLE_KEY") | .valueFrom.secretKeyRef.name][0] // ""' <<<"$rj")" = "$HISTORICAL_ROLE_NAME" ]; then
       applied="$applied SUPABASE_SERVICE_ROLE_KEY($HISTORICAL_ROLE_NAME@$(jq -r '[.spec.containers[]?.env[]? | select(.name == "SUPABASE_SERVICE_ROLE_KEY") | .valueFrom.secretKeyRef.key][0] // "?"' <<<"$rj")->$APPROVED_ROLE_NAME@$APPROVED_ROLE_VERSION)"
+    elif [ "${3:-}" = reconcile-bridge ] && [[ "$key" == ENV\|* ]] && [ -z "${S[ENVREF|${key#ENV|}]:-}${R[ENVREF|${key#ENV|}]:-}" ]; then superseded="$superseded ${key#ENV|c0.}"
+    elif [ "${3:-}" = reconcile-bridge ] && [ "$key" = "RT|c0.name" ] && bridge_container_name_ok "$sj" "$rj" "${S[ANN|run.googleapis.com/container-dependencies]:-}" "${S[RT|volumes]:-}" "${R[RT|volumes]:-}"; then applied="$applied container-name($(jq -r '.spec.template.spec.containers[0].name' <<<"$sj")<-$(jq -r '.spec.containers[0].name' <<<"$rj"))"
     else bad="$bad
   ${key%%|*} ${key#*|}"; fi
   done
+  if [ "${3:-}" = reconcile-bridge ]; then
+    # Secret-backed environment is NOT replaced by --env-vars-file: it would be inherited silently. Refuse it on either side, and any secret/cloud-sql volume.
+    for k in "${!S[@]}" "${!R[@]}"; do case "$k" in ENVREF\|*) bad="$bad
+  ENVREF ${k#*|} (secret-backed bridge environment is not allowed)";; esac; done
+    [ "${S[RT|volumes]:-}" = "$(printf '[]' | h12)" ] && [ "${R[RT|volumes]:-}" = "$(printf '[]' | h12)" ] || bad="$bad
+  RT volumes (bridge volumes are not allowed)"
+  fi
   if [ -n "$bad" ]; then echo "template differs from the serving revision in (kind, key; values are never shown):$bad" >&2; die "the latest $1 template is not the serving configuration: review and resolve before any new revision is created"; fi
-  if [ -n "$applied" ]; then
+  if [ "${3:-}" = reconcile-bridge ] && { [ -n "$applied" ] || [ -n "$superseded" ]; }; then
+    [[ "${EV_BRIDGE_RECONCILIATION:-}" =~ ^https://github\.com/shirrie01/bizgenie-api/issues/191#issuecomment-[0-9]+$ ]] || die "bridge template differences are present; export EV_BRIDGE_RECONCILIATION=<distinct founder approval comment URL in #191> to proceed"
+    [ "$EV_BRIDGE_RECONCILIATION" != "${EV_RECONCILIATION:-}" ] && [ "$EV_BRIDGE_RECONCILIATION" != "${EV_APPROVAL:-}" ] || die "EV_BRIDGE_RECONCILIATION must be distinct from the API reconciliation and the release approval"
+    echo "approved bridge reconciliation (evidence $EV_BRIDGE_RECONCILIATION):$applied"
+    echo "environment settings superseded (NOT inherited: the A0 deployment replaces the whole bridge environment with the validated A0 file):$superseded"
+  elif [ -n "$applied" ]; then
     [[ "${EV_RECONCILIATION:-}" =~ ^https://github\.com/shirrie01/bizgenie-api/issues/191#issuecomment-[0-9]+$ ]] || die "the two reviewed API differences are present; export EV_RECONCILIATION=<founder approval comment URL in #191> to proceed"
     echo "approved reconciliation (evidence $EV_RECONCILIATION):$applied"
   else echo "$1 template equals the serving revision"; fi
+}
+# A reviewed container-name change is safe only when nothing can depend on the name: a single container on both sides, no sidecar dependencies, no volumes, a plain DNS-label name.
+bridge_container_name_ok() { # $1 service json  $2 revision json  $3 dependency-annotation hash  $4/$5 volume hashes
+  local n1 n2; n1=$(jq -r '.spec.template.spec.containers[0].name // ""' <<<"$1"); n2=$(jq -r '.spec.containers[0].name // ""' <<<"$2")
+  [ "$(jq '.spec.template.spec.containers | length' <<<"$1")" = 1 ] && [ "$(jq '.spec.containers | length' <<<"$2")" = 1 ] || return 1
+  [[ "$n1" =~ ^[a-z][a-z0-9-]{0,62}$ && "$n2" =~ ^[a-z][a-z0-9-]{0,62}$ ]] || return 1
+  [ "$3" = "$(printf '' | h12)" ]
+}
+# The ONLY environment names the A0 bridge file may contain (PORT is reserved by Cloud Run and must not be set). Flags must have the exact values below.
+A0_ENV_NAMES="BG_BRIDGE_ALLOW_DRAFT_WORKFLOW BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION BG_BRIDGE_ALLOW_SOCIAL_WRITES BG_BRIDGE_ALLOW_STRIPE_CHECKOUT BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP BG_BRIDGE_ALLOW_WRITES BG_BRIDGE_AUDIENCE BG_BRIDGE_BIND BG_BRIDGE_FOUNDER_AUTH_USER_ID BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID BG_BRIDGE_REVIEW_REF BG_BRIDGE_REVISION BG_BRIDGE_SOURCE_SHA BG_BRIDGE_STUDIO_ORIGIN BG_BRIDGE_TARGET_URL BIZGENIE_ENVIRONMENT SUPABASE_PUBLISHABLE_KEY SUPABASE_URL"
+validate_a0_env_file() { # $1 = YAML/JSON-per-line env file written by a0-prepare.sh; names and flag values only are inspected
+  local f="$1" names n v bad=""
+  [ -s "$f" ] || die "A0 bridge env file missing: run a0-prepare.sh first"
+  names=$(sed -E 's/^([A-Za-z0-9_]+):.*/\1/' "$f" | sort)
+  for n in $names; do case " $A0_ENV_NAMES " in *" $n "*) ;; *) bad="$bad $n";; esac; done
+  [ -z "$bad" ] || die "the A0 bridge env file contains names that are not on the approved list:$bad"
+  for n in $A0_ENV_NAMES; do printf '%s\n' "$names" | grep -qx "$n" || die "the A0 bridge env file lacks required setting $n"; done
+  for n in BG_BRIDGE_ALLOW_DRAFT_WORKFLOW BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION BG_BRIDGE_ALLOW_SOCIAL_WRITES BG_BRIDGE_ALLOW_STRIPE_CHECKOUT BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP BG_BRIDGE_ALLOW_WRITES; do
+    v=$(sed -nE "s/^$n: \"?([^\"]*)\"?\$/\1/p" "$f"); [ "$v" = false ] || die "unsafe or missing flag: $n must be exactly false"; done
+  v=$(sed -nE 's/^BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE: "?([^"]*)"?$/\1/p' "$f"); [ "$v" = true ] || die "BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE must be exactly true for the A0 workspace profile"
+  v=$(sed -nE 's/^BIZGENIE_ENVIRONMENT: "?([^"]*)"?$/\1/p' "$f"); [ "$v" = staging ] || die "BIZGENIE_ENVIRONMENT must be staging"
+}
+# Names only: what the A0 deployment keeps, replaces, adds and removes relative to the serving revision and the latest template.
+print_env_plan() { # $1 service json  $2 serving revision json
+  local sv tp; sv=$(jq -r '[.spec.containers[0].env[]?.name] | sort | .[]' <<<"$2"); tp=$(jq -r '[.spec.template.spec.containers[0].env[]?.name] | sort | .[]' <<<"$1")
+  local a0; a0=$(printf '%s\n' $A0_ENV_NAMES | sort)
+  echo "A0 environment plan (names only):"
+  echo "  retained (serving and A0):   $(comm -12 <(echo "$sv") <(echo "$a0") | tr '\n' ' ')"
+  echo "  added (A0 only):             $(comm -13 <(echo "$sv") <(echo "$a0") | tr '\n' ' ')"
+  echo "  removed (serving only):      $(comm -23 <(echo "$sv") <(echo "$a0") | tr '\n' ' ')"
+  echo "  latest-template-only names not carried forward: $(comm -13 <(echo "$sv") <(echo "$tp") | comm -23 - <(echo "$a0") | tr '\n' ' ')"
+}
+# One consolidated READ-ONLY diagnostic for the bridge template. Prints only safe facts: presence, equality, boolean flag values, expected-value matches. Never prints ids, tokens, key material or campaign contents.
+diagnose_bridge() {
+  local sj rj; sj=$(describe "$BRIDGE_SVC"); rj=$(revjson "$BASE_BRIDGE_REV")
+  tv() { jq -r --arg n "$1" '[.spec.template.spec.containers[0].env[]? | select(.name == $n)][0] | if . == null then "<absent>" elif .valueFrom then "<secret-ref>" else (.value // "") end' <<<"$sj"; }
+  sv() { jq -r --arg n "$1" '[.spec.containers[0].env[]? | select(.name == $n)][0] | if . == null then "<absent>" elif .valueFrom then "<secret-ref>" else (.value // "") end' <<<"$rj"; }
+  echo "== permission flags (true/false values are safe to show)"
+  for n in BG_BRIDGE_ALLOW_DRAFT_WORKFLOW BG_BRIDGE_ALLOW_FOUNDER_CAMPAIGN_ROOT BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP BG_BRIDGE_ALLOW_WRITES BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING BG_BRIDGE_ALLOW_FOUNDER_RECOMMENDATIONS BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION BG_BRIDGE_ALLOW_SOCIAL_WRITES BG_BRIDGE_ALLOW_STRIPE_CHECKOUT; do
+    t=$(tv $n); s_=$(sv $n); case "$t" in true|false|"<absent>"|"<secret-ref>") ;; *) t="<other value>";; esac; case "$s_" in true|false|"<absent>"|"<secret-ref>") ;; *) s_="<other value>";; esac; printf '  %-46s template=%-10s serving=%s\n' "$n" "$t" "$s_"; done
+  echo "== campaign pins (presence and match to the recorded Fairway fingerprints only)"
+  for n in BG_BRIDGE_FOUNDER_CAMPAIGN_TENANT_ID:${EXPECT_TENANT_H:-7129d2ba} BG_BRIDGE_FOUNDER_CAMPAIGN_PROJECT_ID:${EXPECT_PROJECT_H:-b321c195} BG_BRIDGE_FOUNDER_CAMPAIGN_BRAND_ID:${EXPECT_BRAND_H:-01e15c41}; do
+    k=${n%%:*}; hh=${n##*:}; t=$(tv $k); if [ "$t" = "<absent>" ]; then m=absent; else [ "$(printf %s "$t" | sha256sum | cut -c1-8)" = "$hh" ] && m="present, MATCHES the Fairway fingerprint" || m="present, does not match Fairway"; fi; printf '  %-46s %s\n' "$k" "$m"; done
+  t=$(tv BG_BRIDGE_FOUNDER_CAMPAIGN_BODY_SHA256); [ "$t" = "<absent>" ] && echo "  BG_BRIDGE_FOUNDER_CAMPAIGN_BODY_SHA256         absent" || { [[ "$t" =~ ^[a-f0-9]{64}$ ]] && echo "  BG_BRIDGE_FOUNDER_CAMPAIGN_BODY_SHA256         present, well-formed (value not shown)" || echo "  BG_BRIDGE_FOUNDER_CAMPAIGN_BODY_SHA256         present, malformed"; }
+  echo "== source SHA"; t=$(tv BG_BRIDGE_SOURCE_SHA); s_=$(sv BG_BRIDGE_SOURCE_SHA); printf '  template equals accepted API SHA dfd49116...: %s; serving equals it: %s\n' "$([ "$t" = dfd49116a0fe6bde11dbc25ca4599a03b8046999 ] && echo yes || echo no)" "$([ "$s_" = dfd49116a0fe6bde11dbc25ca4599a03b8046999 ] && echo yes || echo no)"
+  echo "== container (names and runtime shape are not secret)"
+  echo "  template container names: $(jq -r '[.spec.template.spec.containers[].name] | join(",")' <<<"$sj")   serving container names: $(jq -r '[.spec.containers[].name] | join(",")' <<<"$rj")"
+  echo "  template ports/limits equal serving: $([ "$(jq -c '[.spec.template.spec.containers[0].ports, .spec.template.spec.containers[0].resources.limits]' <<<"$sj")" = "$(jq -c '[.spec.containers[0].ports, .spec.containers[0].resources.limits]' <<<"$rj")" ] && echo yes || echo NO)"
+  echo "  probes present (template/serving): $(jq -r '[.spec.template.spec.containers[0] | (.startupProbe != null), (.livenessProbe != null), (.readinessProbe != null)] | @csv' <<<"$sj") / $(jq -r '[.spec.containers[0] | (.startupProbe != null), (.livenessProbe != null), (.readinessProbe != null)] | @csv' <<<"$rj")"
+  echo "  volumes template/serving: $(jq '(.spec.template.spec.volumes // []) | length' <<<"$sj") / $(jq '(.spec.volumes // []) | length' <<<"$rj");  container-dependencies annotation present: $(jq -r '(.spec.template.metadata.annotations["run.googleapis.com/container-dependencies"] // "") != ""' <<<"$sj")"
+  echo "  secret-backed env on template: $(jq -r '[.spec.template.spec.containers[]?.env[]? | select(.valueFrom != null) | .name] | join(",") | if . == "" then "none" else . end' <<<"$sj")   on serving: $(jq -r '[.spec.containers[]?.env[]? | select(.valueFrom != null) | .name] | join(",") | if . == "" then "none" else . end' <<<"$rj")"
+  print_env_plan "$sj" "$rj"
 }
 # Read-only: report whether the API and bridge templates can be deployed. Changes nothing.
 check_templates() {
   local rc=0
   echo "-- API template vs serving $BASE_API_REV"; ( template_matches_serving "$API_SVC" "$BASE_API_REV" reconcile-api ) || rc=1
-  echo "-- bridge template vs serving $BASE_BRIDGE_REV (strict: no exceptions)"; ( template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" ) || rc=1
+  echo "-- bridge template vs serving $BASE_BRIDGE_REV (non-environment settings strict; reviewed bridge differences need a distinct approval)"; ( template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" reconcile-bridge ) || rc=1
   local rj; rj=$(revjson "$BASE_BRIDGE_REV")
   [ "$(jq '[.spec.containers[]?.env[]? | select(.valueFrom != null)] | length' <<<"$rj")" = 0 ] || { echo "STOP: the serving bridge has secret-backed env vars; the env-file deployment would drop them" >&2; rc=1; }
-  echo "serving bridge env variable NAMES (the A0 deployment replaces the environment with the validated A0 file; every name here that is not in that file is dropped): $(jq -r '[.spec.containers[]?.env[]?.name] | sort | join(", ")' <<<"$rj")"
+  print_env_plan "$(describe "$BRIDGE_SVC")" "$rj"
   [ "$rc" = 0 ] && echo "TEMPLATE CHECK: PASS (read-only; nothing changed)" || { echo "TEMPLATE CHECK: FAIL (read-only; nothing changed)" >&2; return 1; }
 }
 write_state() { umask 077; mkdir -p "$PRIV"; jq -n --arg k "$1" --arg v "$2" '{($k):$v}' >/dev/null; local cur='{}'; [ -s "$STATE" ] && cur=$(cat "$STATE"); jq --arg k "$1" --arg v "$2" '. + {($k):$v}' <<<"$cur" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"; chmod 600 "$STATE"; }
@@ -81,7 +147,7 @@ case "${1:-}" in
   : "${BRIDGE_REF:?export BRIDGE_REF}"; Y="$PRIV/a0-bridge-env.yaml"; [ -s "$Y" ] || die "run a0-prepare.sh first ($Y missing)"; [ -s "$STATE" ] || die "state file missing: run 'a0-deploy.sh api' first"
   J=$(describe "$BRIDGE_SVC"); [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision drifted"
   [ "$(revdigest "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "rollback digest differs from the recorded one"
-  template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV"
+  validate_a0_env_file "$Y"; template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" reconcile-bridge
   gcloud run deploy "$BRIDGE_SVC" --project="$P" --region="$R" --image="$BRIDGE_REF" --env-vars-file="$Y" --no-traffic --tag="$TAG" --quiet
   J=$(describe "$BRIDGE_SVC"); NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged bridge revision not found"
   [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "SERVING TRAFFIC CHANGED: run: bash a0-deploy.sh rollback-bridge"
@@ -106,8 +172,9 @@ case "${1:-}" in
   J=$(describe "$BRIDGE_SVC"); if [ "$(serving "$J")" != "$REV" ]; then echo "post-shift check FAILED: restoring" >&2; gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100"; die "traffic did not settle on $REV; restored $BASE_BRIDGE_REV"; fi
   echo "bridge now serves $REV (digest $DIG). Rollback: bash a0-deploy.sh rollback-bridge";;
  check-templates) check_templates;;
+ diagnose-bridge) diagnose_bridge;;
  rollback-bridge)
   [ "$(revdigest "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "recorded rollback revision digest mismatch: do not roll back blindly"
   gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100"; echo "bridge restored to $BASE_BRIDGE_REV";;
- *) die "usage: a0-deploy.sh api|bridge|shift-bridge|rollback-bridge|check-templates";;
+ *) die "usage: a0-deploy.sh api|bridge|shift-bridge|rollback-bridge|check-templates|diagnose-bridge";;
 esac

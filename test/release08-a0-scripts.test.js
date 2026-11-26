@@ -121,15 +121,74 @@ test('reconciliation: any other content, extra drift or a changed value is refus
   for (const [name, [s, v]] of Object.entries(bad)) { const { w, r } = recon(s, v); assert.notStrictEqual(r.status, 0, name); assert.match(r.stderr, /STOP:/, name); assert.doesNotMatch(w.calls(), /run deploy/, name); assert.doesNotMatch(out(r), /literal/, name); }
 });
 test('reconciliation never applies to the bridge: the same differences are refused there', { skip: !haveTools }, () => {
-  const w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), '{}'); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), 'A: "b"\n');
+  const w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), '{}'); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), a0Yaml());
   const r = w.run('a0-deploy.sh', ['bizgenie'.slice(0, 0) + 'bridge'], { BRIDGE_REF: BRREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /template differs/); assert.doesNotMatch(w.calls(), /run deploy/);
 });
 test('check-templates is read-only and reports both services', { skip: !haveTools }, () => {
   let w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); let r = w.run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR });
   assert.match(out(r), /approved reconciliation/); assert.match(out(r), /bridge template vs serving/); assert.match(out(r), /secret-backed env vars/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
-  w = world({ svcEnv: [ENVSTG, ISO()], revEnv: [ENVSTG, ISO()] }); r = w.run('a0-deploy.sh', ['check-templates']); assert.strictEqual(r.status, 0, out(r)); assert.match(out(r), /TEMPLATE CHECK: PASS/); assert.match(out(r), /env variable NAMES/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
+  w = world({ svcEnv: [ENVSTG, ISO()], revEnv: [ENVSTG, ISO()] }); r = w.run('a0-deploy.sh', ['check-templates']); assert.strictEqual(r.status, 0, out(r)); assert.match(out(r), /TEMPLATE CHECK: PASS/); assert.match(out(r), /A0 environment plan/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
   w = world({ svcEnv: [ENVSTG, DB, ISO('bubblewrap'), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); r = w.run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /TEMPLATE CHECK: FAIL/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
 });
+
+// ---- BG-RELEASE08 A0 bridge reconciliation ----
+const A0_NAMES = ['BG_BRIDGE_ALLOW_DRAFT_WORKFLOW', 'BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE', 'BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING', 'BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION', 'BG_BRIDGE_ALLOW_SOCIAL_WRITES', 'BG_BRIDGE_ALLOW_STRIPE_CHECKOUT', 'BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP', 'BG_BRIDGE_ALLOW_WRITES', 'BG_BRIDGE_AUDIENCE', 'BG_BRIDGE_BIND', 'BG_BRIDGE_FOUNDER_AUTH_USER_ID', 'BG_BRIDGE_FOUNDER_WORKSPACE_BUSINESS_NAME', 'BG_BRIDGE_FOUNDER_WORKSPACE_IDEMPOTENCY_KEY', 'BG_BRIDGE_FOUNDER_WORKSPACE_TENANT_ID', 'BG_BRIDGE_REVIEW_REF', 'BG_BRIDGE_REVISION', 'BG_BRIDGE_SOURCE_SHA', 'BG_BRIDGE_STUDIO_ORIGIN', 'BG_BRIDGE_TARGET_URL', 'BIZGENIE_ENVIRONMENT', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_URL'];
+const FALSE_FLAGS = ['BG_BRIDGE_ALLOW_DRAFT_WORKFLOW', 'BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING', 'BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION', 'BG_BRIDGE_ALLOW_SOCIAL_WRITES', 'BG_BRIDGE_ALLOW_STRIPE_CHECKOUT', 'BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP', 'BG_BRIDGE_ALLOW_WRITES'];
+function a0Yaml(over = {}, drop = [], extra = {}) {
+  const base = Object.fromEntries(A0_NAMES.map((n) => [n, FALSE_FLAGS.includes(n) ? 'false' : n === 'BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE' ? 'true' : n === 'BIZGENIE_ENVIRONMENT' ? 'staging' : 'v-' + n.length]));
+  const e = { ...base, ...over, ...extra }; for (const d of drop) delete e[d]; return Object.entries(e).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n') + '\n';
+}
+const SERVING_NAMES = ['BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING', 'BG_BRIDGE_ALLOW_FOUNDER_RECOMMENDATIONS', 'BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION', 'BG_BRIDGE_ALLOW_SOCIAL_WRITES', 'BG_BRIDGE_ALLOW_STRIPE_CHECKOUT', 'BG_BRIDGE_ALLOW_WRITES', 'BG_BRIDGE_AUDIENCE', 'BG_BRIDGE_BIND', 'BG_BRIDGE_FOUNDER_AUTH_USER_ID', 'BG_BRIDGE_REVIEW_REF', 'BG_BRIDGE_REVISION', 'BG_BRIDGE_SOURCE_SHA', 'BG_BRIDGE_STUDIO_ORIGIN', 'BG_BRIDGE_TARGET_URL', 'BIZGENIE_ENVIRONMENT', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_URL'];
+const PRIV_T = 'PRIVATE-TENANT-VALUE-9f3', PRIV_SHA = 'f'.repeat(64);
+const latestOnly = [{ name: 'BG_BRIDGE_ALLOW_DRAFT_WORKFLOW', value: 'true' }, { name: 'BG_BRIDGE_ALLOW_FOUNDER_CAMPAIGN_ROOT', value: 'true' }, { name: 'BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP', value: 'true' }, { name: 'BG_BRIDGE_FOUNDER_CAMPAIGN_BODY_SHA256', value: PRIV_SHA }, { name: 'BG_BRIDGE_FOUNDER_CAMPAIGN_BRAND_ID', value: 'PRIVATE-BRAND' }, { name: 'BG_BRIDGE_FOUNDER_CAMPAIGN_PROJECT_ID', value: 'PRIVATE-PROJECT' }, { name: 'BG_BRIDGE_FOUNDER_CAMPAIGN_TENANT_ID', value: PRIV_T }];
+const BEV = 'https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-7190000001';
+function bridgeWorld(mut = {}) {
+  const servEnv = SERVING_NAMES.map((n) => ({ name: n, value: n === 'BG_BRIDGE_SOURCE_SHA' ? 'a'.repeat(40) : 'x' + n.length }));
+  const tmplEnv = [...servEnv.map((e) => (e.name === 'BG_BRIDGE_SOURCE_SHA' ? { ...e, value: 'b'.repeat(40) } : e)), ...latestOnly];
+  const w = world({ svcEnv: tmplEnv, revEnv: servEnv }); const sf = path.join(w.d, 'svc-bizgenie-studio-bridge-staging.json'), rf = path.join(w.d, `rev-${BB}.json`);
+  const S = JSON.parse(fs.readFileSync(sf, 'utf8')), R = JSON.parse(fs.readFileSync(rf, 'utf8')); S.spec.template.spec.containers[0].name = 'bridge-latest'; R.spec.containers[0].name = 'bridge-serving';
+  if (mut.svc) mut.svc(S); if (mut.rev) mut.rev(R); fs.writeFileSync(sf, JSON.stringify(S)); fs.writeFileSync(rf, JSON.stringify(R));
+  fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), JSON.stringify({ apiRevision: NEWA, apiDigest: NAD })); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), mut.yaml ?? a0Yaml());
+  return { w, run: (env = { EV_BRIDGE_RECONCILIATION: BEV }) => w.run('a0-deploy.sh', ['bridge'], { BRIDGE_REF: BRREF, ...env }) };
+}
+test('bridge reconciliation: the nine reviewed differences are accepted with a distinct approval; env is replaced, not inherited', { skip: !haveTools }, () => {
+  const { w, run } = bridgeWorld(); const r = run(); assert.strictEqual(r.status, 0, out(r)); assert.match(w.calls(), /run deploy bizgenie-studio-bridge-staging .*--env-vars-file=.*--no-traffic/); assert.doesNotMatch(w.calls(), /update-traffic/);
+  assert.match(out(r), /approved bridge reconciliation/); assert.match(out(r), /BG_BRIDGE_FOUNDER_CAMPAIGN_TENANT_ID/); assert.match(out(r), /container-name\(bridge-latest<-bridge-serving\)/);
+  assert.doesNotMatch(out(r), new RegExp(`${PRIV_T}|PRIVATE-BRAND|PRIVATE-PROJECT|${PRIV_SHA}`));
+});
+test('bridge reconciliation: distinct approval is mandatory', { skip: !haveTools }, () => {
+  for (const env of [{}, { EV_BRIDGE_RECONCILIATION: 'https://example.com/x' }, { EV_BRIDGE_RECONCILIATION: EVR, EV_RECONCILIATION: EVR }, { EV_BRIDGE_RECONCILIATION: BEV, EV_APPROVAL: BEV }]) { const { w, run } = bridgeWorld(); const r = run(env); assert.notStrictEqual(r.status, 0, JSON.stringify(env)); assert.doesNotMatch(w.calls(), /run deploy/); }
+});
+test('bridge reconciliation: non-environment drift, secrets, volumes, probes, dependencies and extra containers are refused', { skip: !haveTools }, () => {
+  const sc = (S) => S.spec.template.spec, tc = (S) => S.spec.template.spec.containers[0];
+  const cases = {
+    serviceAccount: { svc: (S) => { sc(S).serviceAccountName = 'other@x'; } }, limits: { svc: (S) => { tc(S).resources.limits.memory = '2Gi'; } }, ports: { svc: (S) => { tc(S).ports = [{ containerPort: 9999 }]; } }, args: { svc: (S) => { tc(S).args = ['--x']; } },
+    probe: { svc: (S) => { tc(S).startupProbe = { tcpSocket: { port: 8080 } }; } }, servingProbe: { rev: (R) => { R.spec.containers[0].livenessProbe = { httpGet: { path: '/h' } }; } }, volume: { svc: (S) => { sc(S).volumes = [{ name: 'v', emptyDir: {} }]; } },
+    secretVolume: { svc: (S) => { sc(S).volumes = [{ name: 'v', secret: { secretName: 's' } }]; }, rev: (R) => { R.spec.volumes = [{ name: 'v', secret: { secretName: 's' } }]; } }, concurrency: { svc: (S) => { sc(S).containerConcurrency = 5; } },
+    dependencies: { svc: (S) => { S.spec.template.metadata.annotations['run.googleapis.com/container-dependencies'] = '{"a":["b"]}'; } }, minScale: { svc: (S) => { S.spec.template.metadata.annotations['autoscaling.knative.dev/minScale'] = '3'; } },
+    secondContainer: { svc: (S) => { sc(S).containers.push({ name: 'side', image: 'x', env: [] }); } }, badName: { svc: (S) => { tc(S).name = 'Bad_Name'; } },
+    secretEnvTemplate: { svc: (S) => { tc(S).env.push({ name: 'SUPABASE_SERVICE_ROLE_KEY', valueFrom: { secretKeyRef: { name: 's', key: '1' } } }); } }, secretEnvServing: { rev: (R) => { R.spec.containers[0].env.push({ name: 'X', valueFrom: { secretKeyRef: { name: 's', key: '1' } } }); } },
+  };
+  for (const [name, mut] of Object.entries(cases)) { const { w, run } = bridgeWorld(mut); const r = run(); assert.notStrictEqual(r.status, 0, name); assert.match(r.stderr, /STOP:/, name); assert.doesNotMatch(w.calls(), /run deploy/, name); }
+});
+test('bridge env file: unsafe flags, reserved PORT, unknown or missing names are refused before any deploy', { skip: !haveTools }, () => {
+  const cases = { writes: a0Yaml({ BG_BRIDGE_ALLOW_WRITES: 'true' }), draft: a0Yaml({ BG_BRIDGE_ALLOW_DRAFT_WORKFLOW: 'true' }), bootstrap: a0Yaml({ BG_BRIDGE_ALLOW_WORKSPACE_BOOTSTRAP: 'true' }), social: a0Yaml({ BG_BRIDGE_ALLOW_SOCIAL_WRITES: 'true' }), stripe: a0Yaml({ BG_BRIDGE_ALLOW_STRIPE_CHECKOUT: 'true' }),
+    gen: a0Yaml({ BG_BRIDGE_ALLOW_GENERATION_CONFIRMATION: 'true' }), onboarding: a0Yaml({ BG_BRIDGE_ALLOW_FOUNDER_ONBOARDING: 'true' }), noWorkspace: a0Yaml({ BG_BRIDGE_ALLOW_FOUNDER_ADDITIONAL_WORKSPACE: 'false' }), notStaging: a0Yaml({ BIZGENIE_ENVIRONMENT: 'production' }),
+    port: a0Yaml({}, [], { PORT: '8080' }), campaignRoot: a0Yaml({}, [], { BG_BRIDGE_ALLOW_FOUNDER_CAMPAIGN_ROOT: 'true' }), linkedin: a0Yaml({}, [], { LINKEDIN_CLIENT_ID: 'x' }), missing: a0Yaml({}, ['BG_BRIDGE_ALLOW_WRITES']), missingSource: a0Yaml({}, ['BG_BRIDGE_SOURCE_SHA']) };
+  for (const [name, yaml] of Object.entries(cases)) { const { w, run } = bridgeWorld({ yaml }); const r = run(); assert.notStrictEqual(r.status, 0, name); assert.match(r.stderr, /STOP:/, name); assert.doesNotMatch(w.calls(), /run deploy/, name); }
+});
+test('comparator completeness: probes, volume definitions, security context and working directory drift are refused for the API too', { skip: !haveTools }, () => {
+  for (const [name, mut] of Object.entries({ probe: (R) => { R.spec.containers[0].startupProbe = { tcpSocket: { port: 1 } }; }, volume: (R) => { R.spec.volumes = [{ name: 'v', secret: { secretName: 's' } }]; }, security: (R) => { R.spec.containers[0].securityContext = { runAsUser: 0 }; }, workdir: (R) => { R.spec.containers[0].workingDir = '/x'; } })) {
+    const w = world(); const f = path.join(w.d, `rev-${BA}.json`); const R = JSON.parse(fs.readFileSync(f, 'utf8')); mut(R); fs.writeFileSync(f, JSON.stringify(R)); const r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0, name); assert.match(out(r), /template differs/, name); assert.doesNotMatch(w.calls(), /run deploy/, name);
+  }
+});
+test('read-only bridge diagnostic prints only safe facts and never private values', { skip: !haveTools }, () => {
+  const { w } = bridgeWorld(); const h8 = require('node:crypto').createHash('sha256').update(PRIV_T).digest('hex').slice(0, 8);
+  const r = w.run('a0-deploy.sh', ['diagnose-bridge'], { EXPECT_TENANT_H: h8 }); assert.strictEqual(r.status, 0, out(r)); const o = out(r);
+  assert.match(o, /BG_BRIDGE_FOUNDER_CAMPAIGN_TENANT_ID\s+present, MATCHES the Fairway fingerprint/); assert.match(o, /BG_BRIDGE_FOUNDER_CAMPAIGN_PROJECT_ID\s+present, does not match Fairway/); assert.match(o, /BODY_SHA256\s+present, well-formed/); assert.match(o, /template container names: bridge-latest/);
+  assert.match(o, /removed \(serving only\):\s+BG_BRIDGE_ALLOW_FOUNDER_RECOMMENDATIONS/); assert.match(o, /added \(A0 only\):.*BG_BRIDGE_ALLOW_DRAFT_WORKFLOW/); assert.doesNotMatch(o, new RegExp(`${PRIV_T}|PRIVATE-BRAND|PRIVATE-PROJECT|${PRIV_SHA}`)); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
+});
+test('prepare writes the bridge env file without PORT (reserved by Cloud Run)', () => { const s = fs.readFileSync(path.join(S, 'a0-prepare.sh'), 'utf8'); assert.match(s, /del\(\.PORT\)/); });
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
   const base = ['--api-image', `${REPO}/bizgenie-api@sha256:${'a'.repeat(64)}`, '--clamav-image', `${REPO}/clamav@sha256:${'b'.repeat(64)}`, '--suffix', 'a2s1', '--tag', 'a2-scanner'];
