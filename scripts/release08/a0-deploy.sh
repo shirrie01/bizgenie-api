@@ -12,7 +12,9 @@ PRIV="$HOME/.bg-private"; STATE="$PRIV/a0-state.json"; EVID="$PRIV/a0-smoke-evid
 die() { echo "STOP: $*" >&2; exit 1; }
 describe() { gcloud run services describe "$1" --project="$P" --region="$R" --format=json; }
 revjson() { gcloud run revisions describe "$1" --project="$P" --region="$R" --format=json; }
-revdigest() { gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)'; }
+# Cloud Run returns status.imageDigest as <repository>@sha256:<64 hex>; reduce to the bare digest and fail closed on anything else (missing, malformed, uppercase, short).
+norm_digest() { local v=${1##*@}; [[ "$v" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1; printf '%s' "$v"; }
+revdigest() { local raw; raw=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)') || return 1; norm_digest "$raw" || { echo "STOP: revision $1 reported a missing or malformed image digest" >&2; return 1; }; }
 serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
 tag_revision() { jq -r --arg t "$2" '[.status.traffic[]? | select(.tag == $t) | .revisionName][0] // ""' <<<"$1"; }
 ready() { jq -e '[.status.conditions[]? | select(.type == "Ready")][0].status == "True"' <<<"$1" >/dev/null; }

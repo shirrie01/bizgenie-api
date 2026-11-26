@@ -11,7 +11,8 @@ REV=$(jq -r '.bridgeRevision // ""' "$STATE"); DIG=$(jq -r '.bridgeDigest // ""'
 SJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "cannot describe the bridge service"
 URL=$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .url][0] // ""' <<<"$SJ"); [ -n "$URL" ] || die "tag $TAG not found"
 [ "$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .revisionName][0] // ""' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
-[ "$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)')" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
+LIVE=$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)') || die "cannot read the live digest"; LIVE=${LIVE##*@}
+[[ "$LIVE" =~ ^sha256:[a-f0-9]{64}$ ]] || die "the live image digest is missing or malformed"; [ "$LIVE" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
 ORIGIN=https://bizgenie-studio-staging.pages.dev; FAIL=0; CHECKS='[]'
 code() { curl -sS -m 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 chk() { local name="$1" want="$2" got="$3" res=FAIL; if [ "$got" = "$want" ]; then res=PASS; else FAIL=1; fi; echo "$res $name (want $want, got $got)"; CHECKS=$(jq -c --arg n "$name" --arg r "$res" '. + [{name:$n,result:$r}]' <<<"$CHECKS"); }

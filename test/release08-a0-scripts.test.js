@@ -10,7 +10,7 @@ const NBD = 'sha256:' + '5'.repeat(64), NAD = 'sha256:' + 'a'.repeat(64); const 
 const ctr = (env, extra = {}) => ({ name: 'c', image: 'x', ports: [{ containerPort: 8080 }], resources: { limits: { cpu: '1', memory: '512Mi' } }, env, ...extra });
 const tmpl = (env, sa = 'sa@x', ann = {}) => ({ serviceAccountName: sa, containerConcurrency: 80, timeoutSeconds: 300, containers: [ctr(env)], _ann: ann });
 function svcJson(name, spec, traffic, latest) { return { status: { latestReadyRevisionName: latest, traffic, url: 'https://x.run.app' }, spec: { template: { metadata: { annotations: spec._ann }, spec: (({ _ann, ...r }) => r)(spec) } } }; }
-function revJson(spec, digest, ready = true, envOverride) { const { _ann, ...r } = spec; return { status: { imageDigest: digest, conditions: [{ type: 'Ready', status: ready ? 'True' : 'False' }] }, metadata: { annotations: _ann }, spec: r }; }
+function revJson(spec, digest, ready = true, envOverride) { const { _ann, ...r } = spec; return { status: { imageDigest: digest.startsWith('sha256:') ? `${REPO}/x@${digest}` : digest, conditions: [{ type: 'Ready', status: ready ? 'True' : 'False' }] }, metadata: { annotations: _ann }, spec: r }; }
 function world({ svcEnv, revEnv, svcSa = 'sa@x', revSa = 'sa@x', bridgeEnvOnNew } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-a0-')); const d = path.join(home, 'stub'); fs.mkdirSync(d); fs.mkdirSync(path.join(home, '.bg-private'));
   const envA = [{ name: 'FOO', value: 'v1' }, { name: 'SECRET_A', valueFrom: { secretKeyRef: { name: 's1', key: 'latest' } } }];
@@ -68,6 +68,33 @@ test('A0 URL validation: both Cloud Run hostname styles, exact tag prefix, nothi
     ['https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app', `https://${TG}---bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app`], ['https://evil.example.com', `https://${TG}---evil.example.com`],
     ['https://bizgenie-api-staging-303691956826.us-central1.run.app', `https://${TG}---bizgenie-api-staging-303691956826.us-central1.run.app`], [`${regional}/`, `https://${TG}---bizgenie-api-staging-303691956826.europe-west1.run.app/`], ['', '']];
   for (const [a, t] of bad) assert.ok(!ok(a, t, TG), `${a} | ${t}`); assert.ok(!ok(legacy, `https://BAD---bizgenie-api-staging-abc123xyz-ew.a.run.app`, 'BAD'));
+});
+
+function setLiveDigest(w, rev, value) { const f = path.join(w.d, `rev-${rev}.json`); const j = JSON.parse(fs.readFileSync(f, 'utf8')); if (value === undefined) delete j.status.imageDigest; else j.status.imageDigest = value; fs.writeFileSync(f, JSON.stringify(j)); }
+test('digest normalization: full Cloud Run repository@sha256 and bare digests are accepted for the protected rollback revisions', { skip: !haveTools }, () => {
+  for (const form of [`${REPO}/bizgenie-studio-bridge@${BBD}`, BBD, `us-docker.pkg.dev/other/path/img@${BBD}`]) {
+    const w = world(); setLiveDigest(w, BB, form); const r = w.run('a0-deploy.sh', ['rollback-bridge']); assert.strictEqual(r.status, 0, form + out(r)); assert.match(w.calls(), new RegExp(`update-traffic bizgenie-studio-bridge-staging .*--to-revisions=${BB}=100`));
+  }
+});
+test('digest normalization: wrong, malformed, uppercase, short and missing live digests fail closed everywhere', { skip: !haveTools }, () => {
+  const bad = [`${REPO}/x@sha256:${'1'.repeat(64)}`, `${REPO}/x@sha256:${'A'.repeat(64)}`, `${REPO}/x@sha256:${'1'.repeat(63)}`, `${REPO}/x@sha1:${'1'.repeat(64)}`, `${REPO}/x@sha256:${BBD.slice(7)}00`, 'sha256:', '', undefined];
+  for (const v of bad) {
+    let w = world(); setLiveDigest(w, BB, v); let r = w.run('a0-deploy.sh', ['rollback-bridge']); assert.notStrictEqual(r.status, 0, String(v)); assert.doesNotMatch(w.calls(), /update-traffic/, String(v));
+    w = world(); setLiveDigest(w, NEWA, v); r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF }); assert.notStrictEqual(r.status, 0, 'api ' + String(v)); assert.match(r.stderr, /STOP:/, 'api ' + String(v));
+  }
+});
+test('digest normalization: a new revision whose live digest differs from the reference is refused after deploy; matching full-reference digests pass', { skip: !haveTools }, () => {
+  let w = world(); setLiveDigest(w, NEWA, `${REPO}/bizgenie-api@sha256:${'9'.repeat(64)}`); let r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /differs from API_REF/);
+  w = world(); setLiveDigest(w, NEWA, `${REPO}/bizgenie-api@${NAD}`); r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF }); assert.strictEqual(r.status, 0, out(r));
+});
+test('digest normalization in shift-bridge: live full-reference digest of the A0 revision must equal the accepted digest', { skip: !haveTools }, () => {
+  const { w, r } = readyToShift(); setLiveDigest(w, NEWB, `${REPO}/bizgenie-studio-bridge@sha256:${'7'.repeat(64)}`); const res = r(); assert.notStrictEqual(res.status, 0); assert.doesNotMatch(w.calls(), /update-traffic/);
+  const s = readyToShift(); setLiveDigest(s.w, BB, 'garbage'); const res2 = s.r(); assert.notStrictEqual(res2.status, 0); assert.doesNotMatch(s.w.calls(), /update-traffic/);
+});
+test('prepare and smoke use the same strict normalization (static audit)', () => {
+  for (const f of ['a0-deploy.sh', 'a0-prepare.sh']) { const s = fs.readFileSync(path.join(S, f), 'utf8'); assert.match(s, /norm_digest\(\)/, f); assert.match(s, /\^sha256:\[a-f0-9\]\{64\}\$/, f); }
+  const sm = fs.readFileSync(path.join(S, 'a0-smoke.sh'), 'utf8'); assert.match(sm, /LIVE=\$\{LIVE##\*@\}/); assert.match(sm, /\^sha256:\[a-f0-9\]\{64\}\$/);
+  for (const f of ['a0-deploy.sh', 'a0-prepare.sh', 'a0-smoke.sh']) assert.doesNotMatch(fs.readFileSync(path.join(S, f), 'utf8'), /\$\(gcloud run revisions describe[^)]*imageDigest[^)]*\)"? = /, f);
 });
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {

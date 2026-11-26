@@ -31,7 +31,9 @@ BJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --f
 serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
 [ "$(serving "$BJ")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision is not $BASE_BRIDGE_REV (drift): re-run the inventory"
 [ "$(serving "$AJ")" = "$BASE_API_REV" ] || die "API serving revision is not $BASE_API_REV (drift): re-run the inventory"
-dig_of() { gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)'; }
+# Cloud Run returns status.imageDigest as <repository>@sha256:<64 hex>; reduce to the bare digest and fail closed on anything else (missing, malformed, uppercase, short).
+norm_digest() { local v=${1##*@}; [[ "$v" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1; printf '%s' "$v"; }
+dig_of() { local raw; raw=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)') || return 1; norm_digest "$raw" || { echo "STOP: revision $1 reported a missing or malformed image digest" >&2; return 1; }; }
 [ "$(dig_of "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "bridge rollback digest differs from the recorded one"
 [ "$(dig_of "$BASE_API_REV")" = "$BASE_API_DIGEST" ] || die "API rollback digest differs from the recorded one"
 BREV=$(gcloud run revisions describe "$BASE_BRIDGE_REV" --project="$P" --region="$R" --format=json)

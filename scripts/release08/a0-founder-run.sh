@@ -42,7 +42,9 @@ BJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --f
 serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
 [ "$(serving "$BJ")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision is not $BASE_BRIDGE_REV (drift): re-run the inventory"
 [ "$(serving "$AJ")" = "$BASE_API_REV" ] || die "API serving revision is not $BASE_API_REV (drift): re-run the inventory"
-dig_of() { gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)'; }
+# Cloud Run returns status.imageDigest as <repository>@sha256:<64 hex>; reduce to the bare digest and fail closed on anything else (missing, malformed, uppercase, short).
+norm_digest() { local v=${1##*@}; [[ "$v" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1; printf '%s' "$v"; }
+dig_of() { local raw; raw=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)') || return 1; norm_digest "$raw" || { echo "STOP: revision $1 reported a missing or malformed image digest" >&2; return 1; }; }
 [ "$(dig_of "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "bridge rollback digest differs from the recorded one"
 [ "$(dig_of "$BASE_API_REV")" = "$BASE_API_DIGEST" ] || die "API rollback digest differs from the recorded one"
 BREV=$(gcloud run revisions describe "$BASE_BRIDGE_REV" --project="$P" --region="$R" --format=json)
@@ -116,7 +118,9 @@ PRIV="$HOME/.bg-private"; STATE="$PRIV/a0-state.json"; EVID="$PRIV/a0-smoke-evid
 die() { echo "STOP: $*" >&2; exit 1; }
 describe() { gcloud run services describe "$1" --project="$P" --region="$R" --format=json; }
 revjson() { gcloud run revisions describe "$1" --project="$P" --region="$R" --format=json; }
-revdigest() { gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)'; }
+# Cloud Run returns status.imageDigest as <repository>@sha256:<64 hex>; reduce to the bare digest and fail closed on anything else (missing, malformed, uppercase, short).
+norm_digest() { local v=${1##*@}; [[ "$v" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1; printf '%s' "$v"; }
+revdigest() { local raw; raw=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)') || return 1; norm_digest "$raw" || { echo "STOP: revision $1 reported a missing or malformed image digest" >&2; return 1; }; }
 serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
 tag_revision() { jq -r --arg t "$2" '[.status.traffic[]? | select(.tag == $t) | .revisionName][0] // ""' <<<"$1"; }
 ready() { jq -e '[.status.conditions[]? | select(.type == "Ready")][0].status == "True"' <<<"$1" >/dev/null; }
@@ -200,7 +204,8 @@ REV=$(jq -r '.bridgeRevision // ""' "$STATE"); DIG=$(jq -r '.bridgeDigest // ""'
 SJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "cannot describe the bridge service"
 URL=$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .url][0] // ""' <<<"$SJ"); [ -n "$URL" ] || die "tag $TAG not found"
 [ "$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .revisionName][0] // ""' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
-[ "$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)')" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
+LIVE=$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)') || die "cannot read the live digest"; LIVE=${LIVE##*@}
+[[ "$LIVE" =~ ^sha256:[a-f0-9]{64}$ ]] || die "the live image digest is missing or malformed"; [ "$LIVE" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
 ORIGIN=https://bizgenie-studio-staging.pages.dev; FAIL=0; CHECKS='[]'
 code() { curl -sS -m 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 chk() { local name="$1" want="$2" got="$3" res=FAIL; if [ "$got" = "$want" ]; then res=PASS; else FAIL=1; fi; echo "$res $name (want $want, got $got)"; CHECKS=$(jq -c --arg n "$name" --arg r "$res" '. + [{name:$n,result:$r}]' <<<"$CHECKS"); }
