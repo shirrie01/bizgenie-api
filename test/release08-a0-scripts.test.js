@@ -548,6 +548,43 @@ test('H3 post-shift readback: malformed traffic cannot establish a successful ac
   for (const [name, arr] of Object.entries(post)) { const s = readyToShift(); patch(s.w); effect(s.w, setTraffic(arr), 'cp "$f.orig" "$f"'); const res = s.r(); assert.notStrictEqual(res.status, 0, name); const calls = s.w.calls().split('\n').filter((l) => /update-traffic/.test(l)); assert.ok(calls.length >= 2, name + ': no restore'); assert.match(calls.at(-1), new RegExp(`--to-revisions=${BB}=100`), name); assert.doesNotMatch(res.stdout, /bridge now serves/, name); }
   for (const [name, arr] of Object.entries({ plain: [{ revisionName: NEWB, percent: 100 }], baselineZeroTagged: [{ revisionName: NEWB, percent: 100 }, { revisionName: BB, percent: 0, tag: 'previous', url: 'https://previous---s.run.app' }], manyZero: [{ revisionName: NEWB, percent: 100, tag: 'a0-dfd49116', url: 'https://a0---s.run.app' }, { revisionName: BB, percent: 0 }, { revisionName: X, percent: 0, tag: 't', url: 'https://t---s.run.app' }] })) { const s = readyToShift(); patch(s.w); effect(s.w, `jq '.status.traffic=${JSON.stringify(arr)} | .status.latestReadyRevisionName="${NEWB}"' "$f.orig" > "$f"`, 'cp "$f.orig" "$f"'); const res = s.r(); assert.strictEqual(res.status, 0, name + out(res)); assert.match(res.stdout, /bridge now serves/, name); assert.ok(!fs.existsSync(LOCK(s.w)), name); }
 });
+
+// ======== Duplicate traffic tag across different revisions (Codex P1 on 290230e6) ========
+const X99 = 'bizgenie-studio-bridge-staging-00099-zzz'; const TAGGED = (n, t, u) => ({ revisionName: n, percent: 0, tag: t, url: u ?? `https://${t}---svc.run.app` });
+const DUPTAG = {
+  sameTagTwoRevisions: [{ revisionName: BB, percent: 100 }, TAGGED(NEWB, 'a0-dfd49116'), TAGGED(X99, 'a0-dfd49116')],
+  sameTagIdenticalUrls: [{ revisionName: BB, percent: 100 }, TAGGED(NEWB, 'a0-dfd49116', 'https://same---svc.run.app'), TAGGED(X99, 'a0-dfd49116', 'https://same---svc.run.app')],
+  baselineAndOtherShareTag: [{ revisionName: BB, percent: 100, tag: 'shared', url: 'https://shared---svc.run.app' }, TAGGED(NEWB, 'shared')],
+  threeWay: [{ revisionName: BB, percent: 100 }, TAGGED(NEWB, 'x'), TAGGED(X99, 'y'), TAGGED('bizgenie-studio-bridge-staging-00098-yyy', 'x')],
+};
+test('J1 duplicate traffic tags: the same tag on two different revisions never reaches update-traffic, and never adopts or deploys', { skip: !haveTools }, () => {
+  for (const [name, arr] of Object.entries(DUPTAG)) {
+    const s = readyToShift(); const f = path.join(s.w.d, 'svc-bizgenie-studio-bridge-staging.json'); const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.status.traffic = arr; fs.writeFileSync(f, JSON.stringify(j));
+    const res = s.r(); assert.notStrictEqual(res.status, 0, name); assert.doesNotMatch(s.w.calls(), /update-traffic/, name + ': a traffic update was attempted');
+    const a = apiWorld({ preTagged: 'api' }); const g = path.join(a.w.d, 'svc-bizgenie-api-staging.json'); const k = JSON.parse(fs.readFileSync(g, 'utf8')); k.status.traffic = [{ revisionName: BA, percent: 100 }, TAGGED(NEWA, 'a0-dfd49116'), TAGGED('bizgenie-api-staging-00099-zzz', 'a0-dfd49116')]; fs.writeFileSync(g, JSON.stringify(k));
+    const ra = a.run(); assert.notStrictEqual(ra.status, 0, 'api ' + name); assert.doesNotMatch(a.w.calls(), /run deploy|update-traffic/, 'api ' + name);
+    const b = bridgeWorld({ svc: (S) => { S.status.traffic = [{ revisionName: BB, percent: 100 }, TAGGED(NEWB, 'a0-dfd49116'), TAGGED(X99, 'a0-dfd49116')]; } }); const rb = b.run(); assert.notStrictEqual(rb.status, 0, 'bridge ' + name); assert.doesNotMatch(b.w.calls(), /run deploy bizgenie-studio|update-traffic/, 'bridge ' + name);
+  }
+});
+test('J2 duplicate traffic tags: an ambiguous recovery or rollback readback is INDETERMINATE and never clears the lock', { skip: !haveTools }, () => {
+  const { patch, svcFile, effect } = trafficHarness();
+  for (const [name, arr] of Object.entries(DUPTAG)) {
+    const s = readyToShift(); patch(s.w); effect(s.w, gone, setTraffic(arr)); const res = s.r(); assert.notStrictEqual(res.status, 0, name); assert.match(res.stderr, /INDETERMINATE/, name); assert.doesNotMatch(res.stderr, /RECOVERED/, name); assert.ok(fs.existsSync(LOCK(s.w)), name + ': no lock'); assert.ok(!fs.existsSync(path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json')), name); assert.ok(!JSON.parse(fs.readFileSync(path.join(s.w.home, '.bg-private', 'a0-state.json'), 'utf8')).bridgeRevision, name);
+    const m = readyToShift(); patch(m.w); const sf = svcFile(m.w); const sj = JSON.parse(fs.readFileSync(sf, 'utf8')); sj.status.traffic = [{ revisionName: NEWB, percent: 100 }]; fs.writeFileSync(sf, JSON.stringify(sj)); fs.copyFileSync(sf, sf + '.orig'); effect(m.w, ':', setTraffic(arr)); fs.writeFileSync(LOCK(m.w), '{}');
+    const rr = m.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.notStrictEqual(rr.status, 0, 'rollback ' + name); assert.ok(fs.existsSync(LOCK(m.w)), 'rollback ' + name + ': lock cleared'); assert.doesNotMatch(rr.stdout + rr.stderr, /bridge restored/, name);
+    const post = readyToShift(); patch(post.w); effect(post.w, setTraffic([{ revisionName: NEWB, percent: 100 }, TAGGED(BB, 'dup'), TAGGED(X99, 'dup')]), 'cp "$f.orig" "$f"'); const pr = post.r(); assert.notStrictEqual(pr.status, 0, 'post-shift ' + name); assert.doesNotMatch(pr.stdout, /bridge now serves/, name);
+  }
+});
+test('J3 distinct tags on legitimate zero-percent revisions, and ordinary valid readbacks, remain accepted', { skip: !haveTools }, () => {
+  const { patch, svcFile, effect } = trafficHarness();
+  const valid = { distinct: [{ revisionName: BB, percent: 100 }, TAGGED(NEWB, 'a0-dfd49116'), TAGGED(X99, 'other')], sameRevisionNoTagTwiceZero: [{ revisionName: BB, percent: 100 }, TAGGED(NEWB, 'a0-dfd49116')], untaggedZeros: [{ revisionName: BB, percent: 100 }, { revisionName: NEWB, percent: 0 }, { revisionName: X99, percent: 0 }], baselineTagged: [{ revisionName: BB, percent: 100, tag: 'base', url: 'https://base---s.run.app' }, TAGGED(NEWB, 'a0-dfd49116')] };
+  for (const [name, arr] of Object.entries(valid)) {
+    const s = readyToShift(); patch(s.w); effect(s.w, gone, setTraffic(arr)); const res = s.r(); assert.match(res.stderr, /RECOVERED/, name); assert.ok(!fs.existsSync(LOCK(s.w)), name);
+    const m = readyToShift(); patch(m.w); const sf = svcFile(m.w); const sj = JSON.parse(fs.readFileSync(sf, 'utf8')); sj.status.traffic = [{ revisionName: NEWB, percent: 100 }]; fs.writeFileSync(sf, JSON.stringify(sj)); fs.copyFileSync(sf, sf + '.orig'); effect(m.w, ':', setTraffic(arr)); fs.writeFileSync(LOCK(m.w), '{}'); const rr = m.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.strictEqual(rr.status, 0, name + out(rr)); assert.ok(!fs.existsSync(LOCK(m.w)), name);
+  }
+  const ok = readyToShift(); const res = ok.r(); assert.ok(/update-traffic/.test(ok.w.calls()), 'the ordinary pre-shift readback (baseline 100%, one 0% tagged revision) must still reach the update');
+  assert.ok(!/unrelated/.test(res.stderr));
+});
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
   const base = ['--api-image', `${REPO}/bizgenie-api@sha256:${'a'.repeat(64)}`, '--clamav-image', `${REPO}/clamav@sha256:${'b'.repeat(64)}`, '--suffix', 'a2s1', '--tag', 'a2-scanner'];

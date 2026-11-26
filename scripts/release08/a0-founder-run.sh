@@ -123,16 +123,17 @@ revjson() { local o; o=$(gcloud run revisions describe "$1" --project="$P" --reg
 norm_digest() { local v=${1##*@}; [[ "$v" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1; printf '%s' "$v"; }
 revdigest() { local raw; raw=$(gcloud run revisions describe "$1" --project="$P" --region="$R" --format='value(status.imageDigest)') || return 1; norm_digest "$raw" || { echo "STOP: revision $1 reported a missing or malformed image digest" >&2; return 1; }; }
 serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
-tag_revision() { jq -r --arg t "$2" '[.status.traffic[]? | select(.tag == $t) | .revisionName][0] // ""' <<<"$1"; }
+AMBIGUOUS_TAG="__AMBIGUOUS_TAG__"
+tag_revision() { jq -r --arg t "$2" --arg amb "$AMBIGUOUS_TAG" '[.status.traffic[]? | select(.tag == $t) | .revisionName] as $m | if ($m | length) > 1 then $amb elif ($m | length) == 1 then $m[0] else "" end' <<<"$1"; }
 ready() { jq -e '[.status.conditions[]? | select(.type == "Ready")][0].status == "True"' <<<"$1" >/dev/null; }
 h12() { sha256sum | cut -c1-12; }
 # Metadata reads can fail silently inside `$(...)` when bash runs us in a conditional context (set -e is ignored there), producing an empty document that would compare "equal" to another empty one.
 # Container shape: every container has a DNS-label name (lowercase letter first, letter or digit last, at most 63 characters) and a well-formed, duplicate-free environment list. Duplicates are
 # NEVER collapsed into a map: they are refused outright, before comparing, fingerprinting, adopting or resuming.
 CONTAINERS_OK='type == "array" and length >= 1 and all(.[]; type == "object" and (.name | type == "string" and test("\\A[a-z]([a-z0-9-]{0,61}[a-z0-9])?\\z")) and ((.env // []) | type == "array" and all(.[]; type == "object" and (.name | type == "string" and length > 0) and ((has("value") and has("valueFrom")) | not)) and ((map(.name) | length) == (map(.name) | unique | length))))'
-valid_service_json() { jq -e '.spec.template.spec.containers != null and (.status.traffic | type == "array")' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.template.spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
+valid_service_json() { jq -e '.spec.template.spec.containers != null and (.status.traffic | type == "array") and (([.status.traffic[]? | objects | .tag? | strings | select(length > 0)] | length) == ([.status.traffic[]? | objects | .tag? | strings | select(length > 0)] | unique | length))' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.template.spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
 valid_revision_json() { jq -e '.spec.containers != null and (.status.conditions | type == "array")' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
-read_svc() { local o; o=$(describe "$1") || { echo "STOP: the metadata command for service $1 failed (nonzero exit status): its output is not accepted" >&2; return 1; }; valid_service_json "$o" || { echo "STOP: service $1 metadata is malformed, has a duplicate or malformed environment entry, or an invalid container name (names only shown)" >&2; return 1; }; printf '%s' "$o"; }
+read_svc() { local o; o=$(describe "$1") || { echo "STOP: the metadata command for service $1 failed (nonzero exit status): its output is not accepted" >&2; return 1; }; valid_service_json "$o" || { echo "STOP: service $1 metadata is malformed, has a duplicate or malformed environment entry, an invalid container name, or a traffic tag that occurs more than once (names only shown)" >&2; return 1; }; printf '%s' "$o"; }
 read_rev() { local o; o=$(revjson "$1") || { echo "STOP: the metadata command for revision $1 failed (nonzero exit status): its output is not accepted" >&2; return 1; }; valid_revision_json "$o" || { echo "STOP: revision $1 metadata is malformed, has a duplicate or malformed environment entry, or an invalid container name (names only shown)" >&2; return 1; }; printf '%s' "$o"; }
 need_service_json() { valid_service_json "$1" || die "could not read service $2: metadata failed, is malformed, has a duplicate or malformed environment entry, or an invalid container name: no conclusion drawn"; }
 need_revision_json() { valid_revision_json "$1" || die "could not read revision $2: metadata failed, is malformed, has a duplicate or malformed environment entry, or an invalid container name: no conclusion drawn"; }
@@ -306,7 +307,7 @@ mark_indeterminate() { umask 077; mkdir -p "$PRIV"; jq -n --arg at "$(date -u +%
 # Traffic readback proof. EVERY entry is validated BEFORE any filtering or selection: the traffic list must be a non-empty array of objects, each with a revision name that proves the exact
 # revision (tag/URL-only and latestRevision targets are refused), an integer percentage in [0,100] (missing, null, string, boolean, negative, fractional and over-100 are refused), an optional
 # string tag, and no duplicate (revision, tag) target. Valid 0 % tagged revisions are fine. Only after that, exactly one revision may carry traffic: the expected one at exactly 100 %.
-TRAFFIC_ARRAY_OK='(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)))'
+TRAFFIC_ARRAY_OK='(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))'
 traffic_array_ok() { jq -e "$TRAFFIC_ARRAY_OK" <<<"$1" >/dev/null 2>&1; }
 traffic_exact() { # $1 service json  $2 the one revision that must carry exactly 100 %
   traffic_array_ok "$1" && jq -e --arg r "$2" '[.status.traffic[] | select(.percent > 0)] as $p | ($p | length) == 1 and $p[0].revisionName == $r and $p[0].percent == 100 and ([.status.traffic[].percent] | add) == 100' <<<"$1" >/dev/null 2>&1; }
@@ -335,7 +336,7 @@ invalidate_downstream() { # NB: must not hide a state-file failure
   jq 'del(.bridgeRevision, .bridgeDigest, .bridgeTag)' "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE" && chmod 600 "$STATE"
 }
 existing_tag() { # $1 service json, $2 expected bare digest, $3 baseline revision; prints the adopted revision, or nothing when the tag is free; dies when the tag exists but is not provably ours
-  local t d; t=$(tag_revision "$1" "$TAG"); [ -n "$t" ] || return 0
+  local t d; t=$(tag_revision "$1" "$TAG"); [ "$t" != "$AMBIGUOUS_TAG" ] || die "tag $TAG occurs on more than one traffic target: ambiguous, refusing to select or adopt a revision"; [ -n "$t" ] || return 0
   [ "$t" != "$3" ] || die "tag $TAG points at the serving baseline $3: refusing"
   d=$(revdigest "$t") || die "cannot read the digest of the already-tagged revision $t"
   [ "$d" = "$2" ] || die "tag $TAG already points at $t with a DIFFERENT image: a previous run was partial or foreign. Inspect it read-only; do not redeploy (a deploy would move the tag)"
@@ -375,7 +376,7 @@ case "${1:-}" in
     write_state baseApiRevision "$BASE_API_REV"; write_state apiRevisionsBefore "$NOWREVS"
     write_state apiDeployStartedAt "$(date -u +%FT%TZ)"
     gcloud run deploy "$API_SVC" --project="$P" --region="$R" --image="$API_REF" --no-traffic --tag="$TAG" --quiet || die "the API deploy command failed. A revision may exist. Do NOT redeploy by hand: re-run this step, which adopts an exact tagged match or stops with a reason. Verify serving is still $BASE_API_REV"
-    J=$(read_svc "$API_SVC") || die "cannot read the API service after the deploy"; NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged revision not found"
+    J=$(read_svc "$API_SVC") || die "cannot read the API service after the deploy"; NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] && [ "$NEW" != "$AMBIGUOUS_TAG" ] || die "tagged revision not found or ambiguous"
   fi
   [ "$(serving "$J")" = "$BASE_API_REV" ] || die "SERVING TRAFFIC CHANGED: roll back with: gcloud run services update-traffic $API_SVC --to-revisions=$BASE_API_REV=100 --project=$P --region=$R"
   [ "$(revdigest "$NEW")" = "$D" ] || die "new API revision digest differs from API_REF"; NJ=$(read_rev "$NEW") || die "cannot read the new API revision"; ready "$NJ" || die "new API revision is not Ready"
@@ -399,7 +400,7 @@ case "${1:-}" in
     template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" reconcile-bridge
     write_state bridgeRevisionsBefore "$NOWB"; write_state bridgeDeployStartedAt "$(date -u +%FT%TZ)"
     gcloud run deploy "$BRIDGE_SVC" --project="$P" --region="$R" --image="$BRIDGE_REF" --env-vars-file="$Y" --no-traffic --tag="$TAG" --quiet || die "the bridge deploy command failed. Do NOT redeploy by hand: re-run this step, which adopts an exact tagged match or stops with a reason. Verify serving is still $BASE_BRIDGE_REV"
-    J=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service after the deploy"; NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged bridge revision not found"
+    J=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service after the deploy"; NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] && [ "$NEW" != "$AMBIGUOUS_TAG" ] || die "tagged bridge revision not found or ambiguous"
   fi
   [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "SERVING TRAFFIC CHANGED: run: bash a0-deploy.sh rollback-bridge"
   [ "$(revdigest "$NEW")" = "$BD" ] || die "new bridge revision digest differs from BRIDGE_REF"
