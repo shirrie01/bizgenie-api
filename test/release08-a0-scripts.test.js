@@ -304,6 +304,26 @@ test('smoke: wrong status, wrong identity, non-JSON body, empty token or a tag o
   const d = smokeWorld({ state: { apiRevision: NEWA, bridgeRevision: 'bizgenie-studio-bridge-staging-00099-zzz', bridgeDigest: NBD } }); const r = d.run(); assert.notStrictEqual(r.status, 0); assert.match(r.stderr, /does not point at the deployed A0 revision/); assert.ok(!fs.existsSync(d.evid()));
   const g = smokeWorld({ state: { apiRevision: NEWA, bridgeRevision: NEWB, bridgeDigest: 'sha256:' + '1'.repeat(64) } }); const r2 = g.run(); assert.notStrictEqual(r2.status, 0); assert.match(r2.stderr, /live digest/); assert.ok(!fs.existsSync(g.evid()));
 });
+
+// ---- Codex REQUEST CHANGES (older head) re-checked on the current head: reproduced, fixed, regression-tested ----
+test('failed or malformed metadata reads never produce a template PASS (conditional invocation)', { skip: !haveTools }, () => {
+  for (const mode of ['gcloud-fails', 'empty-json', 'object-without-template']) {
+    const w = world(); const bin = path.join(w.home, 'bin', 'gcloud');
+    fs.writeFileSync(bin, mode === 'gcloud-fails' ? '#!/bin/sh\necho "ERROR: denied" >&2; exit 1\n' : mode === 'empty-json' ? '#!/bin/sh\necho "$*" >> "$STUB_DIR/calls.log"; echo "{}"\n' : '#!/bin/sh\necho "$*" >> "$STUB_DIR/calls.log"; echo \'{"status":{"traffic":[]}}\'\n');
+    for (const sub of ['check-templates', 'diagnose-bridge']) { const r = w.run('a0-deploy.sh', [sub], { EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV }); assert.notStrictEqual(r.status, 0, `${mode} ${sub}`); assert.doesNotMatch(out(r), /template equals the serving revision|TEMPLATE CHECK: PASS/, `${mode} ${sub}`); }
+    const a = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(a.status, 0, mode); assert.doesNotMatch(w.calls(), /run deploy/, mode);
+  }
+});
+test('port comparison covers name and protocol, not just the number', { skip: !haveTools }, () => {
+  for (const [name, mut] of Object.entries({ protocol: (R) => { R.spec.containers[0].ports = [{ containerPort: 8080, protocol: 'UDP' }]; }, portName: (R) => { R.spec.containers[0].ports = [{ name: 'h2c', containerPort: 8080 }]; } })) {
+    const w = world(); const f = path.join(w.d, `rev-${BA}.json`); const R = JSON.parse(fs.readFileSync(f, 'utf8')); mut(R); fs.writeFileSync(f, JSON.stringify(R)); const r = w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0, name); assert.match(out(r), /RT c0\.ports/, name); assert.doesNotMatch(w.calls(), /run deploy/, name);
+  }
+});
+test('smoke: an aborted run removes earlier PASS evidence so it cannot remain eligible', { skip: !haveTools || !have('curl') }, () => {
+  const s = smokeWorld(); const ok = s.run(); assert.strictEqual(ok.status, 0, out(ok)); assert.ok(fs.existsSync(s.evid()));
+  const r = s.run(''); assert.notStrictEqual(r.status, 0); assert.ok(!fs.existsSync(s.evid()), 'stale evidence survived an aborted run');
+  const t = smokeWorld(); assert.strictEqual(t.run().status, 0); fs.writeFileSync(path.join(t.w.d, 'auth-code'), '401'); assert.notStrictEqual(t.run().status, 0); assert.ok(!fs.existsSync(t.evid()));
+});
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
   const base = ['--api-image', `${REPO}/bizgenie-api@sha256:${'a'.repeat(64)}`, '--clamav-image', `${REPO}/clamav@sha256:${'b'.repeat(64)}`, '--suffix', 'a2s1', '--tag', 'a2-scanner'];

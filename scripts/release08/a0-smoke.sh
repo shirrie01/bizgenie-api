@@ -5,6 +5,7 @@ set -uo pipefail
 P=bizgenie-backend; R=europe-west1; TAG=a0-dfd49116; BRIDGE_SVC=bizgenie-studio-bridge-staging
 PRIV="$HOME/.bg-private"; STATE="$PRIV/a0-state.json"; EVID="$PRIV/a0-smoke-evidence.json"; HP=${EXPECT_PROJECT_H:-b321c195}
 die() { echo "STOP: $*" >&2; exit 1; }
+rm -f "$EVID"   # an earlier PASS must never stay eligible while a new run is incomplete or aborted
 for t in gcloud jq curl sha256sum; do command -v "$t" >/dev/null 2>&1 || die "missing tool: $t"; done
 [ -s "$STATE" ] || die "state file missing: run a0-deploy.sh api and bridge first"
 REV=$(jq -r '.bridgeRevision // ""' "$STATE"); DIG=$(jq -r '.bridgeDigest // ""' "$STATE"); APIREV=$(jq -r '.apiRevision // ""' "$STATE"); [ -n "$REV" ] && [ -n "$DIG" ] && [ -n "$APIREV" ] || die "state file incomplete"

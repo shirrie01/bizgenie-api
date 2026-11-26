@@ -19,6 +19,9 @@ serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$
 tag_revision() { jq -r --arg t "$2" '[.status.traffic[]? | select(.tag == $t) | .revisionName][0] // ""' <<<"$1"; }
 ready() { jq -e '[.status.conditions[]? | select(.type == "Ready")][0].status == "True"' <<<"$1" >/dev/null; }
 h12() { sha256sum | cut -c1-12; }
+# Metadata reads can fail silently inside `$(...)` when bash runs us in a conditional context (set -e is ignored there), producing an empty document that would compare "equal" to another empty one.
+need_service_json() { jq -e '.spec.template.spec.containers[0] != null and (.status.traffic | type == "array")' <<<"$1" >/dev/null 2>&1 || die "could not read the service $2 (metadata read failed or malformed): no conclusion drawn"; }
+need_revision_json() { jq -e '.spec.containers[0] != null and (.status.conditions | type == "array")' <<<"$1" >/dev/null 2>&1 || die "could not read revision $2 (metadata read failed or malformed): no conclusion drawn"; }
 # Canonical, secret-safe fingerprint of everything a NEW revision would inherit. Values are hashed (12 hex) and never printed; secret references are compared too.
 # $1 = JSON, $2 = "svc" (service object: template under .spec.template) or "rev" (revision object).
 fingerprint() {
@@ -28,7 +31,7 @@ fingerprint() {
     (["SA","serviceAccount",($s.serviceAccountName // "")], ["RT","containerConcurrency",(($s.containerConcurrency // "") | tostring)], ["RT","timeoutSeconds",(($s.timeoutSeconds // "") | tostring)], ["RT","volumes",(($s.volumes // []) | tojson)],
      (ann_keys[] as $k | ["ANN",$k,($a[$k] // "")]),
      (($s.containers // []) | to_entries[] | .key as $i | .value as $c |
-        ["RT","c\($i).name",($c.name // "")], ["RT","c\($i).limits",(($c.resources.limits // {}) | tojson)], ["RT","c\($i).ports",([($c.ports // [])[] | .containerPort] | tojson)],
+        ["RT","c\($i).name",($c.name // "")], ["RT","c\($i).limits",(($c.resources.limits // {}) | tojson)], ["RT","c\($i).ports",(($c.ports // []) | tojson)],
         ["RT","c\($i).command",(($c.command // []) | tojson)], ["RT","c\($i).args",(($c.args // []) | tojson)], ["RT","c\($i).mounts",([($c.volumeMounts // [])[] | [.name,.mountPath]] | tojson)], ["RT","c\($i).probes",([$c.startupProbe, $c.livenessProbe, $c.readinessProbe] | tojson)], ["RT","c\($i).security",(($c.securityContext // {}) | tojson)], ["RT","c\($i).workdir",($c.workingDir // "")],
         (($c.env // [])[] | if .valueFrom then ["ENVREF","c\($i).\(.name)",(if .valueFrom.secretKeyRef then "secret:\(.valueFrom.secretKeyRef.name)@\(.valueFrom.secretKeyRef.key)" else (.valueFrom | tojson) end)] else ["ENV","c\($i).\(.name)",(.value // "")] end))) | @tsv' <<<"$1" |
   while IFS=$'\t' read -r kind key val; do printf '%s\t%s\t%s\n' "$kind" "$key" "$(printf %s "$val" | h12)"; done | sort
@@ -40,7 +43,8 @@ REVIEWED_BRIDGE_ENV="BG_BRIDGE_ALLOW_DRAFT_WORKFLOW BG_BRIDGE_ALLOW_FOUNDER_CAMP
 APPROVED_ROLE_NAME=bizgenie-staging-supabase-service-role-key; APPROVED_ROLE_VERSION=1; HISTORICAL_ROLE_NAME=bizgenie-supabase-service-role-key; APPROVED_ISOLATION=local
 template_matches_serving() { # $1 service name  $2 serving revision  $3 "reconcile-api" to allow the two reviewed API differences
   local sj rj sfp rfp key applied="" bad="" k superseded=""
-  sj=$(describe "$1"); rj=$(revjson "$2"); sfp=$(fingerprint "$sj" svc); rfp=$(fingerprint "$rj" rev)
+  sj=$(describe "$1") || true; rj=$(revjson "$2") || true; need_service_json "$sj" "$1"; need_revision_json "$rj" "$2"
+  sfp=$(fingerprint "$sj" svc); rfp=$(fingerprint "$rj" rev)
   declare -A S R; while IFS=$'\t' read -r k1 k2 v; do S["$k1|$k2"]=$v; done <<<"$sfp"; while IFS=$'\t' read -r k1 k2 v; do R["$k1|$k2"]=$v; done <<<"$rfp"
   for key in $(printf '%s\n' "${!S[@]}" "${!R[@]}" | sort -u); do
     [ "${S[$key]:-<absent>}" = "${R[$key]:-<absent>}" ] && continue
@@ -127,7 +131,7 @@ print_env_plan() { # $1 service json  $2 serving revision json
 }
 # One consolidated READ-ONLY diagnostic for the bridge template. Prints only safe facts: presence, equality, boolean flag values, expected-value matches. Never prints ids, tokens, key material or campaign contents.
 diagnose_bridge() {
-  local sj rj; sj=$(describe "$BRIDGE_SVC"); rj=$(revjson "$BASE_BRIDGE_REV")
+  local sj rj; sj=$(describe "$BRIDGE_SVC") || true; rj=$(revjson "$BASE_BRIDGE_REV") || true; need_service_json "$sj" "$BRIDGE_SVC"; need_revision_json "$rj" "$BASE_BRIDGE_REV"
   tv() { jq -r --arg n "$1" '[.spec.template.spec.containers[0].env[]? | select(.name == $n)][0] | if . == null then "<absent>" elif .valueFrom then "<secret-ref>" else (.value // "") end' <<<"$sj"; }
   sv() { jq -r --arg n "$1" '[.spec.containers[0].env[]? | select(.name == $n)][0] | if . == null then "<absent>" elif .valueFrom then "<secret-ref>" else (.value // "") end' <<<"$rj"; }
   echo "== permission flags (true/false values are safe to show)"
@@ -151,9 +155,9 @@ check_templates() {
   local rc=0
   echo "-- API template vs serving $BASE_API_REV"; ( template_matches_serving "$API_SVC" "$BASE_API_REV" reconcile-api ) || rc=1
   echo "-- bridge template vs serving $BASE_BRIDGE_REV (non-environment settings strict; reviewed bridge differences need a distinct approval)"; ( template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" reconcile-bridge ) || rc=1
-  local rj; rj=$(revjson "$BASE_BRIDGE_REV")
+  local rj; rj=$(revjson "$BASE_BRIDGE_REV") || true; need_revision_json "$rj" "$BASE_BRIDGE_REV"
   [ "$(jq '[.spec.containers[]?.env[]? | select(.valueFrom != null)] | length' <<<"$rj")" = 0 ] || { echo "STOP: the serving bridge has secret-backed env vars; the env-file deployment would drop them" >&2; rc=1; }
-  print_env_plan "$(describe "$BRIDGE_SVC")" "$rj"
+  local bsj; bsj=$(describe "$BRIDGE_SVC") || true; need_service_json "$bsj" "$BRIDGE_SVC"; print_env_plan "$bsj" "$rj"
   [ "$rc" = 0 ] && echo "TEMPLATE CHECK: PASS (read-only; nothing changed)" || { echo "TEMPLATE CHECK: FAIL (read-only; nothing changed)" >&2; return 1; }
 }
 # --- resume / duplicate protection --------------------------------------------------------------------------------------------------------------------
