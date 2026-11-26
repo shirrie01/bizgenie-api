@@ -501,6 +501,53 @@ test('G4 verified rollback recovery: restore is invoked, the exact baseline is r
   // (4) smoke refuses to run while INDETERMINATE
   { const sm = smokeWorld(); fs.writeFileSync(LOCK(sm.w), '{}'); const r = sm.run(); assert.notStrictEqual(r.status, 0); assert.ok(!fs.existsSync(sm.evid())); }
 });
+
+// ======== Traffic readback correction: every traffic entry is validated BEFORE any filtering (Codex P1 on 86bc4ffb) ========
+const TRAFFIC = (() => {
+  const T = (n, p, extra = {}) => ({ revisionName: n, percent: p, ...extra }); const X = 'bizgenie-studio-bridge-staging-00099-zzz';
+  const zeroTag = (n, t) => T(n, 0, { tag: t, url: `https://${t}---svc.run.app` });
+  return {
+    valid: { onlyBaseline: [T(BB, 100)], withZeroTag: [T(BB, 100), zeroTag(NEWB, 'a0-dfd49116')], manyZeroTags: [T(BB, 100), zeroTag(NEWB, 'a0-dfd49116'), zeroTag(X, 'other-tag')], baselineTagged: [T(BB, 100, { tag: 'base', url: 'https://base---svc.run.app' })], explicitZeroUntagged: [T(BB, 100), T(X, 0)] },
+    invalid: {
+      negative: [T(BB, 100), T(X, -1)], negativeSecond: [T(X, -1), T(BB, 100)], fractional: [T(BB, 99.5), T(X, 0.5)], fractionalBaseline: [T(BB, 100.5)], over100: [T(BB, 101)], over100Other: [T(BB, 100), T(X, 101)], stringPercent: [T(BB, '100')], stringOther: [T(BB, 100), T(X, '0')], missingPercent: [{ revisionName: BB }], missingOther: [T(BB, 100), { revisionName: X }], nullPercent: [T(BB, null)], nullOther: [T(BB, 100), T(X, null)], boolPercent: [T(BB, true)],
+      duplicateExact: [T(BB, 100), T(BB, 100)], duplicateZero: [T(BB, 100), T(BB, 0)], duplicateTag: [T(BB, 100), zeroTag(NEWB, 't'), zeroTag(NEWB, 't')],
+      urlOnly: [T(BB, 100), { tag: 'a0', url: 'https://a0---svc.run.app', percent: 0 }], latestRevision: [T(BB, 100), { latestRevision: true, percent: 0 }], emptyName: [T(BB, 100), T('', 0)], nonStringName: [T(BB, 100), { revisionName: 7, percent: 0 }], nonStringTag: [T(BB, 100), T(X, 0, { tag: 7 })], nullTag: [T(BB, 100), T(X, 0, { tag: null })], nonObjectEntry: [T(BB, 100), 'x'], nullEntry: [T(BB, 100), null],
+      notArray: { revisionName: BB, percent: 100 }, emptyArray: [], nullTraffic: null, split: [T(BB, 60), T(NEWB, 40)], baseline99: [T(BB, 99), T(X, 1)], other100: [T(X, 100)], sumOver: [T(BB, 100), T(X, 1)], zeroOnly: [T(BB, 0)],
+    },
+  };
+})();
+const setTraffic = (arr) => `jq '.status.traffic=${JSON.stringify(arr)}' "$f.orig" > "$f"`;
+function trafficHarness() {
+  const patch = (w) => { const f = path.join(w.home, 'bin', 'gcloud'); fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('[ -f "$STUB_DIR/traffic-effect.sh" ] && bash "$STUB_DIR/traffic-effect.sh" "$@"; true;;', 'if [ -f "$STUB_DIR/traffic-effect.sh" ]; then bash "$STUB_DIR/traffic-effect.sh" "$@" || exit 1; fi;;')); };
+  const svcFile = (w) => path.join(w.d, 'svc-bizgenie-studio-bridge-staging.json');
+  const effect = (w, afterShift, onRestore) => { if (!fs.existsSync(svcFile(w) + '.orig')) fs.copyFileSync(svcFile(w), svcFile(w) + '.orig'); fs.writeFileSync(path.join(w.d, 'traffic-effect.sh'), `#!/bin/sh\nf="$STUB_DIR/svc-bizgenie-studio-bridge-staging.json"\ncase "$*" in *"--to-revisions=${NEWB}=100"*) ${afterShift};; *"--to-revisions=${BB}=100"*) ${onRestore};; esac\n`); };
+  return { patch, svcFile, effect };
+}
+const gone = 'rm -f "$f"';
+test('H1 automatic recovery: a malformed or ambiguous traffic readback is INDETERMINATE (lock, no RECOVERED); valid zero-percent tagged readbacks still recover', { skip: !haveTools }, () => {
+  const { patch, effect } = trafficHarness();
+  for (const [name, arr] of Object.entries(TRAFFIC.invalid)) {
+    const s = readyToShift(); patch(s.w); effect(s.w, gone, setTraffic(arr)); const res = s.r(); assert.notStrictEqual(res.status, 0, name); assert.match(res.stderr, /INDETERMINATE/, name); assert.doesNotMatch(res.stderr, /RECOVERED/, name);
+    assert.ok(fs.existsSync(LOCK(s.w)), name + ': no lock'); assert.ok(!fs.existsSync(path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json')), name + ': evidence kept'); assert.ok(!JSON.parse(fs.readFileSync(path.join(s.w.home, '.bg-private', 'a0-state.json'), 'utf8')).bridgeRevision, name + ': checkpoint kept');
+    for (const sub of [['shift-bridge', { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB }], ['api', { API_REF: APIREF, EV_RECONCILIATION: EVR }], ['bridge', { BRIDGE_REF: BRREF, ...IDENT, EV_TAG: EVTAG, EV_SCOPE, EV_ROLLBACK, EV_RECONCILIATION: EVR, EV_BRIDGE_RECONCILIATION: BEV }]]) { const before = s.w.calls().length; const again = s.w.run('a0-deploy.sh', [sub[0]], sub[1]); assert.notStrictEqual(again.status, 0, `${name} ${sub[0]}`); assert.match(again.stderr, /INDETERMINATE/, `${name} ${sub[0]}`); assert.doesNotMatch(s.w.calls().slice(before), /update-traffic|run deploy/, `${name} ${sub[0]}`); }
+  }
+  for (const [name, arr] of Object.entries(TRAFFIC.valid)) { const s = readyToShift(); patch(s.w); effect(s.w, gone, setTraffic(arr)); const res = s.r(); assert.notStrictEqual(res.status, 0, name); assert.match(res.stderr, /RECOVERED/, name); assert.doesNotMatch(res.stderr, /INDETERMINATE/, name); assert.ok(!fs.existsSync(LOCK(s.w)), name); }
+});
+test('H2 manual rollback: a malformed traffic readback never succeeds and never clears the lock; a valid one clears it', { skip: !haveTools }, () => {
+  const { patch, svcFile, effect } = trafficHarness();
+  for (const [name, arr] of Object.entries(TRAFFIC.invalid)) {
+    const s = readyToShift(); patch(s.w); const sf = svcFile(s.w); const sj = JSON.parse(fs.readFileSync(sf, 'utf8')); sj.status.traffic = [{ revisionName: NEWB, percent: 100 }]; fs.writeFileSync(sf, JSON.stringify(sj)); fs.copyFileSync(sf, sf + '.orig'); effect(s.w, ':', setTraffic(arr));
+    fs.writeFileSync(LOCK(s.w), JSON.stringify({ state: 'INDETERMINATE' })); const res = s.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.notStrictEqual(res.status, 0, name); assert.ok(fs.existsSync(LOCK(s.w)), name + ': lock cleared by a malformed readback'); assert.match(res.stderr, /INDETERMINATE/, name); assert.doesNotMatch(res.stdout + res.stderr, /bridge restored/, name);
+    const noLock = readyToShift(); patch(noLock.w); const nf = svcFile(noLock.w); const nj = JSON.parse(fs.readFileSync(nf, 'utf8')); nj.status.traffic = [{ revisionName: NEWB, percent: 100 }]; fs.writeFileSync(nf, JSON.stringify(nj)); fs.copyFileSync(nf, nf + '.orig'); effect(noLock.w, ':', setTraffic(arr)); const r2 = noLock.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.notStrictEqual(r2.status, 0, name + ' (no prior lock)'); assert.ok(fs.existsSync(LOCK(noLock.w)), name + ': no lock created');
+  }
+  for (const [name, arr] of Object.entries(TRAFFIC.valid)) { const s = readyToShift(); patch(s.w); const sf = svcFile(s.w); const sj = JSON.parse(fs.readFileSync(sf, 'utf8')); sj.status.traffic = [{ revisionName: NEWB, percent: 100 }]; fs.writeFileSync(sf, JSON.stringify(sj)); fs.copyFileSync(sf, sf + '.orig'); effect(s.w, ':', setTraffic(arr)); fs.writeFileSync(LOCK(s.w), '{}'); const res = s.w.run('a0-deploy.sh', ['rollback-bridge'], {}); assert.strictEqual(res.status, 0, name + out(res)); assert.ok(!fs.existsSync(LOCK(s.w)), name + ': lock kept after a valid readback'); }
+});
+test('H3 post-shift readback: malformed traffic cannot establish a successful activation; a valid zero-percent readback can', { skip: !haveTools }, () => {
+  const { patch, effect } = trafficHarness(); const X = 'bizgenie-studio-bridge-staging-00099-zzz';
+  const post = { negative: [{ revisionName: NEWB, percent: 100 }, { revisionName: X, percent: -1 }], fractional: [{ revisionName: NEWB, percent: 99.5 }, { revisionName: X, percent: 0.5 }], over100: [{ revisionName: NEWB, percent: 101 }], stringPercent: [{ revisionName: NEWB, percent: '100' }], nullOther: [{ revisionName: NEWB, percent: 100 }, { revisionName: X, percent: null }], missingOther: [{ revisionName: NEWB, percent: 100 }, { revisionName: X }], duplicate: [{ revisionName: NEWB, percent: 100 }, { revisionName: NEWB, percent: 100 }], urlOnly: [{ revisionName: NEWB, percent: 100 }, { tag: 'x', url: 'https://x---s.run.app', percent: 0 }], twoPositive: [{ revisionName: NEWB, percent: 50 }, { revisionName: BB, percent: 50 }], baselineOnly: [{ revisionName: BB, percent: 100 }] };
+  for (const [name, arr] of Object.entries(post)) { const s = readyToShift(); patch(s.w); effect(s.w, setTraffic(arr), 'cp "$f.orig" "$f"'); const res = s.r(); assert.notStrictEqual(res.status, 0, name); const calls = s.w.calls().split('\n').filter((l) => /update-traffic/.test(l)); assert.ok(calls.length >= 2, name + ': no restore'); assert.match(calls.at(-1), new RegExp(`--to-revisions=${BB}=100`), name); assert.doesNotMatch(res.stdout, /bridge now serves/, name); }
+  for (const [name, arr] of Object.entries({ plain: [{ revisionName: NEWB, percent: 100 }], baselineZeroTagged: [{ revisionName: NEWB, percent: 100 }, { revisionName: BB, percent: 0, tag: 'previous', url: 'https://previous---s.run.app' }], manyZero: [{ revisionName: NEWB, percent: 100, tag: 'a0-dfd49116', url: 'https://a0---s.run.app' }, { revisionName: BB, percent: 0 }, { revisionName: X, percent: 0, tag: 't', url: 'https://t---s.run.app' }] })) { const s = readyToShift(); patch(s.w); effect(s.w, `jq '.status.traffic=${JSON.stringify(arr)} | .status.latestReadyRevisionName="${NEWB}"' "$f.orig" > "$f"`, 'cp "$f.orig" "$f"'); const res = s.r(); assert.strictEqual(res.status, 0, name + out(res)); assert.match(res.stdout, /bridge now serves/, name); assert.ok(!fs.existsSync(LOCK(s.w)), name); }
+});
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
   const base = ['--api-image', `${REPO}/bizgenie-api@sha256:${'a'.repeat(64)}`, '--clamav-image', `${REPO}/clamav@sha256:${'b'.repeat(64)}`, '--suffix', 'a2s1', '--tag', 'a2-scanner'];

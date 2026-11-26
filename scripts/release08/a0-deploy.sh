@@ -197,9 +197,15 @@ refuse_if_indeterminate() { [ ! -e "$LOCKF" ] || die "INDETERMINATE: an earlier 
 mark_indeterminate() { umask 077; mkdir -p "$PRIV"; jq -n --arg at "$(date -u +%FT%TZ)" --arg why "$1" --arg base "$BASE_BRIDGE_REV" '{state:"INDETERMINATE",at:$at,reason:$why,baseline:$base}' > "$LOCKF" 2>/dev/null || printf '{"state":"INDETERMINATE"}\n' > "$LOCKF"; chmod 600 "$LOCKF" 2>/dev/null
   invalidate_downstream || rm -f "$EVID"
   echo "INDETERMINATE: $1. The bridge may NOT be serving $BASE_BRIDGE_REV. No further shift or resume is allowed. Run by hand NOW and verify: gcloud run services update-traffic $BRIDGE_SVC --project=$P --region=$R --to-revisions=$BASE_BRIDGE_REV=100 ; then: bash a0-deploy.sh rollback-bridge" >&2; exit 1; }
+# Traffic readback proof. EVERY entry is validated BEFORE any filtering or selection: the traffic list must be a non-empty array of objects, each with a revision name that proves the exact
+# revision (tag/URL-only and latestRevision targets are refused), an integer percentage in [0,100] (missing, null, string, boolean, negative, fractional and over-100 are refused), an optional
+# string tag, and no duplicate (revision, tag) target. Valid 0 % tagged revisions are fine. Only after that, exactly one revision may carry traffic: the expected one at exactly 100 %.
+TRAFFIC_ARRAY_OK='(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)))'
+traffic_array_ok() { jq -e "$TRAFFIC_ARRAY_OK" <<<"$1" >/dev/null 2>&1; }
+traffic_exact() { # $1 service json  $2 the one revision that must carry exactly 100 %
+  traffic_array_ok "$1" && jq -e --arg r "$2" '[.status.traffic[] | select(.percent > 0)] as $p | ($p | length) == 1 and $p[0].revisionName == $r and $p[0].percent == 100 and ([.status.traffic[].percent] | add) == 100' <<<"$1" >/dev/null 2>&1; }
 # Exact baseline readback: the service is readable and well-formed, and exactly one traffic target carries traffic: the recorded baseline revision at 100 %.
-baseline_readback_ok() { local j; j=$(read_svc "$BRIDGE_SVC" 2>/dev/null) || return 1
-  jq -e --arg b "$BASE_BRIDGE_REV" '[.status.traffic[]? | select((.percent // 0) > 0)] | (length == 1) and (.[0].revisionName == $b) and ((.[0].percent // 0) == 100)' <<<"$j" >/dev/null 2>&1; }
+baseline_readback_ok() { local j; j=$(read_svc "$BRIDGE_SVC" 2>/dev/null) || return 1; traffic_exact "$j" "$BASE_BRIDGE_REV"; }
 restore_baseline() { # $1 = why. Returns only when the baseline was PROVEN by readback; otherwise exits INDETERMINATE.
   echo "restoring the recorded rollback target $BASE_BRIDGE_REV ($1)" >&2
   if gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100" >&2 && baseline_readback_ok; then invalidate_downstream; echo "RECOVERED: exact baseline readback confirms $BASE_BRIDGE_REV serves 100% ($1); earlier smoke evidence is no longer usable" >&2; return 0; fi
@@ -310,6 +316,7 @@ case "${1:-}" in
     || die "smoke evidence does not cover this exact revision/digest, is incomplete (the authenticated read is mandatory), failed, or is older than ${MAX_EVIDENCE_AGE}s: rerun a0-smoke.sh"
   J=$(read_svc "$BRIDGE_SVC") || die "cannot read the bridge service"; [ "$(tag_revision "$J" "$TAG")" = "$REV" ] || die "tag $TAG no longer points at $REV"
   [ "$(serving "$J")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision drifted since the smoke test"
+  traffic_exact "$J" "$BASE_BRIDGE_REV" || die "the pre-shift traffic readback is malformed or is not exactly the recorded baseline at 100%"
   [ "$(revdigest "$REV")" = "$DIG" ] || die "live digest of $REV differs from the accepted digest"; [ "$(revdigest "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "rollback digest differs from the recorded one"
   verify_api_tag "$APIREV" "$(jq -r '.apiDigest // ""' "$STATE")"
   [ "$(state_get evTagRevision)" = "$APIREV" ] || die "the state binds EV_TAG to a different API revision"
@@ -320,7 +327,7 @@ case "${1:-}" in
   [ "$(jq -r '[.spec.containers[]?.env[]? | select(.name == "BG_BRIDGE_REVISION") | .value][0] // ""' <<<"$RJ")" = "$APIREV" ] || die "the bridge revision is not pinned to the accepted API revision"
   [ "$(jq -r '[.spec.containers[]?.env[]? | select(.name == "BG_BRIDGE_REVIEW_REF") | .value][0] // ""' <<<"$RJ")" = "$(state_get evApproval)" ] || die "the live revision's review reference is not the recorded release approval"
   if ! gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$REV=100"; then restore_baseline "the traffic update command failed"; die "the shift failed and was rolled back (RECOVERED above): nothing is shifted"; fi
-  if ! J=$(read_svc "$BRIDGE_SVC") || [ "$(serving "$J")" != "$REV" ] || ! jq -e --arg r "$REV" '[.status.traffic[]? | select((.percent // 0) > 0)] | (length == 1) and (.[0].revisionName == $r) and ((.[0].percent // 0) == 100)' <<<"$J" >/dev/null 2>&1; then
+  if ! J=$(read_svc "$BRIDGE_SVC") || ! traffic_exact "$J" "$REV"; then
     restore_baseline "the post-shift read failed, was malformed or did not show $REV at 100%"; die "the shift could not be verified and was rolled back (RECOVERED above): nothing is shifted"; fi
   echo "bridge now serves $REV (digest $DIG). Rollback: bash a0-deploy.sh rollback-bridge";;
  check-templates) check_templates;;
