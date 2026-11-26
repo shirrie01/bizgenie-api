@@ -37,3 +37,23 @@ Prints only: permission-flag values (true/false/absent), whether each campaign p
 | B4 | Env file was not re-validated at deploy time | **Fixed** (`validate_a0_env_file`) |
 | B5 | Smoke's identity check assumes the authenticated `GET /customer/workspace` response contains the Fairway project id (consistent with `scripts/staging/acceptance.js`, which reads `workspaces[].project_id`) | Unchanged; the check is hash-only, and a mismatch stops before any shift |
 | B6 | No reviewed resume path after a partial tagged API deployment | Unchanged and stated: do not rerun `run` after an API deploy; use `a0-deploy.sh bridge` onward and report first |
+
+## Second-pass adversarial self-review (not independent acceptance)
+Each row was reproduced as a failing regression test against head `7d1599f8` before the correction.
+| # | Defect found in my own reconciliation | Correction |
+|---|---|---|
+| S1 | The bridge environment exception accepted **any** template-only or changed `ENV` name, not only the eight reviewed ones | Superseded names are limited to the eight reviewed names; any other template drift (new flag, changed `BG_BRIDGE_AUDIENCE`, `LINKEDIN_*`) stops the run |
+| S2 | The A0 env file was checked for names and booleans only: URLs, identity pins, SHA, revision and key shape were unchecked; non-string and malformed values were not parsed | Every setting is parsed as JSON string and validated exactly: staging Supabase URL, Studio origin, accepted SHA, bind, revision pattern **and equality with the API revision in the state**, audience pattern and `TARGET_URL == https://a0-dfd49116---<audience host>`, publishable key not secret-shaped, idempotency key, business name, founder and tenant pins against the recorded fingerprints, review ref |
+| S3 | EV_BRIDGE_RECONCILIATION was only distinct from two references; EV_TAG was never checked at the deploy step; evidence was not bound anywhere | EV_BRIDGE_RECONCILIATION is distinct from approval, API reconciliation, scope, rollback and tag; EV_TAG is required and distinct before the bridge deploy; both, with the API reconciliation, are recorded in the state and re-required by `shift-bridge` |
+| S4 | A state bound to another EV_TAG/revision was not detected | Conflict stops the run |
+| S5 | Shift trusted the revision's existence; it did not re-prove the seven permission flags on the live revision, nor the API tag | Shift re-reads all seven flags (`false`), the API tag, digest and serving revision |
+| S6 | Duplicate keys, comment lines, indented lines and nested YAML in the env file | Refused before any deploy |
+| Verified, no defect | `bridge_container_name_ok`: single container, plain names, no dependency annotation; volumes are refused for the bridge for every difference, and probes, mounts, security context, working dir and all runtime fields are compared separately so any drift is reported | — |
+| Verified, no defect | Diagnostic output prints no values (tested with sentinel secrets); smoke token travels only on stdin (`curl -K -`), never on a command line (tested) | — |
+
+## Partial-deployment recovery (resume)
+`a0-deploy.sh api` and `bridge` are now idempotent and never deploy twice under the tag (`gcloud run deploy --tag` would silently move it):
+- **Checkpoint:** an existing `a0-dfd49116` tag is adopted only if it is not the serving baseline, carries the exact accepted image digest, is Ready, receives 0% traffic, serving is still the recorded baseline, and the state (if any) names the same revision and baseline. The bridge is adopted only if its live environment equals the validated A0 file exactly and it is pinned to the accepted API revision.
+- **Before deploying** the revision list is snapshotted into the state. After a failed deploy, any new revision that is untagged or unrecognised stops the run (inspect read-only); a clean failure (nothing new) may be retried once; an attempt older than 24 h with nothing verifiable is STALE and needs a human to review and remove the state file.
+- **EV_TAG:** required and bound to the API revision before the bridge is deployed; a state bound to a different pair is a conflict.
+Tests are synthetic only; nothing was run against Cloud Run.

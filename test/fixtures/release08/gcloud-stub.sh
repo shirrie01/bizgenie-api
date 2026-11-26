@@ -6,6 +6,7 @@ case "$*" in
  "run services describe "*) n=$4; cat "$STUB_DIR/svc-$n.json";;
  "run revisions describe "*"value(status.imageDigest)"*) jq -r '.status.imageDigest' "$STUB_DIR/rev-$4.json";;
  "run revisions describe "*"--format=json"*) cat "$STUB_DIR/rev-$4.json";;
+ "run revisions list "*) svc=$(printf %s "$*" | sed -E 's/.*--service=([^ ]+).*/\1/'); if [ -f "$STUB_DIR/revlist-$svc.txt" ]; then cat "$STUB_DIR/revlist-$svc.txt"; else jq -r '.status.traffic[].revisionName' "$STUB_DIR/svc-$svc.json"; fi;;
  "run deploy "*) [ -f "$STUB_DIR/deploy-effect.sh" ] && bash "$STUB_DIR/deploy-effect.sh" "$@"; true;;
  "run services update-traffic "*) [ -f "$STUB_DIR/traffic-effect.sh" ] && bash "$STUB_DIR/traffic-effect.sh" "$@"; true;;
  *) echo "UNEXPECTED gcloud $*" >&2; exit 2;;

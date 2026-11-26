@@ -24,7 +24,7 @@ REF_RE='^europe-west1-docker\.pkg\.dev/bizgenie-backend/cloud-run-source-deploy/
 [[ "$NEW_API_TAG" =~ ^[a-z][a-z0-9-]{1,40}$ ]] || die "NEW_API_TAG is not a valid Cloud Run tag"
 EVRE='^https://github\.com/shirrie01/bizgenie-api/(issues|pull)/[0-9]+#issuecomment-[0-9]+$'
 for e in "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG"; do [[ "$e" =~ $EVRE ]] || die "evidence references must be GitHub issue-comment URLs"; done
-[ "$(printf '%s\n' "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG" | sort -u | wc -l)" = 4 ] || die "the four evidence references must be distinct"
+[ "$(printf '%s\n' "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG" "${EV_RECONCILIATION:-}" "${EV_BRIDGE_RECONCILIATION:-}" | grep -v '^$' | sort -u | wc -l)" = "$(printf '%s\n' "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG" "${EV_RECONCILIATION:-}" "${EV_BRIDGE_RECONCILIATION:-}" | grep -vc '^$')" ] || die "the evidence references (including the reconciliation approvals) must all be distinct"
 
 say "1/6 baseline safeguards (read-only): the serving bridge and API must still be the recorded rollback targets"
 BJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json); AJ=$(gcloud run services describe "$API_SVC" --project="$P" --region="$R" --format=json)
