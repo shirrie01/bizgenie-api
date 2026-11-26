@@ -1,3 +1,4 @@
+const { PATH: earlyAccessPath, createEarlyAccessComposition } = require("./src/early-access");
 const {
   BrandingConfigSchema,
   brandingConfig,
@@ -305,6 +306,7 @@ function createApp({
   servicePrincipalVerifier = new UnconfiguredServiceCredentialVerifier(),
   stripeSubscriptionService,
   paidBetaCaptureService,
+  earlyAccessRouter,
   billing,
   billingRepository,
   commercialCatalog = null,
@@ -369,6 +371,7 @@ function createApp({
   });
   app.use("/customer", privateResponse);
   app.use("/billing/stripe/checkout", privateResponse);
+  if (earlyAccessRouter) app.use(earlyAccessPath, earlyAccessRouter);
   app.use(createCorsMiddleware({ config: corsConfig }));
 
   // Stripe signature verification must see the exact request bytes. Mount
@@ -811,6 +814,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
     billingService: billing.billingService,
     env,
   });
+  const earlyAccess = await createEarlyAccessComposition({ pool: brandBrainRepository.pool, env });
   const paidBeta = await createPaidBetaProductionComposition({
     pool: brandBrainRepository.pool,
     env,
@@ -840,6 +844,7 @@ async function createProductionApp({ env = process.env, logger = console } = {})
       servicePrincipalVerifier,
       stripeSubscriptionService: stripe.stripeSubscriptionService,
       paidBetaCaptureService: paidBeta.service,
+      earlyAccessRouter: earlyAccess?.router,
       billing,
       billingRepository: billing.billingRepository,
       env,
