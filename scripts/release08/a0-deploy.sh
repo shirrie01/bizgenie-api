@@ -30,20 +30,47 @@ fingerprint() {
      (($s.containers // []) | to_entries[] | .key as $i | .value as $c |
         ["RT","c\($i).name",($c.name // "")], ["RT","c\($i).limits",(($c.resources.limits // {}) | tojson)], ["RT","c\($i).ports",([($c.ports // [])[] | .containerPort] | tojson)],
         ["RT","c\($i).command",(($c.command // []) | tojson)], ["RT","c\($i).args",(($c.args // []) | tojson)], ["RT","c\($i).mounts",([($c.volumeMounts // [])[] | [.name,.mountPath]] | tojson)],
-        (($c.env // [])[] | if .valueFrom then ["ENVREF","c\($i).\(.name)",(.valueFrom | tojson)] else ["ENV","c\($i).\(.name)",(.value // "")] end))) | @tsv' <<<"$1" |
+        (($c.env // [])[] | if .valueFrom then ["ENVREF","c\($i).\(.name)",(if .valueFrom.secretKeyRef then "secret:\(.valueFrom.secretKeyRef.name)@\(.valueFrom.secretKeyRef.key)" else (.valueFrom | tojson) end)] else ["ENV","c\($i).\(.name)",(.value // "")] end))) | @tsv' <<<"$1" |
   while IFS=$'\t' read -r kind key val; do printf '%s\t%s\t%s\n' "$kind" "$key" "$(printf %s "$val" | h12)"; done | sort
 }
 # A new revision inherits the service's LATEST TEMPLATE, not the serving revision. Refuse unless the two agree on every relevant value (names, values by hash, secret references, service identity, runtime settings).
-template_matches_serving() { # $1 service name  $2 serving revision
-  local sj rj diff_out; sj=$(describe "$1"); rj=$(revjson "$2")
-  diff_out=$(diff <(fingerprint "$sj" svc) <(fingerprint "$rj" rev) || true)
-  if [ -n "$diff_out" ]; then echo "template differs from the serving revision in (kind, key; values are never shown):" >&2; echo "$diff_out" | grep -E '^[<>]' | awk -F'\t' '{print "  " $1 " " $2}' | sed 's/^  [<>] /  /' | sort -u >&2; die "the latest $1 template is not the serving configuration: review and resolve before any new revision is created"; fi
+# API only: exactly TWO reviewed differences are accepted (BG-LAUNCH-009 / BG-017C-07 security decisions; see docs/launch/BG_RELEASE08_A0_RECONCILIATION.md). Anything else, or either of these with any other content, is refused.
+APPROVED_ROLE_NAME=bizgenie-staging-supabase-service-role-key; APPROVED_ROLE_VERSION=1; HISTORICAL_ROLE_NAME=bizgenie-supabase-service-role-key; APPROVED_ISOLATION=local
+template_matches_serving() { # $1 service name  $2 serving revision  $3 "reconcile-api" to allow the two reviewed API differences
+  local sj rj sfp rfp key applied="" bad="" k
+  sj=$(describe "$1"); rj=$(revjson "$2"); sfp=$(fingerprint "$sj" svc); rfp=$(fingerprint "$rj" rev)
+  declare -A S R; while IFS=$'\t' read -r k1 k2 v; do S["$k1|$k2"]=$v; done <<<"$sfp"; while IFS=$'\t' read -r k1 k2 v; do R["$k1|$k2"]=$v; done <<<"$rfp"
+  for key in $(printf '%s\n' "${!S[@]}" "${!R[@]}" | sort -u); do
+    [ "${S[$key]:-<absent>}" = "${R[$key]:-<absent>}" ] && continue
+    if [ "${3:-}" = reconcile-api ] && [ "$key" = "ENV|c0.VIDEO_INSPECTION_ISOLATION" ] && [ -z "${R[$key]:-}" ] && [ "${S[$key]:-}" = "$(printf %s "$APPROVED_ISOLATION" | h12)" ] \
+       && [ "${S[ENV|c0.BIZGENIE_ENVIRONMENT]:-x}" = "$(printf staging | h12)" ]; then applied="$applied VIDEO_INSPECTION_ISOLATION(absent->approved staging value)"
+    elif [ "${3:-}" = reconcile-api ] && [ "$key" = "ENVREF|c0.SUPABASE_SERVICE_ROLE_KEY" ] && [ "${S[$key]:-}" = "$(printf 'secret:%s@%s' "$APPROVED_ROLE_NAME" "$APPROVED_ROLE_VERSION" | h12)" ] \
+       && [ "$(jq -r '[.spec.containers[]?.env[]? | select(.name == "SUPABASE_SERVICE_ROLE_KEY") | .valueFrom.secretKeyRef.name][0] // ""' <<<"$rj")" = "$HISTORICAL_ROLE_NAME" ]; then
+      applied="$applied SUPABASE_SERVICE_ROLE_KEY($HISTORICAL_ROLE_NAME@$(jq -r '[.spec.containers[]?.env[]? | select(.name == "SUPABASE_SERVICE_ROLE_KEY") | .valueFrom.secretKeyRef.key][0] // "?"' <<<"$rj")->$APPROVED_ROLE_NAME@$APPROVED_ROLE_VERSION)"
+    else bad="$bad
+  ${key%%|*} ${key#*|}"; fi
+  done
+  if [ -n "$bad" ]; then echo "template differs from the serving revision in (kind, key; values are never shown):$bad" >&2; die "the latest $1 template is not the serving configuration: review and resolve before any new revision is created"; fi
+  if [ -n "$applied" ]; then
+    [[ "${EV_RECONCILIATION:-}" =~ ^https://github\.com/shirrie01/bizgenie-api/issues/191#issuecomment-[0-9]+$ ]] || die "the two reviewed API differences are present; export EV_RECONCILIATION=<founder approval comment URL in #191> to proceed"
+    echo "approved reconciliation (evidence $EV_RECONCILIATION):$applied"
+  else echo "$1 template equals the serving revision"; fi
+}
+# Read-only: report whether the API and bridge templates can be deployed. Changes nothing.
+check_templates() {
+  local rc=0
+  echo "-- API template vs serving $BASE_API_REV"; ( template_matches_serving "$API_SVC" "$BASE_API_REV" reconcile-api ) || rc=1
+  echo "-- bridge template vs serving $BASE_BRIDGE_REV (strict: no exceptions)"; ( template_matches_serving "$BRIDGE_SVC" "$BASE_BRIDGE_REV" ) || rc=1
+  local rj; rj=$(revjson "$BASE_BRIDGE_REV")
+  [ "$(jq '[.spec.containers[]?.env[]? | select(.valueFrom != null)] | length' <<<"$rj")" = 0 ] || { echo "STOP: the serving bridge has secret-backed env vars; the env-file deployment would drop them" >&2; rc=1; }
+  echo "serving bridge env variable NAMES (the A0 deployment replaces the environment with the validated A0 file; every name here that is not in that file is dropped): $(jq -r '[.spec.containers[]?.env[]?.name] | sort | join(", ")' <<<"$rj")"
+  [ "$rc" = 0 ] && echo "TEMPLATE CHECK: PASS (read-only; nothing changed)" || { echo "TEMPLATE CHECK: FAIL (read-only; nothing changed)" >&2; return 1; }
 }
 write_state() { umask 077; mkdir -p "$PRIV"; jq -n --arg k "$1" --arg v "$2" '{($k):$v}' >/dev/null; local cur='{}'; [ -s "$STATE" ] && cur=$(cat "$STATE"); jq --arg k "$1" --arg v "$2" '. + {($k):$v}' <<<"$cur" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"; chmod 600 "$STATE"; }
 case "${1:-}" in
  api)
   : "${API_REF:?export API_REF (E1 output)}"; J=$(describe "$API_SVC"); [ "$(serving "$J")" = "$BASE_API_REV" ] || die "API serving revision drifted"
-  template_matches_serving "$API_SVC" "$BASE_API_REV"
+  template_matches_serving "$API_SVC" "$BASE_API_REV" reconcile-api
   gcloud run deploy "$API_SVC" --project="$P" --region="$R" --image="$API_REF" --no-traffic --tag="$TAG" --quiet
   J=$(describe "$API_SVC"); NEW=$(tag_revision "$J" "$TAG"); [ -n "$NEW" ] || die "tagged revision not found"
   [ "$(serving "$J")" = "$BASE_API_REV" ] || die "SERVING TRAFFIC CHANGED: roll back with: gcloud run services update-traffic $API_SVC --to-revisions=$BASE_API_REV=100 --project=$P --region=$R"
@@ -78,8 +105,9 @@ case "${1:-}" in
   gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$REV=100"
   J=$(describe "$BRIDGE_SVC"); if [ "$(serving "$J")" != "$REV" ]; then echo "post-shift check FAILED: restoring" >&2; gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100"; die "traffic did not settle on $REV; restored $BASE_BRIDGE_REV"; fi
   echo "bridge now serves $REV (digest $DIG). Rollback: bash a0-deploy.sh rollback-bridge";;
+ check-templates) check_templates;;
  rollback-bridge)
   [ "$(revdigest "$BASE_BRIDGE_REV")" = "$BASE_BRIDGE_DIGEST" ] || die "recorded rollback revision digest mismatch: do not roll back blindly"
   gcloud run services update-traffic "$BRIDGE_SVC" --project="$P" --region="$R" --to-revisions="$BASE_BRIDGE_REV=100"; echo "bridge restored to $BASE_BRIDGE_REV";;
- *) die "usage: a0-deploy.sh api|bridge|shift-bridge|rollback-bridge";;
+ *) die "usage: a0-deploy.sh api|bridge|shift-bridge|rollback-bridge|check-templates";;
 esac

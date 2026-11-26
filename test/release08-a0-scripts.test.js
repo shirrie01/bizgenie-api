@@ -96,6 +96,40 @@ test('prepare and smoke use the same strict normalization (static audit)', () =>
   const sm = fs.readFileSync(path.join(S, 'a0-smoke.sh'), 'utf8'); assert.match(sm, /LIVE=\$\{LIVE##\*@\}/); assert.match(sm, /\^sha256:\[a-f0-9\]\{64\}\$/);
   for (const f of ['a0-deploy.sh', 'a0-prepare.sh', 'a0-smoke.sh']) assert.doesNotMatch(fs.readFileSync(path.join(S, f), 'utf8'), /\$\(gcloud run revisions describe[^)]*imageDigest[^)]*\)"? = /, f);
 });
+
+// ---- BG-RELEASE08 A0 reconciliation: exactly two reviewed API template differences ----
+const OLDREF = (key = '1') => ({ name: 'SUPABASE_SERVICE_ROLE_KEY', valueFrom: { secretKeyRef: { name: 'bizgenie-supabase-service-role-key', key } } });
+const NEWREF = (name = 'bizgenie-staging-supabase-service-role-key', key = '1') => ({ name: 'SUPABASE_SERVICE_ROLE_KEY', valueFrom: { secretKeyRef: { key, name } } }); // note: key order differs from OLDREF on purpose
+const ENVSTG = { name: 'BIZGENIE_ENVIRONMENT', value: 'staging' }, ISO = (v = 'local') => ({ name: 'VIDEO_INSPECTION_ISOLATION', value: v }), DB = { name: 'BRAND_BRAIN_DATABASE_URL', valueFrom: { secretKeyRef: { name: 'bizgenie-staging-database-url', key: 'latest' } } };
+const EVR = 'https://github.com/shirrie01/bizgenie-api/issues/191#issuecomment-7178999999';
+const recon = (svcEnv, revEnv, env = { EV_RECONCILIATION: EVR }) => { const w = world({ svcEnv, revEnv }); return { w, r: w.run('a0-deploy.sh', ['api'], { API_REF: APIREF, ...env }) }; };
+test('reconciliation: exactly the two reviewed differences are accepted, with the founder approval reference', { skip: !haveTools }, () => {
+  const { w, r } = recon([ENVSTG, DB, ISO(), NEWREF()], [ENVSTG, DB, OLDREF('latest')]); assert.strictEqual(r.status, 0, out(r)); assert.match(out(r), /approved reconciliation/); assert.match(out(r), /bizgenie-supabase-service-role-key@latest->bizgenie-staging-supabase-service-role-key@1/); assert.match(w.calls(), /run deploy bizgenie-api-staging .*--no-traffic/);
+  assert.doesNotMatch(out(r), /local/);
+});
+test('reconciliation: the approval reference is mandatory when the differences are present', { skip: !haveTools }, () => {
+  for (const env of [{}, { EV_RECONCILIATION: 'https://example.com/x' }, { EV_RECONCILIATION: 'https://github.com/shirrie01/bizgenie-api/issues/1#issuecomment-5' }]) { const { w, r } = recon([ENVSTG, DB, ISO(), NEWREF()], [ENVSTG, DB, OLDREF()], env); assert.notStrictEqual(r.status, 0); assert.match(r.stderr, /EV_RECONCILIATION/); assert.doesNotMatch(w.calls(), /run deploy/); }
+});
+test('reconciliation: any other content, extra drift or a changed value is refused', { skip: !haveTools }, () => {
+  const bad = {
+    isolationOther: [[ENVSTG, DB, ISO('bubblewrap'), NEWREF()], [ENVSTG, DB, OLDREF()]], notStaging: [[{ name: 'BIZGENIE_ENVIRONMENT', value: 'production' }, DB, ISO(), NEWREF()], [{ name: 'BIZGENIE_ENVIRONMENT', value: 'production' }, DB, OLDREF()]],
+    otherSecretName: [[ENVSTG, DB, ISO(), NEWREF('some-other-secret')], [ENVSTG, DB, OLDREF()]], latestVersion: [[ENVSTG, DB, ISO(), NEWREF(undefined, 'latest')], [ENVSTG, DB, OLDREF()]], version2: [[ENVSTG, DB, ISO(), NEWREF(undefined, '2')], [ENVSTG, DB, OLDREF()]],
+    servingNotHistorical: [[ENVSTG, DB, ISO(), NEWREF()], [ENVSTG, DB, { name: 'SUPABASE_SERVICE_ROLE_KEY', valueFrom: { secretKeyRef: { name: 'unknown', key: '1' } } }]],
+    plusDbSecretChange: [[ENVSTG, { ...DB, valueFrom: { secretKeyRef: { name: 'other-db', key: 'latest' } } }, ISO(), NEWREF()], [ENVSTG, DB, OLDREF()]], plusNewVariable: [[ENVSTG, DB, ISO(), NEWREF(), { name: 'EXTRA_FLAG', value: 'true' }], [ENVSTG, DB, OLDREF()]],
+    isolationChangedNotAdded: [[ENVSTG, DB, ISO('local'), NEWREF()], [ENVSTG, DB, ISO('bubblewrap'), OLDREF()]], literalKey: [[ENVSTG, DB, ISO(), { name: 'SUPABASE_SERVICE_ROLE_KEY', value: 'literal' }], [ENVSTG, DB, OLDREF()]],
+  };
+  for (const [name, [s, v]] of Object.entries(bad)) { const { w, r } = recon(s, v); assert.notStrictEqual(r.status, 0, name); assert.match(r.stderr, /STOP:/, name); assert.doesNotMatch(w.calls(), /run deploy/, name); assert.doesNotMatch(out(r), /literal/, name); }
+});
+test('reconciliation never applies to the bridge: the same differences are refused there', { skip: !haveTools }, () => {
+  const w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-state.json'), '{}'); fs.writeFileSync(path.join(w.home, '.bg-private', 'a0-bridge-env.yaml'), 'A: "b"\n');
+  const r = w.run('a0-deploy.sh', ['bizgenie'.slice(0, 0) + 'bridge'], { BRIDGE_REF: BRREF, EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /template differs/); assert.doesNotMatch(w.calls(), /run deploy/);
+});
+test('check-templates is read-only and reports both services', { skip: !haveTools }, () => {
+  let w = world({ svcEnv: [ENVSTG, DB, ISO(), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); let r = w.run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR });
+  assert.match(out(r), /approved reconciliation/); assert.match(out(r), /bridge template vs serving/); assert.match(out(r), /secret-backed env vars/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
+  w = world({ svcEnv: [ENVSTG, ISO()], revEnv: [ENVSTG, ISO()] }); r = w.run('a0-deploy.sh', ['check-templates']); assert.strictEqual(r.status, 0, out(r)); assert.match(out(r), /TEMPLATE CHECK: PASS/); assert.match(out(r), /env variable NAMES/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
+  w = world({ svcEnv: [ENVSTG, DB, ISO('bubblewrap'), NEWREF()], revEnv: [ENVSTG, DB, OLDREF()] }); r = w.run('a0-deploy.sh', ['check-templates'], { EV_RECONCILIATION: EVR }); assert.notStrictEqual(r.status, 0); assert.match(out(r), /TEMPLATE CHECK: FAIL/); assert.doesNotMatch(w.calls(), /run deploy|update-traffic/);
+});
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
   const base = ['--api-image', `${REPO}/bizgenie-api@sha256:${'a'.repeat(64)}`, '--clamav-image', `${REPO}/clamav@sha256:${'b'.repeat(64)}`, '--suffix', 'a2s1', '--tag', 'a2-scanner'];

@@ -1,4 +1,4 @@
-# ---- BG-RELEASE08 A0 consolidated founder run (Cloud Shell). Subcommands: run (default) | shift | rollback.  Stops at the founder workspace-creation checkpoint.
+# ---- BG-RELEASE08 A0 consolidated founder run (Cloud Shell). Subcommands: preflight (read-only) | run (default) | shift | rollback.  Stops at the founder workspace-creation checkpoint.
 # Approvals retained: E1 (done), E2, E4; E3 deferred. This script creates NO secrets, changes NO IAM, enables NO media intake, publishes nothing, generates nothing.
 # Images are the accepted E1 immutable references (below). Nothing is rebuilt.
 set -euo pipefail
@@ -10,7 +10,14 @@ CMD=${1:-run}
 for t in gcloud jq curl git node npm sha256sum tar; do command -v "$t" >/dev/null 2>&1 || die "missing tool: $t"; done
 [ -n "$(gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -1)" ] || die "no active gcloud account"
 case "$CMD" in
+ preflight)
+  say "read-only: API and bridge template compatibility (changes nothing)"
+  read -r -p "EV_RECONCILIATION (founder approval comment URL for the two reviewed API differences; blank to see the check fail closed): " EV_RECONCILIATION; export EV_RECONCILIATION
+  bash "$BG_A0_DIR/a0-deploy.sh" check-templates; echo "Log: $BG_A0_LOG";;
  run)
+  read -r -p "EV_RECONCILIATION (founder approval comment URL in #191 for the two reviewed API template differences): " EV_RECONCILIATION; export EV_RECONCILIATION
+  say "0a. read-only template compatibility, before anything is deployed"
+  bash "$BG_A0_DIR/a0-deploy.sh" check-templates
   say "0. the accepted E1 images exist in the registry with exactly these digests (read-only)"
   for ref in "$API_REF" "$BRIDGE_REF"; do got=$(gcloud artifacts docker images describe "$ref" --project="$P" --format='value(image_summary.digest)') || die "cannot read $ref"; [ "$got" = "${ref##*@}" ] || die "registry digest differs for ${ref%%@*}"; done; echo "both digests confirmed"
   say "1. tagged NO-TRAFFIC API revision (serving API unchanged; template/config validated before deploy)"
@@ -38,5 +45,5 @@ case "$CMD" in
   echo "If anything looks wrong:   bash a0-founder-run.sh rollback"
   echo "Log: $BG_A0_LOG";;
  rollback) bash "$BG_A0_DIR/a0-deploy.sh" rollback-bridge;;
- *) die "usage: a0-founder-run.sh run|shift|rollback";;
+ *) die "usage: a0-founder-run.sh preflight|run|shift|rollback";;
 esac
