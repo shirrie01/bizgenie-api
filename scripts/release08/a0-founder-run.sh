@@ -464,8 +464,18 @@ for t in gcloud jq curl sha256sum; do command -v "$t" >/dev/null 2>&1 || die "mi
 APIDIG=$(jq -r '.apiDigest // ""' "$STATE"); EVTAG=$(jq -r '.evTag // ""' "$STATE"); [[ "$APIDIG" =~ ^sha256:[a-f0-9]{64}$ && -n "$EVTAG" ]] || die "the state lacks the accepted API digest or EV_TAG: run the bridge step first"
 REV=$(jq -r '.bridgeRevision // ""' "$STATE"); DIG=$(jq -r '.bridgeDigest // ""' "$STATE"); APIREV=$(jq -r '.apiRevision // ""' "$STATE"); [ -n "$REV" ] && [ -n "$DIG" ] && [ -n "$APIREV" ] || die "state file incomplete"
 SJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "cannot describe the bridge service"
-URL=$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .url][0] // ""' <<<"$SJ"); [ -n "$URL" ] || die "tag $TAG not found"
-[ "$(jq -r --arg t "$TAG" '[.status.traffic[]? | select(.tag == $t) | .revisionName][0] // ""' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
+# The WHOLE traffic response is validated before the smoke target is chosen and before any request or evidence write: a non-empty array of objects, every entry with a non-empty string revision
+# name and an integer percentage in [0,100], optional string tags that occur at most once across the array (whatever the revision or URL), no duplicate (revision, tag) target.
+# Then: exactly one entry carries the A0 tag, it is the deployed A0 revision at 0 %, and the recorded baseline is the only revision serving, at exactly 100 %.
+BASE_BRIDGE_REV=bizgenie-studio-bridge-staging-step7-c023184c
+jq -e '(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))' <<<"$SJ" >/dev/null 2>&1 \
+  || die "the bridge traffic response is malformed or ambiguous (invalid entries, percentages, or a tag that occurs more than once): no smoke target is chosen"
+[ "$(jq --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)] | length' <<<"$SJ")" = 1 ] || die "tag $TAG does not occur exactly once in the traffic response"
+[ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].revisionName' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
+[ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].percent' <<<"$SJ")" = 0 ] || die "the A0 revision already receives traffic: this is a pre-shift smoke only"
+jq -e --arg b "$BASE_BRIDGE_REV" '[.status.traffic[] | select(.percent > 0)] | (length == 1) and (.[0].revisionName == $b) and (.[0].percent == 100)' <<<"$SJ" >/dev/null 2>&1 || die "the recorded baseline is not the only revision serving at exactly 100%"
+URL=$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].url // ""' <<<"$SJ")
+[[ "$URL" =~ ^https://${TAG}---[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.run\.app$ ]] || die "the tagged URL is missing or not the expected https://${TAG}--- Cloud Run host"
 LIVE=$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)') || die "cannot read the live digest"; LIVE=${LIVE##*@}
 [[ "$LIVE" =~ ^sha256:[a-f0-9]{64}$ ]] || die "the live image digest is missing or malformed"; [ "$LIVE" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
 ORIGIN=https://bizgenie-studio-staging.pages.dev; FAIL=0; CHECKS='[]'

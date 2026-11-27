@@ -17,7 +17,7 @@ function world({ svcEnv, revEnv, svcSa = 'sa@x', revSa = 'sa@x', bridgeEnvOnNew,
   const W = (n, o) => fs.writeFileSync(path.join(d, n), JSON.stringify(o));
   const sSpec = tmpl(svcEnv || envA, svcSa), rSpec = tmpl(revEnv || envA, revSa);
   W(`svc-bizgenie-api-staging.json`, svcJson('a', sSpec, [{ revisionName: BA, percent: 100 }, { revisionName: NEWA, percent: 0, tag: 'a0-dfd49116' }], BA)); W(`rev-${BA}.json`, revJson(rSpec, BAD)); W(`rev-${NEWA}.json`, revJson(rSpec, NAD));
-  W(`svc-bizgenie-studio-bridge-staging.json`, svcJson('b', sSpec, [{ revisionName: BB, percent: 100 }, { revisionName: NEWB, percent: 0, tag: 'a0-dfd49116', url: 'https://a0---b.run.app' }], BB));
+  W(`svc-bizgenie-studio-bridge-staging.json`, svcJson('b', sSpec, [{ revisionName: BB, percent: 100 }, { revisionName: NEWB, percent: 0, tag: 'a0-dfd49116', url: 'https://a0-dfd49116---bizgenie-studio-bridge-staging-abc123-ew.a.run.app' }], BB));
   W(`rev-${BB}.json`, revJson(rSpec, BBD)); const nspec = tmpl([{ name: 'BG_BRIDGE_REVISION', value: bridgeEnvOnNew ?? NEWA }, ...FALSE_FLAGS.map((n) => ({ name: n, value: 'false' })), { name: 'BG_BRIDGE_REVIEW_REF', value: APPR_EV }]); W(`rev-${NEWB}.json`, revJson(nspec, NBD));
   const untag = (f) => { const j = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8')); j.status.traffic = j.status.traffic.filter((x) => !x.tag); fs.writeFileSync(path.join(d, f), JSON.stringify(j)); };
   if (preTagged !== true && preTagged !== 'api') untag('svc-bizgenie-api-staging.json'); if (preTagged !== true) untag('svc-bizgenie-studio-bridge-staging.json');
@@ -584,6 +584,40 @@ test('J3 distinct tags on legitimate zero-percent revisions, and ordinary valid 
   }
   const ok = readyToShift(); const res = ok.r(); assert.ok(/update-traffic/.test(ok.w.calls()), 'the ordinary pre-shift readback (baseline 100%, one 0% tagged revision) must still reach the update');
   assert.ok(!/unrelated/.test(res.stderr));
+});
+
+// ======== Smoke target must be unambiguous: the whole traffic response is validated before any request or evidence (Codex P1 on dd280765) ========
+const SMOKE_TAG = 'a0-dfd49116', SMOKE_PROJ = 'project-sentinel-55';
+const smokeReady = () => {
+  const s = readyToShift(); fs.copyFileSync(path.join(__dirname, 'fixtures', 'release08', 'curl-stub.sh'), path.join(s.w.home, 'bin', 'curl')); fs.chmodSync(path.join(s.w.home, 'bin', 'curl'), 0o755);
+  fs.writeFileSync(path.join(s.w.d, 'auth-code'), '200'); fs.writeFileSync(path.join(s.w.d, 'auth-body'), JSON.stringify({ workspaces: [{ project_id: SMOKE_PROJ }] }));
+  const f = path.join(s.w.d, 'svc-bizgenie-studio-bridge-staging.json'); const clean = fs.readFileSync(f, 'utf8');
+  const evid = path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json');
+  return { ...s, f, clean, evid, setTraffic: (arr) => { const j = JSON.parse(clean); j.status.traffic = arr; fs.writeFileSync(f, JSON.stringify(j)); }, restore: () => fs.writeFileSync(f, clean), smoke: () => s.w.run('a0-smoke.sh', [], { EXPECT_PROJECT_H: sha8(SMOKE_PROJ) }, 'TOKEN-SENTINEL-xyz\n'), requests: () => (fs.existsSync(path.join(s.w.d, 'curl-argv.log')) ? fs.readFileSync(path.join(s.w.d, 'curl-argv.log'), 'utf8').trim() : '') };
+};
+const SB = { revisionName: BB, percent: 100 }, ST = (u) => ({ revisionName: NEWB, percent: 0, tag: SMOKE_TAG, url: u ?? `https://${SMOKE_TAG}---svc.run.app` }), SX = (t, u, p = 0) => ({ revisionName: X99, percent: p, tag: t, url: u ?? `https://${t}---svc.run.app` });
+const SMOKE_INVALID = {
+  dupSameUrl: [SB, ST(), SX(SMOKE_TAG, `https://${SMOKE_TAG}---svc.run.app`)], dupDifferentUrl: [SB, ST(), SX(SMOKE_TAG, 'https://a0-dfd49116---other.run.app')], wrongRevisionFirst: [SB, SX(SMOKE_TAG), ST()], duplicatePair: [SB, ST(), ST()], mixedPercentDup: [{ revisionName: BB, percent: 60 }, ST(), SX(SMOKE_TAG, undefined, 40)],
+  targetServingSome: [{ revisionName: BB, percent: 95 }, { ...ST(), percent: 5 }], targetServingAll: [{ ...ST(), percent: 100 }], negative: [SB, ST(), SX('other', undefined, -1)], fractional: [{ revisionName: BB, percent: 99.5 }, ST(), SX('other', undefined, 0.5)], over100: [{ revisionName: BB, percent: 101 }, ST()], stringPercent: [SB, ST(), { ...SX('other'), percent: '0' }], missingPercent: [SB, ST(), { revisionName: X99, tag: 'other' }], nullPercent: [SB, { ...ST(), percent: null }],
+  noTagEntry: [SB], tagOnOtherRevision: [SB, SX(SMOKE_TAG)], urlMissing: [SB, { revisionName: NEWB, percent: 0, tag: SMOKE_TAG }], urlHttp: [SB, ST('http://a0-dfd49116---svc.run.app')], urlWrongHost: [SB, ST('https://evil.example.com')], urlWrongPrefix: [SB, ST('https://other-tag---svc.run.app')], urlWithPath: [SB, ST('https://a0-dfd49116---svc.run.app/x')], urlWithCreds: [SB, ST('https://u:p@a0-dfd49116---svc.run.app')], urlNonString: [SB, { ...ST(), url: 7 }],
+  urlOnlyEntry: [SB, ST(), { tag: 'z', url: 'https://z---svc.run.app', percent: 0 }], latestRevisionEntry: [SB, ST(), { latestRevision: true, percent: 0 }], emptyName: [SB, ST(), { revisionName: '', percent: 0 }], nonStringTag: [SB, ST(), { revisionName: X99, percent: 0, tag: 7 }], notArray: { revisionName: BB }, emptyArray: [], nullTraffic: null, noBaseline: [ST()], otherServing: [{ revisionName: X99, percent: 100 }, ST()], twoServing: [{ revisionName: BB, percent: 50 }, { revisionName: X99, percent: 50 }, ST()],
+};
+test('L1 smoke refuses an ambiguous or malformed traffic response: nonzero, no HTTP request, no PASS evidence, earlier evidence removed, and a later clean readback cannot authorise a shift', { skip: !haveTools || !have('curl') }, () => {
+  for (const [name, arr] of Object.entries(SMOKE_INVALID)) {
+    const s = smokeReady(); assert.ok(fs.existsSync(s.evid), 'precondition: earlier PASS evidence exists'); s.setTraffic(arr); const r = s.smoke();
+    assert.notStrictEqual(r.status, 0, name); assert.strictEqual(s.requests(), '', name + ': an HTTP request was made'); assert.ok(!fs.existsSync(s.evid), name + ': PASS evidence exists'); assert.ok(!(r.stdout + r.stderr).includes('TOKEN-SENTINEL'), name);
+    s.restore(); const sh = s.w.run('a0-deploy.sh', ['shift-bridge'], { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB }); assert.notStrictEqual(sh.status, 0, name + ': shift'); assert.doesNotMatch(s.w.calls(), /update-traffic/, name + ': a clean readback authorised a shift');
+  }
+});
+test('L2 smoke still passes and writes evidence for a valid, unique zero-percent A0 tag (with other distinct zero-percent tags), after the authenticated read', { skip: !haveTools || !have('curl') }, () => {
+  const valid = { plain: [SB, ST()], extraTag: [SB, ST(), SX('other-tag')], untaggedZero: [SB, ST(), { revisionName: X99, percent: 0 }], taggedBaseline: [{ ...SB, tag: 'base', url: 'https://base---svc.run.app' }, ST()] };
+  for (const [name, arr] of Object.entries(valid)) {
+    const s = smokeReady(); fs.rmSync(s.evid); s.setTraffic(arr); const r = s.smoke(); assert.strictEqual(r.status, 0, name + out(r)); assert.ok(fs.existsSync(s.evid), name); const e = JSON.parse(fs.readFileSync(s.evid, 'utf8')); assert.strictEqual(e.authenticatedRead, true); assert.deepStrictEqual(e.checks.map((c) => c.name).sort(), [...EXPECTED_CHECKS].sort()); assert.ok(s.requests().length > 0);
+    s.restore(); const sh = s.w.run('a0-deploy.sh', ['shift-bridge'], { BRIDGE_REF: BRREF, A0_CONFIRM_REVISION: NEWB }); assert.match(s.w.calls(), /update-traffic/, name + ': valid evidence must still be usable by the shift (stub never settles, so a restore follows)');
+  }
+});
+test('L3 the smoke target is chosen only after validation: the auth request is never sent to a URL taken from an ambiguous response', { skip: !haveTools || !have('curl') }, () => {
+  const s = smokeReady(); s.setTraffic([SB, SX(SMOKE_TAG, 'https://a0-dfd49116---attacker.run.app'), ST()]); const r = s.smoke(); assert.notStrictEqual(r.status, 0); assert.ok(!/attacker/.test(s.requests()), 'a request reached the ambiguous URL'); assert.strictEqual(s.requests(), '');
 });
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
