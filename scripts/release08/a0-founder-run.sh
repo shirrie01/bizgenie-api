@@ -39,7 +39,11 @@ for e in "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG"; do [[ "$e" =~ $EVR
 
 say "1/6 baseline safeguards (read-only): the serving bridge and API must still be the recorded rollback targets"
 BJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "the bridge service metadata command failed"; AJ=$(gcloud run services describe "$API_SVC" --project="$P" --region="$R" --format=json) || die "the API service metadata command failed"
-serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
+# Traffic metadata as live Cloud Run reports it: an ABSENT percent on a non-serving TAGGED entry means 0; anything else malformed (null, wrong type, untagged omission, duplicate tags/targets) stops here.
+TRAFFIC_NORM='def norm: if type == "array" then map(if type == "object" and (has("percent") | not) and ((.tag? // null) | type == "string" and length > 0) then . + {percent: 0} else . end) else . end;'
+traffic_ok() { jq -e "$TRAFFIC_NORM"' (.status.traffic | norm | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))' <<<"$1" >/dev/null 2>&1; }
+serving() { jq -r "$TRAFFIC_NORM"' [.status.traffic | norm | .[] | select(.percent > 0) | .revisionName] | unique | join(" ")' <<<"$1"; }
+traffic_ok "$BJ" && traffic_ok "$AJ" || die "a service traffic response is malformed or ambiguous (explicit null or wrong-typed percentages, duplicate tags or targets, untagged omissions)"
 [ "$(serving "$BJ")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision is not $BASE_BRIDGE_REV (drift): re-run the inventory"
 [ "$(serving "$AJ")" = "$BASE_API_REV" ] || die "API serving revision is not $BASE_API_REV (drift): re-run the inventory"
 # Cloud Run returns status.imageDigest as <repository>@sha256:<64 hex>; reduce to the bare digest and fail closed on anything else (missing, malformed, uppercase, short).
@@ -53,7 +57,7 @@ echo "bridge $BASE_BRIDGE_REV and API $BASE_API_REV are serving and match the re
 
 say "2/6 the new API revision: Ready, tagged, 0% traffic, image equals API_REF"
 [ "$(dig_of "$NEW_API_REVISION")" = "${API_REF##*@}" ] || die "NEW_API_REVISION image digest differs from API_REF"
-jq -e --arg r "$NEW_API_REVISION" --arg t "$NEW_API_TAG" '[.status.traffic[]? | select(.revisionName == $r and .tag == $t and ((.percent // 0) == 0))] | length == 1' <<<"$AJ" >/dev/null || die "revision is not tagged $NEW_API_TAG at 0% traffic"
+jq -e --arg r "$NEW_API_REVISION" --arg t "$NEW_API_TAG" "$TRAFFIC_NORM"' [.status.traffic | norm | .[] | select(.revisionName == $r and .tag == $t and .percent == 0)] | length == 1' <<<"$AJ" >/dev/null || die "revision is not tagged $NEW_API_TAG at 0% traffic"
 TARGET_URL=$(jq -r --arg t "$NEW_API_TAG" '[.status.traffic[]? | select(.tag == $t) | .url][0] // ""' <<<"$AJ"); AUDIENCE=$(jq -r '.status.url // ""' <<<"$AJ")
 # BEGIN url-validation (the service's own status.url is the authority; both Cloud Run hostname styles are accepted; nothing else is)
 valid_service_urls() { # $1 = service.url (audience)  $2 = tagged url  $3 = expected tag
@@ -131,7 +135,7 @@ h12() { sha256sum | cut -c1-12; }
 # Container shape: every container has a DNS-label name (lowercase letter first, letter or digit last, at most 63 characters) and a well-formed, duplicate-free environment list. Duplicates are
 # NEVER collapsed into a map: they are refused outright, before comparing, fingerprinting, adopting or resuming.
 CONTAINERS_OK='type == "array" and length >= 1 and all(.[]; type == "object" and (.name | type == "string" and test("\\A[a-z]([a-z0-9-]{0,61}[a-z0-9])?\\z")) and ((.env // []) | type == "array" and all(.[]; type == "object" and (.name | type == "string" and length > 0) and ((has("value") and has("valueFrom")) | not)) and ((map(.name) | length) == (map(.name) | unique | length))))'
-valid_service_json() { jq -e '.spec.template.spec.containers != null and (.status.traffic | type == "array") and (([.status.traffic[]? | objects | .tag? | strings | select(length > 0)] | length) == ([.status.traffic[]? | objects | .tag? | strings | select(length > 0)] | unique | length))' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.template.spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
+valid_service_json() { traffic_array_ok "$1" && jq -e '.spec.template.spec.containers != null and (.status.traffic | type == "array") and (([.status.traffic[]? | objects | .tag? | strings | select(length > 0)] | length) == ([.status.traffic[]? | objects | .tag? | strings | select(length > 0)] | unique | length))' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.template.spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
 valid_revision_json() { jq -e '.spec.containers != null and (.status.conditions | type == "array")' <<<"$1" >/dev/null 2>&1 && jq -e ".spec.containers | $CONTAINERS_OK" <<<"$1" >/dev/null 2>&1; }
 read_svc() { local o; o=$(describe "$1") || { echo "STOP: the metadata command for service $1 failed (nonzero exit status): its output is not accepted" >&2; return 1; }; valid_service_json "$o" || { echo "STOP: service $1 metadata is malformed, has a duplicate or malformed environment entry, an invalid container name, or a traffic tag that occurs more than once (names only shown)" >&2; return 1; }; printf '%s' "$o"; }
 read_rev() { local o; o=$(revjson "$1") || { echo "STOP: the metadata command for revision $1 failed (nonzero exit status): its output is not accepted" >&2; return 1; }; valid_revision_json "$o" || { echo "STOP: revision $1 metadata is malformed, has a duplicate or malformed environment entry, or an invalid container name (names only shown)" >&2; return 1; }; printf '%s' "$o"; }
@@ -307,10 +311,13 @@ mark_indeterminate() { umask 077; mkdir -p "$PRIV"; jq -n --arg at "$(date -u +%
 # Traffic readback proof. EVERY entry is validated BEFORE any filtering or selection: the traffic list must be a non-empty array of objects, each with a revision name that proves the exact
 # revision (tag/URL-only and latestRevision targets are refused), an integer percentage in [0,100] (missing, null, string, boolean, negative, fractional and over-100 are refused), an optional
 # string tag, and no duplicate (revision, tag) target. Valid 0 % tagged revisions are fine. Only after that, exactly one revision may carry traffic: the expected one at exactly 100 %.
-TRAFFIC_ARRAY_OK='(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))'
-traffic_array_ok() { jq -e "$TRAFFIC_ARRAY_OK" <<<"$1" >/dev/null 2>&1; }
+# Live Cloud Run metadata omits `percent` on non-serving TAGGED entries (protobuf JSON omits zero values; founder read-only evidence #191 7231616370/7231653627). `norm` turns an ABSENT percent into 0
+# only for an object with a non-empty string tag, and only before validation; explicit null, wrong types, untagged entries and every other malformed value stay malformed (there is no `// 0` fallback).
+TRAFFIC_NORM='def norm: if type == "array" then map(if type == "object" and (has("percent") | not) and ((.tag? // null) | type == "string" and length > 0) then . + {percent: 0} else . end) else . end;'
+TRAFFIC_ARRAY_OK='(.status.traffic | norm | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))'
+traffic_array_ok() { jq -e "$TRAFFIC_NORM $TRAFFIC_ARRAY_OK" <<<"$1" >/dev/null 2>&1; }
 traffic_exact() { # $1 service json  $2 the one revision that must carry exactly 100 %
-  traffic_array_ok "$1" && jq -e --arg r "$2" '[.status.traffic[] | select(.percent > 0)] as $p | ($p | length) == 1 and $p[0].revisionName == $r and $p[0].percent == 100 and ([.status.traffic[].percent] | add) == 100' <<<"$1" >/dev/null 2>&1; }
+  traffic_array_ok "$1" && jq -e --arg r "$2" "$TRAFFIC_NORM"' (.status.traffic | norm) as $t | [$t[] | select(.percent > 0)] as $p | ($p | length) == 1 and $p[0].revisionName == $r and $p[0].percent == 100 and ([$t[].percent] | add) == 100' <<<"$1" >/dev/null 2>&1; }
 # Exact baseline readback: the service is readable and well-formed, and exactly one traffic target carries traffic: the recorded baseline revision at 100 %.
 baseline_readback_ok() { local j; j=$(read_svc "$BRIDGE_SVC" 2>/dev/null) || return 1; traffic_exact "$j" "$BASE_BRIDGE_REV"; }
 restore_baseline() { # $1 = why. Returns only when the baseline was PROVEN by readback; otherwise exits INDETERMINATE.
@@ -465,24 +472,32 @@ APIDIG=$(jq -r '.apiDigest // ""' "$STATE"); EVTAG=$(jq -r '.evTag // ""' "$STAT
 REV=$(jq -r '.bridgeRevision // ""' "$STATE"); DIG=$(jq -r '.bridgeDigest // ""' "$STATE"); APIREV=$(jq -r '.apiRevision // ""' "$STATE"); [ -n "$REV" ] && [ -n "$DIG" ] && [ -n "$APIREV" ] || die "state file incomplete"
 SJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "cannot describe the bridge service"
 # The WHOLE traffic response is validated before the smoke target is chosen and before any request or evidence write: a non-empty array of objects, every entry with a non-empty string revision
-# name and an integer percentage in [0,100], optional string tags that occur at most once across the array (whatever the revision or URL), no duplicate (revision, tag) target.
+# name and an integer percentage in [0,100] (an ABSENT percent is accepted only on an entry with a non-empty string tag and is read as 0, exactly as live Cloud Run reports non-serving tagged
+# revisions; null, wrong types and untagged omissions are malformed), optional string tags that occur at most once across the array (whatever the revision or URL), no duplicate (revision, tag).
 # Then: exactly one entry carries the A0 tag, it is the deployed A0 revision at 0 %, and the recorded baseline is the only revision serving, at exactly 100 %.
 BASE_BRIDGE_REV=bizgenie-studio-bridge-staging-step7-c023184c
-jq -e '(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))' <<<"$SJ" >/dev/null 2>&1 \
+NORM='def norm: if type == "array" then map(if type == "object" and (has("percent") | not) and ((.tag? // null) | type == "string" and length > 0) then . + {percent: 0} else . end) else . end;'
+jq -e "$NORM"' (.status.traffic | norm | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))' <<<"$SJ" >/dev/null 2>&1 \
   || die "the bridge traffic response is malformed or ambiguous (invalid entries, percentages, or a tag that occurs more than once): no smoke target is chosen"
-[ "$(jq --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)] | length' <<<"$SJ")" = 1 ] || die "tag $TAG does not occur exactly once in the traffic response"
-[ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].revisionName' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
-[ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].percent' <<<"$SJ")" = 0 ] || die "the A0 revision already receives traffic: this is a pre-shift smoke only"
-jq -e --arg b "$BASE_BRIDGE_REV" '[.status.traffic[] | select(.percent > 0)] | (length == 1) and (.[0].revisionName == $b) and (.[0].percent == 100)' <<<"$SJ" >/dev/null 2>&1 || die "the recorded baseline is not the only revision serving at exactly 100%"
+TRAFFIC=$(jq -c "$NORM"' .status.traffic | norm' <<<"$SJ") || die "cannot normalise the validated traffic response"
+[ "$(jq --arg t "$TAG" '[.[] | select(.tag == $t)] | length' <<<"$TRAFFIC")" = 1 ] || die "tag $TAG does not occur exactly once in the traffic response"
+[ "$(jq -r --arg t "$TAG" '[.[] | select(.tag == $t)][0].revisionName' <<<"$TRAFFIC")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
+[ "$(jq -r --arg t "$TAG" '[.[] | select(.tag == $t)][0].percent' <<<"$TRAFFIC")" = 0 ] || die "the A0 revision already receives traffic: this is a pre-shift smoke only"
+jq -e --arg b "$BASE_BRIDGE_REV" '[.[] | select(.percent > 0)] | (length == 1) and (.[0].revisionName == $b) and (.[0].percent == 100)' <<<"$TRAFFIC" >/dev/null 2>&1 || die "the recorded baseline is not the only revision serving at exactly 100%"
 # `-q` MUST be the FIRST curl argument: it disables every default configuration file (~/.curlrc, $CURL_HOME/.curlrc, $XDG_CONFIG_HOME/curlrc, ~/.config/curlrc), which could otherwise add a destination and send the bearer header to it.
-# DESTINATION IDENTITY. The founder's bearer token may only ever be sent to the tagged revision of the canonical bridge service. The canonical origin is PINNED here (the regional Cloud Run host of
-# bizgenie-studio-bridge-staging in project bizgenie-backend, europe-west1; project number from the recorded inventory and the Studio profile's bridge origin) and is cross-checked three ways against
-# the service the metadata command returned for that project, region and name: the service's own name, its own status.url, and the tagged URL, which must be EXACTLY the origin's host prefixed by
-# "<tag>---". A tagged host of any other service, region, project, scheme, port, path, query, credential or a lookalike suffix can never match. Nothing is derived from a URL prefix or the .run.app suffix.
-BRIDGE_SERVICE_ORIGIN=https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app
-[ "$(jq -r '.metadata.name // ""' <<<"$SJ")" = "$BRIDGE_SVC" ] || die "the service metadata is not for $BRIDGE_SVC: no destination is trusted"
+# DESTINATION IDENTITY. The founder's bearer token may only ever be sent to the tagged revision of the canonical bridge service. The canonical identity is PINNED from the founder's read-only live
+# evidence (#191 comments 7231616370 and 7231653627): project number and namespace 303691956826, region europe-west1 (the metadata command is run with explicit --project/--region/service name),
+# service bizgenie-studio-bridge-staging, status.url below, and the two registered URLs in the run.googleapis.com/urls annotation. Before any request, token prompt or evidence write the service must
+# report exactly that name, namespace, status.url and registered-URL set, and the tagged URL must equal EXACTLY "https://<tag>---<host of status.url>". The other registered (regional) host is NOT an
+# accepted destination, and nothing is derived from a URL prefix or the .run.app suffix.
+BRIDGE_SERVICE_ORIGIN=https://bizgenie-studio-bridge-staging-g3z4wwvftq-ew.a.run.app
+BRIDGE_REGIONAL_ORIGIN=https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app
+BRIDGE_PROJECT_NUMBER=303691956826
+[ "$(jq -r '.metadata.name // "" | if type == "string" then . else "" end' <<<"$SJ")" = "$BRIDGE_SVC" ] || die "the service metadata is not for $BRIDGE_SVC: no destination is trusted"
+[ "$(jq -r '.metadata.namespace // "" | if type == "string" then . else "" end' <<<"$SJ")" = "$BRIDGE_PROJECT_NUMBER" ] || die "the service namespace is not the bizgenie-backend project number: no destination is trusted"
 [ "$(jq -r '.status.url // "" | if type == "string" then . else "" end' <<<"$SJ")" = "$BRIDGE_SERVICE_ORIGIN" ] || die "the service's own URL is absent, malformed or not the canonical bridge origin: no destination is trusted"
-URL=$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].url // "" | if type == "string" then . else "" end' <<<"$SJ")
+jq -e --arg a "$BRIDGE_SERVICE_ORIGIN" --arg b "$BRIDGE_REGIONAL_ORIGIN" '(.metadata.annotations["run.googleapis.com/urls"] // null | if type == "string" then (try fromjson catch null) else null end) as $u | ($u | type == "array") and (($u | sort) == ([$a, $b] | sort))' <<<"$SJ" >/dev/null 2>&1 || die "the service's registered URLs are absent, malformed or not exactly the two canonical bridge URLs: no destination is trusted"
+URL=$(jq -r --arg t "$TAG" '[.[] | select(.tag == $t)][0].url // "" | if type == "string" then . else "" end' <<<"$TRAFFIC")
 [ "$URL" = "https://${TAG}---${BRIDGE_SERVICE_ORIGIN#https://}" ] || die "the tagged URL is not exactly the tagged host of the canonical bridge service: the bearer token will not be sent"
 LIVE=$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)') || die "cannot read the live digest"; LIVE=${LIVE##*@}
 [[ "$LIVE" =~ ^sha256:[a-f0-9]{64}$ ]] || die "the live image digest is missing or malformed"; [ "$LIVE" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"

@@ -28,7 +28,11 @@ for e in "$EV_APPROVAL" "$EV_SCOPE" "$EV_ROLLBACK" "$EV_TAG"; do [[ "$e" =~ $EVR
 
 say "1/6 baseline safeguards (read-only): the serving bridge and API must still be the recorded rollback targets"
 BJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "the bridge service metadata command failed"; AJ=$(gcloud run services describe "$API_SVC" --project="$P" --region="$R" --format=json) || die "the API service metadata command failed"
-serving() { jq -r --arg l "$(jq -r '.status.latestReadyRevisionName // ""' <<<"$1")" '[.status.traffic[]? | select((.percent // 0) > 0) | (.revisionName // (if .latestRevision == true then $l else empty end))] | unique | join(" ")' <<<"$1"; }
+# Traffic metadata as live Cloud Run reports it: an ABSENT percent on a non-serving TAGGED entry means 0; anything else malformed (null, wrong type, untagged omission, duplicate tags/targets) stops here.
+TRAFFIC_NORM='def norm: if type == "array" then map(if type == "object" and (has("percent") | not) and ((.tag? // null) | type == "string" and length > 0) then . + {percent: 0} else . end) else . end;'
+traffic_ok() { jq -e "$TRAFFIC_NORM"' (.status.traffic | norm | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))' <<<"$1" >/dev/null 2>&1; }
+serving() { jq -r "$TRAFFIC_NORM"' [.status.traffic | norm | .[] | select(.percent > 0) | .revisionName] | unique | join(" ")' <<<"$1"; }
+traffic_ok "$BJ" && traffic_ok "$AJ" || die "a service traffic response is malformed or ambiguous (explicit null or wrong-typed percentages, duplicate tags or targets, untagged omissions)"
 [ "$(serving "$BJ")" = "$BASE_BRIDGE_REV" ] || die "bridge serving revision is not $BASE_BRIDGE_REV (drift): re-run the inventory"
 [ "$(serving "$AJ")" = "$BASE_API_REV" ] || die "API serving revision is not $BASE_API_REV (drift): re-run the inventory"
 # Cloud Run returns status.imageDigest as <repository>@sha256:<64 hex>; reduce to the bare digest and fail closed on anything else (missing, malformed, uppercase, short).
@@ -42,7 +46,7 @@ echo "bridge $BASE_BRIDGE_REV and API $BASE_API_REV are serving and match the re
 
 say "2/6 the new API revision: Ready, tagged, 0% traffic, image equals API_REF"
 [ "$(dig_of "$NEW_API_REVISION")" = "${API_REF##*@}" ] || die "NEW_API_REVISION image digest differs from API_REF"
-jq -e --arg r "$NEW_API_REVISION" --arg t "$NEW_API_TAG" '[.status.traffic[]? | select(.revisionName == $r and .tag == $t and ((.percent // 0) == 0))] | length == 1' <<<"$AJ" >/dev/null || die "revision is not tagged $NEW_API_TAG at 0% traffic"
+jq -e --arg r "$NEW_API_REVISION" --arg t "$NEW_API_TAG" "$TRAFFIC_NORM"' [.status.traffic | norm | .[] | select(.revisionName == $r and .tag == $t and .percent == 0)] | length == 1' <<<"$AJ" >/dev/null || die "revision is not tagged $NEW_API_TAG at 0% traffic"
 TARGET_URL=$(jq -r --arg t "$NEW_API_TAG" '[.status.traffic[]? | select(.tag == $t) | .url][0] // ""' <<<"$AJ"); AUDIENCE=$(jq -r '.status.url // ""' <<<"$AJ")
 # BEGIN url-validation (the service's own status.url is the authority; both Cloud Run hostname styles are accepted; nothing else is)
 valid_service_urls() { # $1 = service.url (audience)  $2 = tagged url  $3 = expected tag

@@ -13,24 +13,32 @@ APIDIG=$(jq -r '.apiDigest // ""' "$STATE"); EVTAG=$(jq -r '.evTag // ""' "$STAT
 REV=$(jq -r '.bridgeRevision // ""' "$STATE"); DIG=$(jq -r '.bridgeDigest // ""' "$STATE"); APIREV=$(jq -r '.apiRevision // ""' "$STATE"); [ -n "$REV" ] && [ -n "$DIG" ] && [ -n "$APIREV" ] || die "state file incomplete"
 SJ=$(gcloud run services describe "$BRIDGE_SVC" --project="$P" --region="$R" --format=json) || die "cannot describe the bridge service"
 # The WHOLE traffic response is validated before the smoke target is chosen and before any request or evidence write: a non-empty array of objects, every entry with a non-empty string revision
-# name and an integer percentage in [0,100], optional string tags that occur at most once across the array (whatever the revision or URL), no duplicate (revision, tag) target.
+# name and an integer percentage in [0,100] (an ABSENT percent is accepted only on an entry with a non-empty string tag and is read as 0, exactly as live Cloud Run reports non-serving tagged
+# revisions; null, wrong types and untagged omissions are malformed), optional string tags that occur at most once across the array (whatever the revision or URL), no duplicate (revision, tag).
 # Then: exactly one entry carries the A0 tag, it is the deployed A0 revision at 0 %, and the recorded baseline is the only revision serving, at exactly 100 %.
 BASE_BRIDGE_REV=bizgenie-studio-bridge-staging-step7-c023184c
-jq -e '(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))' <<<"$SJ" >/dev/null 2>&1 \
+NORM='def norm: if type == "array" then map(if type == "object" and (has("percent") | not) and ((.tag? // null) | type == "string" and length > 0) then . + {percent: 0} else . end) else . end;'
+jq -e "$NORM"' (.status.traffic | norm | type == "array" and length >= 1 and all(.[]; type == "object" and (.percent | type == "number" and . == floor and . >= 0 and . <= 100) and (.revisionName | type == "string" and length > 0) and ((has("tag") | not) or (.tag | type == "string" and length > 0))) and (([.[] | [.revisionName, (.tag // "")]] | length) == ([.[] | [.revisionName, (.tag // "")]] | unique | length)) and (([.[] | .tag? // empty] | length) == ([.[] | .tag? // empty] | unique | length)))' <<<"$SJ" >/dev/null 2>&1 \
   || die "the bridge traffic response is malformed or ambiguous (invalid entries, percentages, or a tag that occurs more than once): no smoke target is chosen"
-[ "$(jq --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)] | length' <<<"$SJ")" = 1 ] || die "tag $TAG does not occur exactly once in the traffic response"
-[ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].revisionName' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
-[ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].percent' <<<"$SJ")" = 0 ] || die "the A0 revision already receives traffic: this is a pre-shift smoke only"
-jq -e --arg b "$BASE_BRIDGE_REV" '[.status.traffic[] | select(.percent > 0)] | (length == 1) and (.[0].revisionName == $b) and (.[0].percent == 100)' <<<"$SJ" >/dev/null 2>&1 || die "the recorded baseline is not the only revision serving at exactly 100%"
+TRAFFIC=$(jq -c "$NORM"' .status.traffic | norm' <<<"$SJ") || die "cannot normalise the validated traffic response"
+[ "$(jq --arg t "$TAG" '[.[] | select(.tag == $t)] | length' <<<"$TRAFFIC")" = 1 ] || die "tag $TAG does not occur exactly once in the traffic response"
+[ "$(jq -r --arg t "$TAG" '[.[] | select(.tag == $t)][0].revisionName' <<<"$TRAFFIC")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
+[ "$(jq -r --arg t "$TAG" '[.[] | select(.tag == $t)][0].percent' <<<"$TRAFFIC")" = 0 ] || die "the A0 revision already receives traffic: this is a pre-shift smoke only"
+jq -e --arg b "$BASE_BRIDGE_REV" '[.[] | select(.percent > 0)] | (length == 1) and (.[0].revisionName == $b) and (.[0].percent == 100)' <<<"$TRAFFIC" >/dev/null 2>&1 || die "the recorded baseline is not the only revision serving at exactly 100%"
 # `-q` MUST be the FIRST curl argument: it disables every default configuration file (~/.curlrc, $CURL_HOME/.curlrc, $XDG_CONFIG_HOME/curlrc, ~/.config/curlrc), which could otherwise add a destination and send the bearer header to it.
-# DESTINATION IDENTITY. The founder's bearer token may only ever be sent to the tagged revision of the canonical bridge service. The canonical origin is PINNED here (the regional Cloud Run host of
-# bizgenie-studio-bridge-staging in project bizgenie-backend, europe-west1; project number from the recorded inventory and the Studio profile's bridge origin) and is cross-checked three ways against
-# the service the metadata command returned for that project, region and name: the service's own name, its own status.url, and the tagged URL, which must be EXACTLY the origin's host prefixed by
-# "<tag>---". A tagged host of any other service, region, project, scheme, port, path, query, credential or a lookalike suffix can never match. Nothing is derived from a URL prefix or the .run.app suffix.
-BRIDGE_SERVICE_ORIGIN=https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app
-[ "$(jq -r '.metadata.name // ""' <<<"$SJ")" = "$BRIDGE_SVC" ] || die "the service metadata is not for $BRIDGE_SVC: no destination is trusted"
+# DESTINATION IDENTITY. The founder's bearer token may only ever be sent to the tagged revision of the canonical bridge service. The canonical identity is PINNED from the founder's read-only live
+# evidence (#191 comments 7231616370 and 7231653627): project number and namespace 303691956826, region europe-west1 (the metadata command is run with explicit --project/--region/service name),
+# service bizgenie-studio-bridge-staging, status.url below, and the two registered URLs in the run.googleapis.com/urls annotation. Before any request, token prompt or evidence write the service must
+# report exactly that name, namespace, status.url and registered-URL set, and the tagged URL must equal EXACTLY "https://<tag>---<host of status.url>". The other registered (regional) host is NOT an
+# accepted destination, and nothing is derived from a URL prefix or the .run.app suffix.
+BRIDGE_SERVICE_ORIGIN=https://bizgenie-studio-bridge-staging-g3z4wwvftq-ew.a.run.app
+BRIDGE_REGIONAL_ORIGIN=https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app
+BRIDGE_PROJECT_NUMBER=303691956826
+[ "$(jq -r '.metadata.name // "" | if type == "string" then . else "" end' <<<"$SJ")" = "$BRIDGE_SVC" ] || die "the service metadata is not for $BRIDGE_SVC: no destination is trusted"
+[ "$(jq -r '.metadata.namespace // "" | if type == "string" then . else "" end' <<<"$SJ")" = "$BRIDGE_PROJECT_NUMBER" ] || die "the service namespace is not the bizgenie-backend project number: no destination is trusted"
 [ "$(jq -r '.status.url // "" | if type == "string" then . else "" end' <<<"$SJ")" = "$BRIDGE_SERVICE_ORIGIN" ] || die "the service's own URL is absent, malformed or not the canonical bridge origin: no destination is trusted"
-URL=$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].url // "" | if type == "string" then . else "" end' <<<"$SJ")
+jq -e --arg a "$BRIDGE_SERVICE_ORIGIN" --arg b "$BRIDGE_REGIONAL_ORIGIN" '(.metadata.annotations["run.googleapis.com/urls"] // null | if type == "string" then (try fromjson catch null) else null end) as $u | ($u | type == "array") and (($u | sort) == ([$a, $b] | sort))' <<<"$SJ" >/dev/null 2>&1 || die "the service's registered URLs are absent, malformed or not exactly the two canonical bridge URLs: no destination is trusted"
+URL=$(jq -r --arg t "$TAG" '[.[] | select(.tag == $t)][0].url // "" | if type == "string" then . else "" end' <<<"$TRAFFIC")
 [ "$URL" = "https://${TAG}---${BRIDGE_SERVICE_ORIGIN#https://}" ] || die "the tagged URL is not exactly the tagged host of the canonical bridge service: the bearer token will not be sent"
 LIVE=$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)') || die "cannot read the live digest"; LIVE=${LIVE##*@}
 [[ "$LIVE" =~ ^sha256:[a-f0-9]{64}$ ]] || die "the live image digest is missing or malformed"; [ "$LIVE" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
