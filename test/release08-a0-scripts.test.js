@@ -11,18 +11,19 @@ const ctr = (env, extra = {}) => ({ name: 'c', image: 'x', ports: [{ containerPo
 const tmpl = (env, sa = 'sa@x', ann = {}) => ({ serviceAccountName: sa, containerConcurrency: 80, timeoutSeconds: 300, containers: [ctr(env)], _ann: ann });
 function svcJson(name, spec, traffic, latest) { return { status: { latestReadyRevisionName: latest, traffic, url: 'https://x.run.app' }, spec: { template: { metadata: { annotations: spec._ann }, spec: (({ _ann, ...r }) => r)(spec) } } }; }
 function revJson(spec, digest, ready = true, envOverride) { const { _ann, ...r } = spec; return { status: { imageDigest: digest.startsWith('sha256:') ? `${REPO}/x@${digest}` : digest, conditions: [{ type: 'Ready', status: ready ? 'True' : 'False' }] }, metadata: { annotations: _ann }, spec: r }; }
+const BRIDGE_SVC_NAME = 'bizgenie-studio-bridge-staging', BRIDGE_PIN = 'https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app', BRIDGE_HOST = BRIDGE_PIN.slice(8), TAGGED_BRIDGE_URL = `https://a0-dfd49116---${BRIDGE_HOST}`;
 function world({ svcEnv, revEnv, svcSa = 'sa@x', revSa = 'sa@x', bridgeEnvOnNew, preTagged = false } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-a0-')); const d = path.join(home, 'stub'); fs.mkdirSync(d); fs.mkdirSync(path.join(home, '.bg-private'));
   const envA = [{ name: 'FOO', value: 'v1' }, { name: 'SECRET_A', valueFrom: { secretKeyRef: { name: 's1', key: 'latest' } } }];
   const W = (n, o) => fs.writeFileSync(path.join(d, n), JSON.stringify(o));
   const sSpec = tmpl(svcEnv || envA, svcSa), rSpec = tmpl(revEnv || envA, revSa);
   W(`svc-bizgenie-api-staging.json`, svcJson('a', sSpec, [{ revisionName: BA, percent: 100 }, { revisionName: NEWA, percent: 0, tag: 'a0-dfd49116' }], BA)); W(`rev-${BA}.json`, revJson(rSpec, BAD)); W(`rev-${NEWA}.json`, revJson(rSpec, NAD));
-  W(`svc-bizgenie-studio-bridge-staging.json`, svcJson('b', sSpec, [{ revisionName: BB, percent: 100 }, { revisionName: NEWB, percent: 0, tag: 'a0-dfd49116', url: 'https://a0-dfd49116---bizgenie-studio-bridge-staging-abc123-ew.a.run.app' }], BB));
+  W(`svc-bizgenie-studio-bridge-staging.json`, svcJson('b', sSpec, [{ revisionName: BB, percent: 100 }, { revisionName: NEWB, percent: 0, tag: 'a0-dfd49116', url: TAGGED_BRIDGE_URL }], BB)); { const bf = path.join(d, 'svc-bizgenie-studio-bridge-staging.json'); const bj = JSON.parse(fs.readFileSync(bf, 'utf8')); bj.metadata = { name: BRIDGE_SVC_NAME }; bj.status.url = BRIDGE_PIN; fs.writeFileSync(bf, JSON.stringify(bj)); }
   W(`rev-${BB}.json`, revJson(rSpec, BBD)); const nspec = tmpl([{ name: 'BG_BRIDGE_REVISION', value: bridgeEnvOnNew ?? NEWA }, ...FALSE_FLAGS.map((n) => ({ name: n, value: 'false' })), { name: 'BG_BRIDGE_REVIEW_REF', value: APPR_EV }]); W(`rev-${NEWB}.json`, revJson(nspec, NBD));
   const untag = (f) => { const j = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8')); j.status.traffic = j.status.traffic.filter((x) => !x.tag); fs.writeFileSync(path.join(d, f), JSON.stringify(j)); };
   if (preTagged !== true && preTagged !== 'api') untag('svc-bizgenie-api-staging.json'); if (preTagged !== true) untag('svc-bizgenie-studio-bridge-staging.json');
   // a successful deploy creates the tagged, 0% revision (the stub mirrors what Cloud Run reports afterwards)
-  fs.writeFileSync(path.join(d, 'deploy-effect.sh'), `#!/bin/sh\nsvc=$3; case "$svc" in bizgenie-api-staging) rev=${NEWA};; *) rev=${NEWB};; esac\nf="$STUB_DIR/svc-$svc.json"; jq --arg r "$rev" '.status.traffic += [{revisionName:$r,percent:0,tag:"a0-dfd49116",url:"https://a0-dfd49116---x.run.app"}]' "$f" > "$f.x" && mv "$f.x" "$f"\n`); const bin = path.join(home, 'bin'); fs.mkdirSync(bin); fs.copyFileSync(STUB, path.join(bin, 'gcloud')); fs.chmodSync(path.join(bin, 'gcloud'), 0o755);
+  fs.writeFileSync(path.join(d, 'deploy-effect.sh'), `#!/bin/sh\nsvc=$3; case "$svc" in bizgenie-api-staging) rev=${NEWA};; *) rev=${NEWB};; esac\nf="$STUB_DIR/svc-$svc.json"; jq --arg r "$rev" '.status.traffic += [{revisionName:$r,percent:0,tag:"a0-dfd49116",url:"https://a0-dfd49116---bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app"}]' "$f" > "$f.x" && mv "$f.x" "$f"\n`); const bin = path.join(home, 'bin'); fs.mkdirSync(bin); fs.copyFileSync(STUB, path.join(bin, 'gcloud')); fs.chmodSync(path.join(bin, 'gcloud'), 0o755);
   return { home, d, run: (script, args, env = {}, input) => spawnSync('bash', [path.join(S, script), ...args], { input, encoding: 'utf8', env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, STUB_DIR: d, ...env } }), calls: () => (fs.existsSync(path.join(d, 'calls.log')) ? fs.readFileSync(path.join(d, 'calls.log'), 'utf8') : '') };
 }
 const APIREF = `${REPO}/bizgenie-api@${NAD}`, BRREF = `${REPO}/bizgenie-studio-bridge@${NBD}`;
@@ -595,9 +596,9 @@ const smokeReady = () => {
   const evid = path.join(s.w.home, '.bg-private', 'a0-smoke-evidence.json');
   return { ...s, f, clean, evid, setTraffic: (arr) => { const j = JSON.parse(clean); j.status.traffic = arr; fs.writeFileSync(f, JSON.stringify(j)); }, restore: () => fs.writeFileSync(f, clean), smoke: () => s.w.run('a0-smoke.sh', [], { EXPECT_PROJECT_H: sha8(SMOKE_PROJ) }, 'TOKEN-SENTINEL-xyz\n'), requests: () => (fs.existsSync(path.join(s.w.d, 'curl-argv.log')) ? fs.readFileSync(path.join(s.w.d, 'curl-argv.log'), 'utf8').trim() : '') };
 };
-const SB = { revisionName: BB, percent: 100 }, ST = (u) => ({ revisionName: NEWB, percent: 0, tag: SMOKE_TAG, url: u ?? `https://${SMOKE_TAG}---svc.run.app` }), SX = (t, u, p = 0) => ({ revisionName: X99, percent: p, tag: t, url: u ?? `https://${t}---svc.run.app` });
+const SB = { revisionName: BB, percent: 100 }, ST = (u) => ({ revisionName: NEWB, percent: 0, tag: SMOKE_TAG, url: u ?? TAGGED_BRIDGE_URL }), SX = (t, u, p = 0) => ({ revisionName: X99, percent: p, tag: t, url: u ?? `https://${t}---svc.run.app` });
 const SMOKE_INVALID = {
-  dupSameUrl: [SB, ST(), SX(SMOKE_TAG, `https://${SMOKE_TAG}---svc.run.app`)], dupDifferentUrl: [SB, ST(), SX(SMOKE_TAG, 'https://a0-dfd49116---other.run.app')], wrongRevisionFirst: [SB, SX(SMOKE_TAG), ST()], duplicatePair: [SB, ST(), ST()], mixedPercentDup: [{ revisionName: BB, percent: 60 }, ST(), SX(SMOKE_TAG, undefined, 40)],
+  dupSameUrl: [SB, ST(), SX(SMOKE_TAG, TAGGED_BRIDGE_URL)], dupDifferentUrl: [SB, ST(), SX(SMOKE_TAG, 'https://a0-dfd49116---other.run.app')], wrongRevisionFirst: [SB, SX(SMOKE_TAG), ST()], duplicatePair: [SB, ST(), ST()], mixedPercentDup: [{ revisionName: BB, percent: 60 }, ST(), SX(SMOKE_TAG, undefined, 40)],
   targetServingSome: [{ revisionName: BB, percent: 95 }, { ...ST(), percent: 5 }], targetServingAll: [{ ...ST(), percent: 100 }], negative: [SB, ST(), SX('other', undefined, -1)], fractional: [{ revisionName: BB, percent: 99.5 }, ST(), SX('other', undefined, 0.5)], over100: [{ revisionName: BB, percent: 101 }, ST()], stringPercent: [SB, ST(), { ...SX('other'), percent: '0' }], missingPercent: [SB, ST(), { revisionName: X99, tag: 'other' }], nullPercent: [SB, { ...ST(), percent: null }],
   noTagEntry: [SB], tagOnOtherRevision: [SB, SX(SMOKE_TAG)], urlMissing: [SB, { revisionName: NEWB, percent: 0, tag: SMOKE_TAG }], urlHttp: [SB, ST('http://a0-dfd49116---svc.run.app')], urlWrongHost: [SB, ST('https://evil.example.com')], urlWrongPrefix: [SB, ST('https://other-tag---svc.run.app')], urlWithPath: [SB, ST('https://a0-dfd49116---svc.run.app/x')], urlWithCreds: [SB, ST('https://u:p@a0-dfd49116---svc.run.app')], urlNonString: [SB, { ...ST(), url: 7 }],
   urlOnlyEntry: [SB, ST(), { tag: 'z', url: 'https://z---svc.run.app', percent: 0 }], latestRevisionEntry: [SB, ST(), { latestRevision: true, percent: 0 }], emptyName: [SB, ST(), { revisionName: '', percent: 0 }], nonStringTag: [SB, ST(), { revisionName: X99, percent: 0, tag: 7 }], notArray: { revisionName: BB }, emptyArray: [], nullTraffic: null, noBaseline: [ST()], otherServing: [{ revisionName: X99, percent: 100 }, ST()], twoServing: [{ revisionName: BB, percent: 50 }, { revisionName: X99, percent: 50 }, ST()],
@@ -618,6 +619,34 @@ test('L2 smoke still passes and writes evidence for a valid, unique zero-percent
 });
 test('L3 the smoke target is chosen only after validation: the auth request is never sent to a URL taken from an ambiguous response', { skip: !haveTools || !have('curl') }, () => {
   const s = smokeReady(); s.setTraffic([SB, SX(SMOKE_TAG, 'https://a0-dfd49116---attacker.run.app'), ST()]); const r = s.smoke(); assert.notStrictEqual(r.status, 0); assert.ok(!/attacker/.test(s.requests()), 'a request reached the ambiguous URL'); assert.strictEqual(s.requests(), '');
+});
+
+// ======== Smoke destination identity: the bearer token may only go to the tagged revision of the canonical bridge service (Codex P1 on a19d8b44) ========
+test('M1 smoke destination: any URL that is not exactly the tagged host of the canonical bridge service is refused before a request, a token prompt or evidence', { skip: !haveTools || !have('curl') }, () => {
+  const T = SMOKE_TAG; const tu = (host) => `https://${T}---${host}`; const base = (o) => ({ svc: o.svc || ((j) => j), });
+  const cases = {
+    unrelatedServiceSameTagPrefix: { url: tu('some-other-service-123456789012.europe-west1.run.app') }, apiServiceHost: { url: tu('bizgenie-api-staging-303691956826.europe-west1.run.app') }, otherProjectNumber: { url: tu('bizgenie-studio-bridge-staging-303691956827.europe-west1.run.app') }, otherRegion: { url: tu('bizgenie-studio-bridge-staging-303691956826.us-central1.run.app') },
+    legacyAHost: { url: tu('bizgenie-studio-bridge-staging-abc123xyz-ew.a.run.app') }, evilSuffix: { url: tu(`${BRIDGE_HOST}.evil.com`) }, evilPrefixHost: { url: tu(`evil-${BRIDGE_HOST}`) }, uppercase: { url: tu(BRIDGE_HOST.toUpperCase()) }, trailingDot: { url: tu(`${BRIDGE_HOST}.`) }, withPort: { url: `${tu(BRIDGE_HOST)}:8443` }, withPath: { url: `${tu(BRIDGE_HOST)}/x` }, withQuery: { url: `${tu(BRIDGE_HOST)}?a=1` }, withUserinfo: { url: `https://u:p@${T}---${BRIDGE_HOST}` }, httpScheme: { url: `http://${T}---${BRIDGE_HOST}` }, wrongTag: { url: `https://other-tag---${BRIDGE_HOST}` }, noTagPrefix: { url: PIN_URL() }, doubleHyphenMissing: { url: `https://${T}--${BRIDGE_HOST}` }, emptyUrl: { url: '' },
+    statusUrlOtherService: { status: 'https://some-other-service-123456789012.europe-west1.run.app', url: tu('some-other-service-123456789012.europe-west1.run.app') }, statusUrlMissing: { status: undefined }, statusUrlNull: { status: null }, statusUrlObject: { status: { a: 1 } }, statusUrlHttp: { status: BRIDGE_PIN.replace('https', 'http') }, statusUrlPath: { status: BRIDGE_PIN + '/x' }, statusUrlTrailingSlash: { status: BRIDGE_PIN + '/' },
+    tagUrlHostDiffersFromStatusUrl: { url: tu('bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app.attacker.net') }, nameMissing: { name: undefined }, nameOther: { name: 'bizgenie-api-staging' }, nameNonString: { name: 7 },
+  };
+  function PIN_URL() { return BRIDGE_PIN; }
+  for (const [name, c] of Object.entries(cases)) {
+    const s = smokeReady(); const j = JSON.parse(s.clean); const entry = j.status.traffic.find((e) => e.tag === T);
+    if ('url' in c) entry.url = c.url; if ('status' in c) { if (c.status === undefined) delete j.status.url; else j.status.url = c.status; } if ('name' in c) { if (c.name === undefined) delete j.metadata.name; else j.metadata.name = c.name; }
+    fs.writeFileSync(s.f, JSON.stringify(j)); assert.ok(fs.existsSync(s.evid)); const r = s.smoke();
+    assert.notStrictEqual(r.status, 0, name); assert.strictEqual(s.requests(), '', name + ': a request was made (the token could have been sent)'); assert.ok(!fs.existsSync(s.evid), name + ': evidence exists'); assert.ok(!(r.stdout + r.stderr).includes('TOKEN-SENTINEL'), name);
+    assert.doesNotMatch(r.stdout + r.stderr, /Founder session token/, name + ': the token prompt was reached');
+  }
+});
+test('M2 smoke destination: the genuine tagged origin of the canonical bridge service passes; every request goes only to that host, with no redirect following and https only', { skip: !haveTools || !have('curl') }, () => {
+  const s = smokeReady(); fs.rmSync(s.evid); const r = s.smoke(); assert.strictEqual(r.status, 0, out(r)); assert.ok(fs.existsSync(s.evid));
+  const lines = s.requests().split('\n').filter(Boolean); assert.ok(lines.length >= 7);
+  for (const l of lines) { const urls = l.match(/https?:\/\/[^\s]+/g) || []; for (const u of urls) { if (/pages\.dev|foreign\.test/.test(u)) continue; assert.ok(u.startsWith(TAGGED_BRIDGE_URL + '/') || u === TAGGED_BRIDGE_URL, 'request to ' + u); } assert.match(l, /--max-redirs 0/, l); assert.match(l, /--proto =https/, l); assert.doesNotMatch(l, /(^|\s)(-L|--location)(\s|$)/, l); }
+  assert.ok(lines.some((l) => /-K -/.test(l)), 'the authenticated request used the stdin config');
+});
+test('M3 smoke destination: a redirect answer on the authenticated request fails the smoke and writes no evidence', { skip: !haveTools || !have('curl') }, () => {
+  for (const code of ['301', '302', '307', '308']) { const s = smokeReady(); fs.writeFileSync(path.join(s.w.d, 'auth-code'), code); const r = s.smoke(); assert.notStrictEqual(r.status, 0, code); assert.ok(!fs.existsSync(s.evid), code); }
 });
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {

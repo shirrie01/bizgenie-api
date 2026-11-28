@@ -474,12 +474,19 @@ jq -e '(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "
 [ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].revisionName' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
 [ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].percent' <<<"$SJ")" = 0 ] || die "the A0 revision already receives traffic: this is a pre-shift smoke only"
 jq -e --arg b "$BASE_BRIDGE_REV" '[.status.traffic[] | select(.percent > 0)] | (length == 1) and (.[0].revisionName == $b) and (.[0].percent == 100)' <<<"$SJ" >/dev/null 2>&1 || die "the recorded baseline is not the only revision serving at exactly 100%"
-URL=$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].url // ""' <<<"$SJ")
-[[ "$URL" =~ ^https://${TAG}---[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.run\.app$ ]] || die "the tagged URL is missing or not the expected https://${TAG}--- Cloud Run host"
+# DESTINATION IDENTITY. The founder's bearer token may only ever be sent to the tagged revision of the canonical bridge service. The canonical origin is PINNED here (the regional Cloud Run host of
+# bizgenie-studio-bridge-staging in project bizgenie-backend, europe-west1; project number from the recorded inventory and the Studio profile's bridge origin) and is cross-checked three ways against
+# the service the metadata command returned for that project, region and name: the service's own name, its own status.url, and the tagged URL, which must be EXACTLY the origin's host prefixed by
+# "<tag>---". A tagged host of any other service, region, project, scheme, port, path, query, credential or a lookalike suffix can never match. Nothing is derived from a URL prefix or the .run.app suffix.
+BRIDGE_SERVICE_ORIGIN=https://bizgenie-studio-bridge-staging-303691956826.europe-west1.run.app
+[ "$(jq -r '.metadata.name // ""' <<<"$SJ")" = "$BRIDGE_SVC" ] || die "the service metadata is not for $BRIDGE_SVC: no destination is trusted"
+[ "$(jq -r '.status.url // "" | if type == "string" then . else "" end' <<<"$SJ")" = "$BRIDGE_SERVICE_ORIGIN" ] || die "the service's own URL is absent, malformed or not the canonical bridge origin: no destination is trusted"
+URL=$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].url // "" | if type == "string" then . else "" end' <<<"$SJ")
+[ "$URL" = "https://${TAG}---${BRIDGE_SERVICE_ORIGIN#https://}" ] || die "the tagged URL is not exactly the tagged host of the canonical bridge service: the bearer token will not be sent"
 LIVE=$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)') || die "cannot read the live digest"; LIVE=${LIVE##*@}
 [[ "$LIVE" =~ ^sha256:[a-f0-9]{64}$ ]] || die "the live image digest is missing or malformed"; [ "$LIVE" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
 ORIGIN=https://bizgenie-studio-staging.pages.dev; FAIL=0; CHECKS='[]'
-code() { curl -sS -m 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
+code() { curl -sS --proto =https --max-redirs 0 -m 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 chk() { local name="$1" want="$2" got="$3" res=FAIL; if [ "$got" = "$want" ]; then res=PASS; else FAIL=1; fi; echo "$res $name (want $want, got $got)"; CHECKS=$(jq -c --arg n "$name" --arg r "$res" '. + [{name:$n,result:$r}]' <<<"$CHECKS"); }
 chk "preflight before auth (204)"                         204 "$(code -X OPTIONS "$URL/customer/workspace/brands" -H "Origin: $ORIGIN" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: authorization,content-type')"
 chk "foreign origin refused (403)"                        403 "$(code -X OPTIONS "$URL/customer/workspace" -H 'Origin: https://foreign.test' -H 'Access-Control-Request-Method: GET')"
@@ -490,7 +497,7 @@ chk "workspace permission ACTIVE: unauthenticated request reaches auth (401, not
 read -rs -p "Founder session token (MANDATORY, hidden; used for ONE read-only chain check): " T; echo
 [ -n "$T" ] || die "the authenticated tagged-bridge read is mandatory: no evidence written, traffic cannot shift"
 BODY=$(mktemp); trap 'rm -f "$BODY"; unset T' EXIT; chmod 600 "$BODY"
-GOT=$(printf 'header = "Authorization: Bearer %s"\n' "$T" | curl -sS -m 30 -K - -o "$BODY" -w '%{http_code}' "$URL/customer/workspace" -H "Origin: $ORIGIN" 2>/dev/null || echo 000); unset T
+GOT=$(printf 'header = "Authorization: Bearer %s"\n' "$T" | curl -sS --proto =https --max-redirs 0 -m 30 -K - -o "$BODY" -w '%{http_code}' "$URL/customer/workspace" -H "Origin: $ORIGIN" 2>/dev/null || echo 000); unset T
 chk "authenticated read through bridge -> new API -> database (200)" 200 "$GOT"
 # Shape-independent identity check: some string in the response must hash to the recorded Fairway project fingerprint (nothing is printed).
 if jq -e . "$BODY" >/dev/null 2>&1; then
