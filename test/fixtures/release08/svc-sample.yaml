@@ -1,0 +1,18 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata: {name: bizgenie-api-staging, annotations: {run.googleapis.com/ingress: all}}
+spec:
+  template:
+    metadata: {annotations: {autoscaling.knative.dev/maxScale: '3'}}
+    spec:
+      containerConcurrency: 80
+      containers:
+      - image: europe-west1-docker.pkg.dev/bizgenie-backend/cloud-run-source-deploy/old@sha256:aaa
+        ports: [{containerPort: 8080, name: http1}]
+        env: [{name: BIZGENIE_ENVIRONMENT, value: staging}, {name: SECRET_ONE, valueFrom: {secretKeyRef: {name: s, key: latest}}}]
+        resources: {limits: {cpu: 1000m, memory: 1Gi}}
+      serviceAccountName: bizgenie-staging-runtime@bizgenie-backend.iam.gserviceaccount.com
+      timeoutSeconds: 300
+  traffic:
+  - {revisionName: bizgenie-api-staging-00029-wtc, percent: 100}
+  - {revisionName: bizgenie-api-staging-00030-pob, percent: 0, tag: f1fc2f51}
