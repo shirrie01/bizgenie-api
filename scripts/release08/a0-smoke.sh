@@ -22,6 +22,7 @@ jq -e '(.status.traffic | type == "array" and length >= 1 and all(.[]; type == "
 [ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].revisionName' <<<"$SJ")" = "$REV" ] || die "tag $TAG does not point at the deployed A0 revision"
 [ "$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].percent' <<<"$SJ")" = 0 ] || die "the A0 revision already receives traffic: this is a pre-shift smoke only"
 jq -e --arg b "$BASE_BRIDGE_REV" '[.status.traffic[] | select(.percent > 0)] | (length == 1) and (.[0].revisionName == $b) and (.[0].percent == 100)' <<<"$SJ" >/dev/null 2>&1 || die "the recorded baseline is not the only revision serving at exactly 100%"
+# `-q` MUST be the FIRST curl argument: it disables every default configuration file (~/.curlrc, $CURL_HOME/.curlrc, $XDG_CONFIG_HOME/curlrc, ~/.config/curlrc), which could otherwise add a destination and send the bearer header to it.
 # DESTINATION IDENTITY. The founder's bearer token may only ever be sent to the tagged revision of the canonical bridge service. The canonical origin is PINNED here (the regional Cloud Run host of
 # bizgenie-studio-bridge-staging in project bizgenie-backend, europe-west1; project number from the recorded inventory and the Studio profile's bridge origin) and is cross-checked three ways against
 # the service the metadata command returned for that project, region and name: the service's own name, its own status.url, and the tagged URL, which must be EXACTLY the origin's host prefixed by
@@ -34,7 +35,7 @@ URL=$(jq -r --arg t "$TAG" '[.status.traffic[] | select(.tag == $t)][0].url // "
 LIVE=$(gcloud run revisions describe "$REV" --project="$P" --region="$R" --format='value(status.imageDigest)') || die "cannot read the live digest"; LIVE=${LIVE##*@}
 [[ "$LIVE" =~ ^sha256:[a-f0-9]{64}$ ]] || die "the live image digest is missing or malformed"; [ "$LIVE" = "$DIG" ] || die "live digest of $REV differs from the deployed digest"
 ORIGIN=https://bizgenie-studio-staging.pages.dev; FAIL=0; CHECKS='[]'
-code() { curl -sS --proto =https --max-redirs 0 -m 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
+code() { curl -q -sS --proto =https --max-redirs 0 -m 20 -o /dev/null -w '%{http_code}' "$@" 2>/dev/null || echo 000; }
 chk() { local name="$1" want="$2" got="$3" res=FAIL; if [ "$got" = "$want" ]; then res=PASS; else FAIL=1; fi; echo "$res $name (want $want, got $got)"; CHECKS=$(jq -c --arg n "$name" --arg r "$res" '. + [{name:$n,result:$r}]' <<<"$CHECKS"); }
 chk "preflight before auth (204)"                         204 "$(code -X OPTIONS "$URL/customer/workspace/brands" -H "Origin: $ORIGIN" -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: authorization,content-type')"
 chk "foreign origin refused (403)"                        403 "$(code -X OPTIONS "$URL/customer/workspace" -H 'Origin: https://foreign.test' -H 'Access-Control-Request-Method: GET')"
@@ -45,7 +46,7 @@ chk "workspace permission ACTIVE: unauthenticated request reaches auth (401, not
 read -rs -p "Founder session token (MANDATORY, hidden; used for ONE read-only chain check): " T; echo
 [ -n "$T" ] || die "the authenticated tagged-bridge read is mandatory: no evidence written, traffic cannot shift"
 BODY=$(mktemp); trap 'rm -f "$BODY"; unset T' EXIT; chmod 600 "$BODY"
-GOT=$(printf 'header = "Authorization: Bearer %s"\n' "$T" | curl -sS --proto =https --max-redirs 0 -m 30 -K - -o "$BODY" -w '%{http_code}' "$URL/customer/workspace" -H "Origin: $ORIGIN" 2>/dev/null || echo 000); unset T
+GOT=$(printf 'header = "Authorization: Bearer %s"\n' "$T" | curl -q -sS --proto =https --max-redirs 0 -m 30 -K - -o "$BODY" -w '%{http_code}' "$URL/customer/workspace" -H "Origin: $ORIGIN" 2>/dev/null || echo 000); unset T
 chk "authenticated read through bridge -> new API -> database (200)" 200 "$GOT"
 # Shape-independent identity check: some string in the response must hash to the recorded Fairway project fingerprint (nothing is printed).
 if jq -e . "$BODY" >/dev/null 2>&1; then

